@@ -44,6 +44,7 @@ EPISODE_SCHEMA = {
     "properties": {
         "title": {"type": "string"},
         "narrative": {"type": "string"},
+        "timestamp": {"type": "string"},
     },
     "required": ["title", "narrative"],
 }
@@ -65,8 +66,9 @@ CALIBRATE_SCHEMA = {
 BOUNDARY_PROMPT = """Decide whether the NEWEST message starts a new episode
 (a different topic, intent, or time context) relative to the buffered
 conversation. Signals: topic change, intent shift (e.g. information request
-to decision), temporal markers ("by the way", long time gaps), content
-relatedness below ~30%.
+to decision), temporal markers ("by the way", or a gap of 30+ minutes
+between message timestamps), content relatedness below ~30%.
+Episodes work best with 2-15 messages. When in doubt, split.
 
 Buffered conversation:
 {buffer}
@@ -84,10 +86,12 @@ EPISODE_PROMPT = """Convert this conversation segment into one episodic memory.
    "next week", "last month") into an absolute date/time using the
    timestamp shown in brackets before each message.
 
+3. timestamp: when the episode happened (copy the first message's timestamp)
+
 Segment:
 {segment}
 
-Return JSON: {{"title": "...", "narrative": "..."}}"""
+Return JSON: {{"title": "...", "narrative": "...", "timestamp": "..."}}"""
 
 # Condensed from PREDICTION_PROMPT: predict knowledge, not style.
 PREDICT_PROMPT = """Given only an episode title and previously known knowledge,
@@ -114,6 +118,21 @@ Return an empty list if the prediction already covered everything.
 
 Prediction:
 {prediction}
+
+Raw conversation:
+{segment}
+
+Return JSON: {{"facts": ["...", ...]}}"""
+
+# Cold start (audit P1-7): with no prior semantic knowledge there is nothing
+# to predict from — distill directly, under the same four tests.
+DIRECT_EXTRACT_PROMPT = """Extract knowledge worth remembering from this conversation.
+Each statement must pass all four tests:
+- Persistence: still true well after the conversation
+- Specificity: concrete, not vague
+- Utility: useful for future interactions
+- Independence: self-contained and atomic
+Write each statement in present tense with no relative time expressions.
 
 Raw conversation:
 {segment}
@@ -191,19 +210,22 @@ class NemoriOrganizer(Organizer):
         gen = ctx.llm.call("distill", EPISODE_PROMPT.format(segment=seg_text),
                            EPISODE_SCHEMA, required_keys=("title", "narrative"))
         fallback_title = " ".join(segment[0].content.split()[:8])
+        fallback_ts = (segment[0].meta.get("date")
+                       or segment[0].timestamp.isoformat())
         if gen is None:
             logger.warning("nemori: episode generation failed — mechanical fallback episode")
-            title, narrative = fallback_title, seg_text
+            title, narrative, ep_ts = fallback_title, seg_text, fallback_ts
         else:
             title = str(gen.get("title", "")).strip() or fallback_title
             narrative = str(gen.get("narrative", "")).strip() or seg_text
+            ep_ts = str(gen.get("timestamp", "")).strip() or fallback_ts
 
         episode_id = new_id()
         source_ids = [e.id for e in segment]
         ops = [MemoryOp(
             op=OpType.ADD, target_type="episodes", target_id=episode_id,
             payload={"id": episode_id, "title": title, "content": narrative,
-                     "source_episode_ids": source_ids,
+                     "timestamp": ep_ts, "source_episode_ids": source_ids,
                      "embedding_text": f"{title}\n{narrative}"},
         )]
         ops.extend(self._predict_calibrate(title, narrative, seg_text,
@@ -218,20 +240,26 @@ class NemoriOrganizer(Organizer):
         hits = ctx.vec.search(emb, k=self.semantic_top_k,
                               memory_type="semantic", namespace=ctx.namespace)
         known = ctx.doc.get_items([h[0] for h in hits], "semantic")
-        knowledge = "\n".join(f"- {k.get('content', '')}" for k in known) or "(none)"
-        pred = ctx.llm.call("distill",
-                            PREDICT_PROMPT.format(title=title, knowledge=knowledge),
-                            PREDICT_SCHEMA, required_keys=("prediction",))
-        if pred is None:
-            return []  # episode is stored; only distillation is skipped
+        if not known:
+            # cold start: nothing to predict from -> direct extraction
+            cal = ctx.llm.call("distill",
+                               DIRECT_EXTRACT_PROMPT.format(segment=seg_text),
+                               CALIBRATE_SCHEMA, required_keys=("facts",))
+        else:
+            knowledge = "\n".join(f"- {k.get('content', '')}" for k in known)
+            pred = ctx.llm.call("distill",
+                                PREDICT_PROMPT.format(title=title, knowledge=knowledge),
+                                PREDICT_SCHEMA, required_keys=("prediction",))
+            if pred is None:
+                return []  # episode is stored; only distillation is skipped
 
-        # Stage 2: calibrate against the RAW segment — extract the gap only.
-        cal = ctx.llm.call(
-            "distill",
-            CALIBRATE_PROMPT.format(prediction=str(pred.get("prediction", "")),
-                                    segment=seg_text),
-            CALIBRATE_SCHEMA, required_keys=("facts",),
-        )
+            # Stage 2: calibrate against the RAW segment — extract the gap only.
+            cal = ctx.llm.call(
+                "distill",
+                CALIBRATE_PROMPT.format(prediction=str(pred.get("prediction", "")),
+                                        segment=seg_text),
+                CALIBRATE_SCHEMA, required_keys=("facts",),
+            )
         if cal is None:
             return []
 

@@ -253,7 +253,7 @@ class AgenticMemory:
     # ---- read ---------------------------------------------------------------
 
     def search(self, query: str, memory_types: Sequence[str] = ("episodic",),
-               k: int = 10) -> MemoryBundle:
+               k: int | dict[str, int] = 10) -> MemoryBundle:
         return self.pipeline.search(query, k=k, memory_types=tuple(memory_types),
                                     namespace=self.namespace)
 

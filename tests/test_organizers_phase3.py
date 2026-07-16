@@ -32,8 +32,9 @@ def test_nemori_boundary_flush_and_calibrate():
             {"boundary": True, "confidence": 0.95},
         ],
         "distill": [
-            {"title": "Paris trip planning", "narrative": "On 1 May 2023, the user planned a trip."},
-            {"prediction": "The user plans a trip."},
+            {"title": "Paris trip planning", "narrative": "On 1 May 2023, the user planned a trip.",
+             "timestamp": "2023-05-01"},
+            # cold start (no prior semantic memory) -> direct extraction, one call
             {"facts": ["The user's trip budget is 3,000,000 KRW."]},
         ],
     })
@@ -45,6 +46,7 @@ def test_nemori_boundary_flush_and_calibrate():
         episodes = ops_of(mem, "episodes")
         assert len(episodes) == 1
         assert episodes[0].payload["title"] == "Paris trip planning"
+        assert episodes[0].payload["timestamp"] == "2023-05-01"
         assert len(episodes[0].payload["source_episode_ids"]) == 2  # newest stays buffered
         facts = ops_of(mem, "semantic")
         assert len(facts) == 1 and "3,000,000" in facts[0].payload["content"]

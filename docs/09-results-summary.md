@@ -6,6 +6,10 @@
 > **Fidelity**: 측정 4종은 충실도 ●/◑ 등급만 포함 (docs/10-fidelity-audit.md).
 > MemoryOS는 segment 매칭 F_score에서 Jaccard 항이 빠진 cosine 단독 구현 — 수치 해석 시 유의.
 > Zep-graph·G-Memory는 골격(○) 단계라 측정에서 의도적으로 제외.
+> **⚠️ 2026-07-16 심층 감사 후 재해석** (docs/research/fidelity-deep-audit.md):
+> 이 표는 "동일한 우리 read 파이프라인 위 write 조직화 비교"이며 **논문 재현이 아님**.
+> A-Mem은 read에서 1-hop 링크 확장 누락, Nemori는 검색 설정 3중 불일치(semantic 20→10,
+> r=2 원문 첨부 누락, 1600토큰 예산) 상태로 측정됨 — P0 수정 완료, 재측정은 보류 중.
 
 | config | Overall F1 | BLEU-1 | ingest | organizer LLM calls | drops |
 |---|---|---|---|---|---|

@@ -121,9 +121,11 @@ def ingest(mem: AgenticMemory, sample: dict[str, Any],
     return n
 
 
-def answer(mem: AgenticMemory, question: str, k: int = 10,
+def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
            memory_types: tuple[str, ...] = ("episodic",),
-           budget_tokens: int = 1600) -> str:
+           budget_tokens: int = 6000) -> str:
+    # budget default raised 1600->6000 per fidelity audit P0-3: the tight
+    # budget structurally penalized long-item methodologies (Nemori).
     bundle = mem.search(question, memory_types=memory_types, k=k)
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
     if mem.llm is None:
@@ -135,14 +137,17 @@ def answer(mem: AgenticMemory, question: str, k: int = 10,
     return reply.strip().splitlines()[0] if reply.strip() else ""
 
 
-def evaluate(mem: AgenticMemory, questions: list[dict[str, Any]], k: int = 10,
+def evaluate(mem: AgenticMemory, questions: list[dict[str, Any]],
+             k: int | dict = 10,
              memory_types: tuple[str, ...] = ("episodic",),
+             budget_tokens: int = 6000,
              progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
     per_cat: dict[str, list[tuple[float, float]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
         gold = q.get("answer") or q.get("adversarial_answer") or ""
-        pred = answer(mem, q["question"], k=k, memory_types=memory_types)
+        pred = answer(mem, q["question"], k=k, memory_types=memory_types,
+                      budget_tokens=budget_tokens)
         f1, b1 = token_f1(pred, str(gold)), bleu1(pred, str(gold))
         cat = CATEGORY_NAMES.get(q.get("category"), "?")
         per_cat[cat].append((f1, b1))

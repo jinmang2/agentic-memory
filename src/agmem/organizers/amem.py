@@ -4,13 +4,18 @@ Pipeline per message: note construction (Ps1) -> top-k neighbor retrieval
 -> single batched link/evolution call (Ps3) -> ADD note + LINK + UPDATE
 neighbor ops.
 
-Deviations from the reference code are deliberate bug fixes:
-- neighbors are addressed by note ID, not result-list index (issue #32)
-- similarity is true cosine via our vector stores (issue #24: reference
-  ChromaDB collection used L2 while treating scores as similarity)
+Deviations from the reference code are deliberate bug fixes (scope per
+docs/research/fidelity-deep-audit.md §5 — both affect the agiresearch
+LIBRARY edition only; the paper-reproduction repo is self-consistent):
+- neighbors are addressed by note ID, not result-list index (issue #32:
+  library edition updates the wrong notes and stores dangling link ids)
+- similarity is true cosine via our vector stores (issue #24: library
+  edition's score field has inverted meaning; ranking itself survives)
 - evolution failure is an explicit drop, never a silent skip (issue #10)
 Set ``fidelity="paper"`` only to mirror original hyperparameters (k=5);
 the buggy behaviors themselves are not reproduced.
+Read-path counterpart (1-hop link expansion, upstream search_agentic) is
+implemented in retrieval/pipeline.py, not here.
 """
 
 from __future__ import annotations
@@ -38,6 +43,7 @@ EVOLVE_SCHEMA = {
     "properties": {
         "should_evolve": {"type": "boolean"},
         "connections": {"type": "array", "items": {"type": "string"}},
+        "new_note_tags": {"type": "array", "items": {"type": "string"}},
         "neighbor_updates": {
             "type": "array",
             "items": {
@@ -78,10 +84,13 @@ Neighbors:
 
 Decide:
 1. connections: neighbor IDs genuinely related to the new note (may be empty)
-2. neighbor_updates: neighbors whose context/tags should be rewritten in light
+2. new_note_tags: refined tags for the NEW note in light of its neighborhood
+   (omit or repeat current tags if no refinement needed)
+3. neighbor_updates: neighbors whose context/tags should be rewritten in light
    of the new note (only when it truly adds information; may be empty)
 
 Return JSON: {{"should_evolve": true/false, "connections": ["<id>", ...],
+"new_note_tags": [...],
 "neighbor_updates": [{{"id": "<id>", "new_context": "...", "new_tags": [...]}}]}}"""
 
 
@@ -145,6 +154,18 @@ class AMemOrganizer(Organizer):
                                     target_id=cid, payload={"links": [note.id]}))
 
         if evo.get("should_evolve"):
+            # strengthen: the evolution call may refine the NEW note's tags
+            # (upstream tags_to_update — audit P1-5)
+            new_tags = [str(t) for t in evo.get("new_note_tags") or []]
+            if new_tags and new_tags != note.tags:
+                refreshed_self = Note(content=note.content, id=note.id,
+                                      keywords=note.keywords, tags=new_tags,
+                                      context=note.context)
+                ops.append(MemoryOp(
+                    op=OpType.UPDATE, target_type="notes", target_id=note.id,
+                    payload={"tags": new_tags,
+                             "embedding_text": refreshed_self.embedding_text()},
+                ))
             by_id = {n["id"]: n for n in neighbors}
             for upd in evo.get("neighbor_updates", []):
                 nid = upd.get("id")

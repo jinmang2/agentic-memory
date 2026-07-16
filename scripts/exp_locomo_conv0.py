@@ -31,7 +31,7 @@ def make_roles() -> dict[str, RoleConfig]:
 
 
 def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
-        sample, max_sessions, limit, embedder) -> dict:
+        sample, max_sessions, limit, embedder, k: int | dict = 10) -> dict:
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}", organizers=organizers,
         embedder=embedder,
@@ -46,7 +46,7 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
                                             limit=limit)
         t0 = time.perf_counter()
         res = locomo.evaluate(
-            mem, questions, k=10, memory_types=memory_types,
+            mem, questions, k=k, memory_types=memory_types,
             progress=lambda i, n: print(f"[{config_name}] {i}/{n}", flush=True)
             if i % 20 == 0 else None,
         )
@@ -64,7 +64,7 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
             "llm_budget": mem.budget.summary(),
             "structured_drops": dict(mem.structured.drops) if mem.structured else {},
             "stamp": {"embedder": mem.embedder.name, "model": "qwen3-0.6b",
-                      "k": 10, "dataset": "locomo10 conv0",
+                      "k": k, "budget_tokens": 6000, "dataset": "locomo10 conv0",
                       "max_sessions": max_sessions, "n_questions": len(questions)},
             "records": res["records"],
         }
@@ -88,17 +88,19 @@ def main() -> None:
     sample = locomo.load_locomo(DATA)[0]
     embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small",
                                            device="cuda")
+    # per-type k per fidelity audit P0-2 (Nemori official: episodic 10 / semantic 2k=20)
     known = {
-        "passthrough": (["passthrough"], ("episodic",)),
-        "amem": (["amem"], ("episodic", "notes")),
-        "nemori": (["nemori"], ("episodic", "episodes", "semantic")),
-        "memoryos": (["memoryos"], ("episodic", "pages", "semantic")),
-        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities")),
+        "passthrough": (["passthrough"], ("episodic",), 10),
+        "amem": (["amem"], ("episodic", "notes"), 10),
+        "nemori": (["nemori"], ("episodic", "episodes", "semantic"),
+                   {"episodic": 10, "episodes": 10, "semantic": 20}),
+        "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10),
+        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10),
     }
     for cfg in args.configs:
-        organizers, memory_types = known[cfg]
+        organizers, memory_types, k = known[cfg]
         run(cfg, organizers, memory_types,
-            sample, args.max_sessions, args.limit, embedder)
+            sample, args.max_sessions, args.limit, embedder, k=k)
 
 
 if __name__ == "__main__":
