@@ -83,19 +83,48 @@ on_message(ep):
 
 ## 4. LoCoMo 1차 재현 (conv0, 로컬 0.6B 단독)
 
-> ⏳ 실험 진행 중 — 완료 후 갱신. 조건: LoCoMo conv 0 (세션 19개, ~400턴),
-> passthrough(raw episode + hybrid retrieval) vs A-Mem(수정판), 동일 0.6B answer 모델,
-> k=10, F1/BLEU-1 (judge 불필요), 비용(calls/tokens/latency) 병기.
+> 조건: LoCoMo conv 0 (세션 19, 423턴, QA 199개 전부), passthrough(raw episode +
+> hybrid BM25+dense retrieval) vs A-Mem(수정판, episodic+notes 검색), **동일**
+> Qwen3-0.6B-Q8_0(answer/extract/distill 전부), e5-small 임베더, k=10,
+> F1/BLEU-1 (judge 불필요). 단일 run — 예비 결과.
 
-| config | Overall F1 | BLEU-1 | ingest 비용 | 비고 |
+| config | Overall F1 | BLEU-1 | ingest | ingest LLM calls | eval | drops |
+|---|---|---|---|---|---|---|
+| passthrough | 22.85 | 18.40 | **6.3s** | **0** | 69s | 0 |
+| A-Mem (fixed) | 23.25 (+0.40) | 19.04 | **946s** | **841** (extract 423 + distill 418) | 171s | 4 (~1%) |
+
+카테고리별 F1 (passthrough → A-Mem):
+
+| 카테고리 | n | passthrough | A-Mem | Δ |
 |---|---|---|---|---|
-| passthrough | (진행 중) | | LLM 0 calls | 대조군 |
-| A-Mem (fixed) | (진행 중) | | 턴당 2 calls | |
+| single-hop | 70 | 20.44 | 22.84 | **+2.40** |
+| multi-hop | 32 | 15.97 | 14.39 | **-1.58** |
+| temporal | 37 | 44.66 | 44.43 | -0.23 |
+| adversarial | 47 | 18.02 | 17.40 | -0.62 |
+| open-domain | 13 | 8.11 | 8.11 | 0 |
 
-해석 가이드 (사전 등록): 목표는 논문 절대 수치가 아니라 **(a) 동일 조건에서
-A-Mem 조직화가 passthrough 대비 주는 델타의 방향, (b) 그 델타의 비용**(턴당 LLM 2회).
-0.6B answer 모델의 절대 성능은 낮을 수밖에 없음 — 이 스터디의 관심사는
-"작은 모델일수록 메모리 시스템의 상대 이득이 커지는가"(Nemori 관찰)의 검증.
+### 해석 (발표용 정직 버전)
+
+1. **0.6B note-generator로는 A-Mem의 핵심 주장(multi-hop 이득)이 재현되지 않았다.**
+   오히려 multi-hop -1.6. 논문의 multi-hop 우위는 링크 품질에 의존하는데, 0.6B가
+   생성한 keywords/context의 품질로는 링크가 노이즈에 가까움. 논문 실험의 최소
+   백본이 1B였다는 점과 정합적 — **방법론의 이득이 organizer 모델 능력에 종속**된다는
+   실증. (단일 run/단일 대화 예비 결과라는 한계 병기할 것.)
+2. **비용 대비 이득이 극단적으로 나쁨**: +0.40 F1에 841 LLM 호출 (ingest 6.3s→946s,
+   150배). A-Mem 이슈 #21("왜 이렇게 느린가")의 정량 버전.
+3. **강한 baseline의 중요성**: raw episode + hybrid retrieval(BM25+dense+RRF)만으로
+   22.85 — 많은 메모리 논문이 약한 naive-RAG baseline과 비교한다는 비판적 관점 제공.
+4. temporal 44대의 상대적 고득점은 turn에 세션 날짜를 프리픽스한 ingest 설계 덕
+   (양쪽 동일 적용) — 메모리 조직화가 아닌 **표현(representation) 설계**의 효과.
+5. 방어층 통계: extract drop 4/423(~1%) — 0.6B로도 파이프라인이 무너지지 않음
+   (원본 구현은 이 실패가 silent skip).
+
+### 후속 (발표 전 여력 시)
+
+- [ ] answer 모델만 API(gpt-4o-mini)로 교체해 organizer 품질 효과 분리
+  (Nemori의 "약한 모델일수록 메모리 이득이 크다" 관찰의 역방향 검증)
+- [ ] extract/distill만 4B급으로 올린 티어링 조합 — "링크 품질" 가설 직접 검증
+- [ ] conv 1–2 추가로 다중 run 편차 확보
 
 ## 5. 발표 톡킹 포인트 제안
 

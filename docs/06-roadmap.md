@@ -31,9 +31,12 @@
 **완료 기준 달성**: MemoryOp 추상화가 대화형(A-Mem)·태스크형(ReasoningBank) 양극단을 누수 없이 수용. 테스트 39개 통과.
 발견 사항: 0.6B judge는 실패 궤적을 success로 오판하는 사례 확인 — judge role의 상위 모델 라우팅(티어링) 필요성 실증.
 
-## Phase 2 — 벤치마크 하네스 + 1차 재현 (2–3주)
+## Phase 2 — 벤치마크 하네스 + 1차 재현 (2–3주) — 진행 중
 
-- [ ] **LoCoMo** 파이프라인 (F1/BLEU-1 — judge 불필요라 가장 저렴한 시작점)
+- [x] **LoCoMo** 파이프라인 (F1/BLEU-1 — judge 불필요라 가장 저렴한 시작점)
+- [x] 1차 재현 (conv0, 로컬 0.6B 단독): passthrough F1 22.85 vs A-Mem(수정판) 23.25.
+      비용 841 calls/946s vs 0 calls/6.3s. multi-hop은 오히려 -1.6 — organizer 모델
+      품질 종속성 실증. 상세: `docs/08-amem-implementation-review.md` §4
 - [ ] **LongMemEval_S** 파이프라인 (judge pin `gpt-4o-2024-08-06`, reading `con`+`json` 고정, cleaned 버전 명시, ingest 아티팩트 캐시)
 - [ ] 1차 재현 실험 (PC, 0.6B extract + API judge):
   - A-Mem × LoCoMo — 원논문 GPT-4o-mini 수치와 방향성 비교
