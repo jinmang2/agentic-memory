@@ -95,6 +95,21 @@ class SqliteVecStore:
                 break
         return out
 
+    def get(self, ids: list[str]) -> dict[str, list[float]]:
+        if not ids:
+            return {}
+        with self._lock:
+            marks = ",".join("?" * len(ids))
+            rows = self._conn.execute(
+                f"SELECT m.item_id, v.embedding FROM vec_map m"
+                f" JOIN vectors v ON v.rowid = m.rowid WHERE m.item_id IN ({marks})",
+                ids,
+            ).fetchall()
+        return {
+            item_id: list(struct.unpack(f"{self.dim}f", blob))
+            for item_id, blob in rows
+        }
+
     def count(self) -> int:
         with self._lock:
             return int(self._conn.execute("SELECT COUNT(*) FROM vec_map").fetchone()[0])

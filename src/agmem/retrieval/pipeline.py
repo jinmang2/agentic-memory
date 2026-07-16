@@ -14,10 +14,12 @@ from agmem.stores.base import DocStore, VectorStore
 
 
 class RetrievalPipeline:
-    def __init__(self, doc: DocStore, vec: VectorStore, embedder: Embedder) -> None:
+    def __init__(self, doc: DocStore, vec: VectorStore, embedder: Embedder,
+                 reranker=None) -> None:
         self.doc = doc
         self.vec = vec
         self.embedder = embedder
+        self.reranker = reranker  # None -> keep fusion order
 
     def search(
         self,
@@ -39,7 +41,12 @@ class RetrievalPipeline:
                 rankings.append(
                     self.doc.search_lexical(query, k=candidate_k, namespace=namespace)
                 )
-            fused = rrf_fuse(rankings)[:k]
+            fused = rrf_fuse(rankings)
+            if self.reranker is not None and len(fused) > k:
+                vectors = self.vec.get([cid for cid, _ in fused])
+                fused = self.reranker.rerank(query_emb, fused, vectors, k)
+            else:
+                fused = fused[:k]
             bundle.items.extend(self._hydrate(fused, memory_type))
         return bundle
 

@@ -17,17 +17,19 @@
 **완료 기준 달성**: `AgenticMemory(organizers=["passthrough"])` add→search 동작 확인.
 참고: 호스트에 qdrant(6333)·redis(6379) 포트 활성 감지됨 — full 프로파일 테스트에 활용 가능.
 
-## Phase 1 — 첫 방법론 2종 + 추상화 검증 (2주)
+## Phase 1 — 첫 방법론 2종 + 추상화 검증 (2주) — 2026-07-16 완료
 
 구현 난이도 "하"이면서 설계 공간의 양극단인 둘을 먼저:
 
-- [ ] **ReasoningBank organizer** (가장 단순: judge→증류→append, k=1 검색)
-- [ ] **A-Mem organizer** (노트+링크+진화; 원논문 버그 3종 — L2/cosine #24, 인덱스 반환 #32, 중복 검색 #7 — 수정판과 fidelity 모드 양쪽)
-- [ ] retrieval 파이프라인 v1 (Dense+Lexical → RRF → MMR)
-- [ ] 비동기 워커 + `flush()`
-- [ ] `bench/harness.py` 골격: calls/tokens/latency 자동 계측
+- [x] **ReasoningBank organizer** (self-judge→성공/실패 증류→append; field-level fallback으로 깨진 아이템만 스킵)
+- [x] **A-Mem organizer** (노트+링크+진화 배치 호출; **버그 수정판**: 이웃을 인덱스가 아닌 ID로 참조(#32), cosine 보장(#24), 환각 ID 필터, silent skip 금지. fidelity="paper"는 하이퍼파라미터만 재현)
+- [x] retrieval 파이프라인 v1 (Dense+Lexical → RRF → MMR; vector store에 `get()` 추가)
+- [x] 비동기 워커 + `flush()` (raw episode는 항상 동기 인덱싱 — read는 write를 기다리지 않음)
+- [x] `bench/harness.py` 골격: multi-run mean±std + calls/tokens/latency + 조건 스탬프(commit/profile/embedder)
+- [x] **0.5B 방어층 실전 검증**: Qwen3-0.6B E2E에서 top-level 배열 반환 실패 모드 발견 → 스키마 유도 배열 코어싱 추가 → **drop 0회** (notes 2 + strategies 1, 5.7s/6 LLM calls)
 
-**완료 기준**: MemoryOp 추상화가 두 방법론을 누수 없이 수용함을 확인 (설계 리스크 조기 해소).
+**완료 기준 달성**: MemoryOp 추상화가 대화형(A-Mem)·태스크형(ReasoningBank) 양극단을 누수 없이 수용. 테스트 39개 통과.
+발견 사항: 0.6B judge는 실패 궤적을 success로 오판하는 사례 확인 — judge role의 상위 모델 라우팅(티어링) 필요성 실증.
 
 ## Phase 2 — 벤치마크 하네스 + 1차 재현 (2–3주)
 

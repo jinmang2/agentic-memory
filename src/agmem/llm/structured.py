@@ -21,11 +21,11 @@ from agmem.llm.client import LLMClient
 
 logger = logging.getLogger("agmem.llm")
 
-_JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
+_JSON_BLOCK = re.compile(r"\{.*\}|\[.*\]", re.DOTALL)
 
 
-def extract_json(text: str) -> dict[str, Any] | None:
-    """Parse the first JSON object found in ``text`` (handles code fences)."""
+def extract_json(text: str) -> dict[str, Any] | list | None:
+    """Parse the first JSON value found in ``text`` (handles code fences)."""
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -36,6 +36,22 @@ def extract_json(text: str) -> dict[str, Any] | None:
             return json.loads(match.group(0))
         except json.JSONDecodeError:
             return None
+    return None
+
+
+def coerce_to_schema(parsed: Any, schema: dict[str, Any]) -> dict[str, Any] | None:
+    """Schema-guided repair for common small-model deviations.
+
+    A frequent 0.5B failure: returning the bare array when the schema is an
+    object with a single array property (observed with Qwen3-0.6B). Wrap it.
+    """
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        props = schema.get("properties", {})
+        array_keys = [k for k, v in props.items() if v.get("type") == "array"]
+        if len(array_keys) == 1:
+            return {array_keys[0]: parsed}
     return None
 
 
@@ -80,7 +96,7 @@ class StructuredCaller:
                     overrides = {}  # endpoint may reject guided_json — retry without
                     continue
                 break
-            parsed = extract_json(last_output)
+            parsed = coerce_to_schema(extract_json(last_output), schema)
             if parsed is not None and all(k in parsed for k in required_keys):
                 return parsed
             messages.append({"role": "assistant", "content": last_output})

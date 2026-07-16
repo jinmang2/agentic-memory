@@ -8,8 +8,10 @@ logged append-only before being applied to stores.
 from __future__ import annotations
 
 import logging
+import queue
+import threading
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
@@ -21,6 +23,7 @@ from agmem.embed.base import Embedder
 from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
 from agmem.organizers import ORGANIZERS, Organizer, OrganizerContext
 from agmem.retrieval import RetrievalPipeline
+from agmem.retrieval.rerank import RERANKER_CANDIDATES
 from agmem.stores import VECTOR_STORE_CANDIDATES, SqliteDocStore
 
 logger = logging.getLogger("agmem")
@@ -100,7 +103,27 @@ class AgenticMemory:
             doc=self.doc, vec=self.vec, embedder=self.embedder,
             namespace=self.namespace, llm=self.structured,
         )
-        self.pipeline = RetrievalPipeline(self.doc, self.vec, self.embedder)
+
+        # --- reranker (Noop keeps fusion order; MMR adds diversity) ---------
+        reranker_cls, notes = resolve(
+            "reranker", RERANKER_CANDIDATES, self.caps,
+            override=self.config.overrides.get("reranker"),
+            profile_default=self.config.slot_default("reranker"),
+            strict=self.config.strict,
+        )
+        self._degradations.extend(notes)
+        self.reranker = reranker_cls()
+        self.pipeline = RetrievalPipeline(self.doc, self.vec, self.embedder,
+                                          reranker=self.reranker)
+
+        # --- async write worker (docs/03 §3.2) ------------------------------
+        self._queue: queue.Queue[Callable[[], None]] | None = None
+        self._worker: threading.Thread | None = None
+        if not self.config.sync_write:
+            self._queue = queue.Queue()
+            self._worker = threading.Thread(target=self._drain, daemon=True,
+                                            name="agmem-worker")
+            self._worker.start()
 
     # ---- write ------------------------------------------------------------
 
@@ -117,9 +140,10 @@ class AgenticMemory:
         self.doc.append([MemoryOp(op=OpType.ADD, target_type="episodic",
                                   target_id=ep.id, actor="ingest",
                                   payload={"role": role})])
-        # organizers (synchronous in Phase 0; queue lands in Phase 1)
-        for org in self.organizers:
+        self._dispatch(lambda: [
             self._apply_ops(org.on_message(ep, self._ctx), actor=org.name)
+            for org in self.organizers
+        ])
         return ep
 
     def add_task_result(self, trajectory: list[dict], outcome: str,
@@ -134,9 +158,11 @@ class AgenticMemory:
         self.doc.append([MemoryOp(op=OpType.ADD, target_type="episodic",
                                   target_id=ep.id, actor="ingest",
                                   payload={"outcome": outcome})])
-        for org in self.organizers:
+        self._dispatch(lambda: [
             self._apply_ops(org.on_task_end(trajectory, outcome, task, self._ctx),
                             actor=org.name)
+            for org in self.organizers
+        ])
 
     def warm_start(self, corpus: list[Episode]) -> None:
         for ep in corpus:
@@ -146,8 +172,31 @@ class AgenticMemory:
         for org in self.organizers:
             self._apply_ops(org.warm_start(corpus, self._ctx), actor=org.name)
 
+    def _dispatch(self, work: Callable[[], Any]) -> None:
+        """Run organizer work sync or hand it to the background worker.
+
+        The raw episode is already stored/indexed synchronously before this
+        is called, so reads never wait on organization (docs/03 §3.2)."""
+        if self._queue is not None:
+            self._queue.put(work)
+        else:
+            work()
+
+    def _drain(self) -> None:
+        assert self._queue is not None
+        while True:
+            work = self._queue.get()
+            try:
+                work()
+            except Exception:
+                logger.exception("organizer work failed in background worker")
+            finally:
+                self._queue.task_done()
+
     def flush(self) -> None:
-        """Drain pending writes. No-op while writes are synchronous."""
+        """Block until all queued organizer work is applied."""
+        if self._queue is not None:
+            self._queue.join()
         self.vec.persist()
 
     def _apply_ops(self, ops: list[MemoryOp], actor: str) -> None:
@@ -161,7 +210,12 @@ class AgenticMemory:
 
     def _apply_one(self, op: MemoryOp) -> None:
         if op.op in (OpType.ADD, OpType.UPDATE, OpType.MERGE):
-            data = dict(op.payload)
+            if op.op is OpType.ADD:
+                data = dict(op.payload)
+            else:  # UPDATE/MERGE: merge into existing item, don't clobber
+                existing = self.doc.get_items([op.target_id], op.target_type)
+                data = dict(existing[0]) if existing else {}
+                data.update(op.payload)
             data.setdefault("id", op.target_id)
             self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
             text = data.get("embedding_text") or data.get("content")
@@ -233,5 +287,7 @@ class AgenticMemory:
         }
 
     def close(self) -> None:
+        if self._queue is not None:
+            self._queue.join()  # drain pending organizer work before closing
         self.vec.close()
         self.doc.close()

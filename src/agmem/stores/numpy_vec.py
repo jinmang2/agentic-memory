@@ -84,6 +84,10 @@ class NumpyVectorStore:
                     break
             return out
 
+    def get(self, ids: list[str]) -> dict[str, list[float]]:
+        with self._lock:
+            return {i: self._vecs[self._pos[i]].tolist() for i in ids if i in self._pos}
+
     def count(self) -> int:
         with self._lock:
             return len(self._ids)
