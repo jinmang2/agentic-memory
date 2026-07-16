@@ -3,6 +3,9 @@
 > 조건: LoCoMo conv0 (세션 19, 423턴, QA 199), **전 역할 Qwen3-0.6B-Q8_0** (RTX 2060,
 > llama.cpp), e5-small 임베더, k=10, F1/BLEU-1. 단일 run 예비 결과.
 > 원자료: `results/locomo-conv0-*.json` (per-question 레코드 포함).
+> **Fidelity**: 측정 4종은 충실도 ●/◑ 등급만 포함 (docs/10-fidelity-audit.md).
+> MemoryOS는 segment 매칭 F_score에서 Jaccard 항이 빠진 cosine 단독 구현 — 수치 해석 시 유의.
+> Zep-graph·G-Memory는 골격(○) 단계라 측정에서 의도적으로 제외.
 
 | config | Overall F1 | BLEU-1 | ingest | organizer LLM calls | drops |
 |---|---|---|---|---|---|
