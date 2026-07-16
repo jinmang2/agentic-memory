@@ -44,7 +44,15 @@ class RetrievalPipeline:
             fused = rrf_fuse(rankings)
             if self.reranker is not None and len(fused) > k:
                 vectors = self.vec.get([cid for cid, _ in fused])
-                fused = self.reranker.rerank(query_emb, fused, vectors, k)
+                texts = None
+                if getattr(self.reranker, "needs_text", False):
+                    texts = {
+                        s.item.id if hasattr(s.item, "id") else s.item.data["id"]:
+                        (s.item.content or "")
+                        for s in self._hydrate(fused, memory_type)
+                    }
+                fused = self.reranker.rerank(query_emb, fused, vectors, k,
+                                             texts=texts, query=query)
             else:
                 fused = fused[:k]
             bundle.items.extend(self._hydrate(fused, memory_type))

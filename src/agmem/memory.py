@@ -112,7 +112,10 @@ class AgenticMemory:
             strict=self.config.strict,
         )
         self._degradations.extend(notes)
-        self.reranker = reranker_cls()
+        if reranker_cls.__name__ == "LLMReranker":
+            self.reranker = reranker_cls(self.structured)
+        else:
+            self.reranker = reranker_cls()
         self.pipeline = RetrievalPipeline(self.doc, self.vec, self.embedder,
                                           reranker=self.reranker)
 
@@ -248,6 +251,46 @@ class AgenticMemory:
                k: int = 10) -> MemoryBundle:
         return self.pipeline.search(query, k=k, memory_types=tuple(memory_types),
                                     namespace=self.namespace)
+
+    def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:
+        """Close the loop: usage outcome adjusts memory quality signals.
+
+        Playbook bullets get helpful/harmful counters (ACE); strategy items
+        get reward-shaped scores +1/-2 (G-Memory backward). Returns the
+        number of memories updated."""
+        ops: list[MemoryOp] = []
+        for mid in memory_ids:
+            bullets = self.doc.get_items([mid], "playbook")
+            if bullets:
+                field = "helpful" if helpful else "harmful"
+                ops.append(MemoryOp(op=OpType.UPDATE, target_type="playbook",
+                                    target_id=mid,
+                                    payload={field: int(bullets[0].get(field, 0)) + 1}))
+                continue
+            strategies = self.doc.get_items([mid], "strategies")
+            if strategies:
+                delta = 1.0 if helpful else -2.0
+                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
+                                    target_id=mid,
+                                    payload={"score": float(strategies[0].get("score", 0)) + delta}))
+        self._apply_ops(ops, actor="feedback")
+        return len(ops)
+
+    def get_playbook(self, section: str | None = None, k: int = 200) -> str:
+        """Render the ACE playbook (all bullets, grouped by section)."""
+        hits = self.vec.search(self.embedder.embed(["playbook"], kind="query")[0],
+                               k=k, memory_type="playbook", namespace=self.namespace)
+        bullets = self.doc.get_items([h[0] for h in hits], "playbook")
+        if section:
+            bullets = [b for b in bullets if b.get("section") == section]
+        by_section: dict[str, list[str]] = {}
+        for b in bullets:
+            by_section.setdefault(b.get("section", "general"), []).append(
+                f"[{b.get('section','general')}-{b['id'][:5]}] "
+                f"helpful={b.get('helpful', 0)} harmful={b.get('harmful', 0)} "
+                f":: {b.get('content', '')}")
+        return "\n".join(f"## {s}\n" + "\n".join(lines)
+                         for s, lines in sorted(by_section.items()))
 
     # ---- introspection --------------------------------------------------------
 

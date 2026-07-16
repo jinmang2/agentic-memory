@@ -26,6 +26,7 @@ def utcnow() -> datetime:
 # Memory type tags used for namespacing collections and filtering search.
 MEMORY_TYPES = (
     "episodic",   # raw episodes (always present)
+    "episodes",   # Nemori derived narrative episodes
     "notes",      # A-Mem zettelkasten notes
     "pages",      # MemoryOS dialogue pages / segments
     "semantic",   # Nemori distilled facts, MemoryOS knowledge
