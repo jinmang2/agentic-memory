@@ -24,6 +24,16 @@ agmem-mcp = "agmem.mcp.server:main"
 dev = [
     "pytest>=9.1.1",
 ]
+embed = ["sentence-transformers>=3.0"]
+
+[tool.uv]
+default-groups = ["dev", "embed"]
 
 [project.optional-dependencies]
-embed = ["sentence-transformers>=3.0"]
+train = [
+    "transformers>=4.51",
+    "datasets>=3.0",
+    "peft>=0.14",
+    "bitsandbytes>=0.45",
+    "accelerate>=1.0",
+]

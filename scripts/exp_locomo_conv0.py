@@ -88,13 +88,17 @@ def main() -> None:
     sample = locomo.load_locomo(DATA)[0]
     embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small",
                                            device="cuda")
+    known = {
+        "passthrough": (["passthrough"], ("episodic",)),
+        "amem": (["amem"], ("episodic", "notes")),
+        "nemori": (["nemori"], ("episodic", "episodes", "semantic")),
+        "memoryos": (["memoryos"], ("episodic", "pages", "semantic")),
+        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities")),
+    }
     for cfg in args.configs:
-        if cfg == "passthrough":
-            run("passthrough", ["passthrough"], ("episodic",),
-                sample, args.max_sessions, args.limit, embedder)
-        elif cfg == "amem":
-            run("amem", ["amem"], ("episodic", "notes"),
-                sample, args.max_sessions, args.limit, embedder)
+        organizers, memory_types = known[cfg]
+        run(cfg, organizers, memory_types,
+            sample, args.max_sessions, args.limit, embedder)
 
 
 if __name__ == "__main__":

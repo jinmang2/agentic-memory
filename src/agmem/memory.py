@@ -197,9 +197,14 @@ class AgenticMemory:
                 self._queue.task_done()
 
     def flush(self) -> None:
-        """Block until all queued organizer work is applied."""
+        """Block until all queued organizer work is applied, then flush
+        any organizer-held buffers (Nemori/MemoryOS tail segments)."""
         if self._queue is not None:
             self._queue.join()
+        for org in self.organizers:
+            flush_buffer = getattr(org, "flush_buffer", None)
+            if callable(flush_buffer):
+                self._apply_ops(flush_buffer(self._ctx), actor=org.name)
         self.vec.persist()
 
     def _apply_ops(self, ops: list[MemoryOp], actor: str) -> None:
