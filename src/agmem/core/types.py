@@ -1,0 +1,202 @@
+"""Core domain types shared by every organizer and store.
+
+Design rules (docs/03, docs/04):
+- Raw ``Episode`` records are immutable — organizers derive from them,
+  never rewrite them (verbatim-loss defense).
+- Every derived item keeps ``source_episode_ids`` provenance.
+- ``Fact`` carries the bi-temporal fields from the Zep design.
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any
+
+
+def new_id() -> str:
+    return uuid.uuid4().hex
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+# Memory type tags used for namespacing collections and filtering search.
+MEMORY_TYPES = (
+    "episodic",   # raw episodes (always present)
+    "notes",      # A-Mem zettelkasten notes
+    "pages",      # MemoryOS dialogue pages / segments
+    "semantic",   # Nemori distilled facts, MemoryOS knowledge
+    "entities",   # Zep-graph entity nodes
+    "facts",      # Zep-graph bi-temporal edges
+    "strategies", # ReasoningBank items, G-Memory insights
+    "playbook",   # ACE bullets
+)
+
+
+@dataclass(frozen=True)
+class Episode:
+    """Immutable raw input: one message or one ingested chunk."""
+
+    content: str
+    role: str = "user"
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    timestamp: datetime = field(default_factory=utcnow)
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    def embedding_text(self) -> str:
+        return self.content
+
+
+@dataclass
+class Note:
+    """A-Mem style zettelkasten note."""
+
+    content: str
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    keywords: list[str] = field(default_factory=list)
+    tags: list[str] = field(default_factory=list)
+    context: str = ""
+    links: list[str] = field(default_factory=list)
+    source_episode_ids: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=utcnow)
+
+    def embedding_text(self) -> str:
+        # A-Mem finding: embed content concatenated with metadata.
+        parts = [self.content, " ".join(self.keywords), " ".join(self.tags), self.context]
+        return " \n".join(p for p in parts if p)
+
+
+@dataclass
+class SemanticFact:
+    """Distilled knowledge statement (Nemori calibration output)."""
+
+    content: str
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    confidence: float = 1.0
+    source_episode_ids: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=utcnow)
+
+    def embedding_text(self) -> str:
+        return self.content
+
+
+@dataclass
+class Entity:
+    """Deduplicated entity node (Zep-graph)."""
+
+    name: str
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    summary: str = ""
+    entity_type: str = "Entity"
+    source_episode_ids: list[str] = field(default_factory=list)
+
+    def embedding_text(self) -> str:
+        return f"{self.name}: {self.summary}" if self.summary else self.name
+
+
+@dataclass
+class Fact:
+    """Bi-temporal edge between two entities (Zep design).
+
+    ``valid_at``/``invalid_at`` describe the real world; ``created_at``/
+    ``expired_at`` describe what the system believed and when. Facts are
+    never deleted — they are invalidated (OpType.INVALIDATE).
+    """
+
+    subject_id: str
+    predicate: str
+    object_id: str
+    content: str
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    valid_at: datetime | None = None
+    invalid_at: datetime | None = None
+    created_at: datetime = field(default_factory=utcnow)
+    expired_at: datetime | None = None
+    source_episode_ids: list[str] = field(default_factory=list)
+
+    def embedding_text(self) -> str:
+        return self.content
+
+
+@dataclass
+class StrategyItem:
+    """ReasoningBank memory item (also used for G-Memory insights)."""
+
+    title: str
+    description: str
+    content: str
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    outcome: str = "success"  # success | failure
+    score: float = 0.0        # G-Memory reward shaping
+    source_episode_ids: list[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=utcnow)
+
+    def embedding_text(self) -> str:
+        return f"{self.title}\n{self.description}"
+
+    def render(self) -> str:
+        return f"## {self.title}\n{self.description}\n{self.content}"
+
+
+@dataclass
+class Bullet:
+    """ACE playbook bullet with helpful/harmful counters."""
+
+    content: str
+    section: str = "general"
+    id: str = field(default_factory=new_id)
+    namespace: str = "main"
+    helpful: int = 0
+    harmful: int = 0
+    source_episode_ids: list[str] = field(default_factory=list)
+
+    def embedding_text(self) -> str:
+        return self.content
+
+    def render(self) -> str:
+        return f"[{self.section}-{self.id[:5]}] helpful={self.helpful} harmful={self.harmful} :: {self.content}"
+
+
+@dataclass
+class ScoredItem:
+    """A retrieval hit: the item plus where it came from and its rank score."""
+
+    item: Any
+    memory_type: str
+    score: float
+    provenance: list[str] = field(default_factory=list)
+
+
+@dataclass
+class MemoryBundle:
+    """Search result across memory types, renderable under a token budget."""
+
+    query: str
+    items: list[ScoredItem] = field(default_factory=list)
+
+    # Rough chars-per-token used by render(); good enough for budgeting.
+    CHARS_PER_TOKEN = 4
+
+    def render(self, budget_tokens: int = 1600) -> str:
+        """Concatenate item texts by descending score until the budget is spent."""
+        budget_chars = budget_tokens * self.CHARS_PER_TOKEN
+        out: list[str] = []
+        used = 0
+        for scored in sorted(self.items, key=lambda s: s.score, reverse=True):
+            item = scored.item
+            text = item.render() if hasattr(item, "render") else getattr(item, "content", str(item))
+            block = f"[{scored.memory_type}] {text}"
+            if used + len(block) > budget_chars and out:
+                break
+            out.append(block)
+            used += len(block)
+        return "\n\n".join(out)

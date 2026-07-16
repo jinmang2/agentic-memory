@@ -1,0 +1,25 @@
+[project]
+name = "agmem"
+version = "0.1.0"
+description = "Unified agentic memory library: 7 memory methodologies behind one capability-gated API"
+authors = [
+    { name = "MyungHoon Jin", email = "jinmang2@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.1",
+    "openai>=2.45.0",
+    "sqlite-vec>=0.1.9",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[project.optional-dependencies]
+embed = ["sentence-transformers>=3.0"]

@@ -1,0 +1,33 @@
+# agmem 설정 예시 — 우선순위: 이 파일의 값 > profile 기본값 > capability 매칭
+
+[profile]
+name = "lite"        # lite | standard | full
+strict = false       # true면 요구 미충족 시 강등 대신 에러
+
+[storage]
+data_dir = "~/.agmem/data"   # 생략 시 in-memory (테스트용)
+
+[embed]
+model = "intfloat/multilingual-e5-small"   # 한국어 포함 multilingual, 384d, CPU 가능
+
+[write]
+sync = true          # Phase 1에서 async queue 기본값으로 전환 예정
+
+# 역할별 LLM 라우팅 — 로컬 0.6B가 추출을, API가 judge를 담당하는 티어링
+[llm.extract]
+endpoint = "http://localhost:8080/v1"      # llama.cpp llama-server
+model = "qwen3-0.6b"
+temperature = 0.1
+max_tokens = 1024
+
+[llm.distill]
+endpoint = "http://localhost:8080/v1"
+model = "qwen3-0.6b"
+
+# [llm.judge]
+# endpoint = "https://api.openai.com/v1"
+# model = "gpt-4o-2024-08-06"              # LongMemEval judge pin
+# api_key = "env:OPENAI_API_KEY"
+
+# [override]
+# vector_store = "NumpyVectorStore"        # profile 기본값 강제 오버라이드
