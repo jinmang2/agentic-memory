@@ -37,6 +37,7 @@
 - [x] 1차 재현 (conv0, 로컬 0.6B 단독): passthrough F1 22.85 vs A-Mem(수정판) 23.25.
       비용 841 calls/946s vs 0 calls/6.3s. multi-hop은 오히려 -1.6 — organizer 모델
       품질 종속성 실증. 상세: `docs/08-amem-implementation-review.md` §4
+- [x] LoCoMo conv0 4-way 완료 (passthrough/A-Mem/Nemori/MemoryOS — docs/09-results-summary.md)
 - [ ] **LongMemEval_S** 파이프라인 (judge pin `gpt-4o-2024-08-06`, reading `con`+`json` 고정, cleaned 버전 명시, ingest 아티팩트 캐시)
 - [ ] 1차 재현 실험 (PC, 0.6B extract + API judge):
   - A-Mem × LoCoMo — 원논문 GPT-4o-mini 수치와 방향성 비교
@@ -45,23 +46,23 @@
 
 **완료 기준**: `agmem-bench` 한 줄로 표가 나오고, 결과에 전체 실험 조건이 스탬프됨.
 
-## Phase 3 — 나머지 방법론 + MCP 배포 (3–4주)
+## Phase 3 — 나머지 방법론 + MCP 배포 (3–4주) — 2026-07-16 완료 (Claude Code dogfooding 제외)
 
-- [ ] **Nemori organizer** (분절→서사→predict-calibrate; 시간 절대화 포함)
-- [ ] **MemoryOS organizer** (STM/MTM/LPM, heat, LFU)
-- [ ] **ACE organizer** (3-role, delta ops, dedup 0.90 — 기본 on으로 원논문 함정 회피)
-- [ ] **Zep-graph organizer** (graph store 위: entity resolution→bi-temporal fact→invalidation→label propagation community) — 가장 무거우므로 마지막
-- [ ] **G-Memory organizer** (MAS 훅; AutoGen 예제 1개)
-- [ ] rerank 어댑터 완성 (LLMReranker, CrossEncoder — capability-gated)
-- [ ] **MCP 서버 배포**: stdio + HTTP, Claude Code 연동 실사용 (본인 코딩 세션에 물려 dogfooding)
+- [x] **Nemori organizer** (분절→서사→predict-calibrate; 시간 절대화 포함)
+- [x] **MemoryOS organizer** (STM/MTM/LPM, heat, LFU)
+- [x] **ACE organizer** (3-role, delta ops, dedup 0.90 — 기본 on으로 원논문 함정 회피)
+- [x] **Zep-graph organizer** (community detection은 TODO) (graph store 위: entity resolution→bi-temporal fact→invalidation→label propagation community) — 가장 무거우므로 마지막
+- [x] **G-Memory organizer** (클린룸 재구현; MAS 예제는 추후) (MAS 훅; AutoGen 예제 1개)
+- [x] rerank 어댑터 완성 (LLMReranker, CrossEncoder — capability-gated)
+- [x] **MCP 서버 배포**: stdio + HTTP, 6 tools, agmem-mcp entry point (Claude Code dogfooding은 사용자 리뷰 시)
 
 **완료 기준**: 7개 organizer 전부 동일 API로 구동 + MCP로 Claude Code에서 실사용.
 
 ## Phase 4 — 소형 모델 학습 + 심화 재현 (3–4주, 선택 확장)
 
-- [ ] **SFT 데이터 생성**: 대형 모델(API)로 분절/추출/증류 태스크의 입출력 쌍 생성
+- [~] **SFT 데이터 생성**: 파이프라인 구현 완료(train/distill_data.py) — 실행은 API teacher 키 확보 후: 대형 모델(API)로 분절/추출/증류 태스크의 입출력 쌍 생성
       (LoCoMo/LongMemEval 히스토리 + 자체 대화 로그 소스)
-- [ ] **Qwen3-0.6B QLoRA** (RTX 2060 6GB: 4bit base + LoRA r=16, batch 1 + grad accum — 가능성 확인됨)
+- [~] **Qwen3-0.6B QLoRA**: 트레이너 구현 완료(train/sft_lora.py, train extra) — 실행 대기 (RTX 2060 6GB: 4bit base + LoRA r=16, batch 1 + grad accum — 가능성 확인됨)
       태스크별 어댑터: ① boundary 탐지 ② note/entity 추출(JSON) ③ 전략 증류
 - [ ] 평가: 구조화 출력 준수율 / 추출 품질(vs API 모델) / 최종 벤치 점수 개선폭
 - [ ] **LongMemEval 2차 재현**: 학습된 0.5B extract 모델 vs 프롬프트만 0.6B vs API 3-way 비교
