@@ -31,7 +31,8 @@ def make_roles() -> dict[str, RoleConfig]:
 
 
 def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
-        sample, max_sessions, limit, embedder, k: int | dict = 10) -> dict:
+        sample, max_sessions, limit, embedder, k: int | dict = 10,
+        keyword_queries: bool = False) -> dict:
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}", organizers=organizers,
         embedder=embedder,
@@ -47,6 +48,7 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
         t0 = time.perf_counter()
         res = locomo.evaluate(
             mem, questions, k=k, memory_types=memory_types,
+            keyword_queries=keyword_queries,
             progress=lambda i, n: print(f"[{config_name}] {i}/{n}", flush=True)
             if i % 20 == 0 else None,
         )
@@ -65,6 +67,7 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
             "structured_drops": dict(mem.structured.drops) if mem.structured else {},
             "stamp": {"embedder": mem.embedder.name, "model": "qwen3-0.6b",
                       "k": k, "budget_tokens": 6000, "dataset": "locomo10 conv0",
+                      "keyword_queries": keyword_queries,
                       "max_sessions": max_sessions, "n_questions": len(questions)},
             "records": res["records"],
         }
@@ -88,19 +91,28 @@ def main() -> None:
     sample = locomo.load_locomo(DATA)[0]
     embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small",
                                            device="cuda")
-    # per-type k per fidelity audit P0-2 (Nemori official: episodic 10 / semantic 2k=20)
+    # config = (organizers, memory_types, k, keyword_queries).
+    # amem/nemori are methodology-pure per the 2nd fidelity re-audit: upstream
+    # evals retrieve only the organizer's own memory types (A-Mem notes-only
+    # with LLM keyword queries; Nemori episodes k=10 / semantic m=2k=20). The
+    # *_mixed variants keep the previous raw-episodic RAG channel for
+    # ablation-style comparison — their numbers are NOT paper reproductions.
     known = {
-        "passthrough": (["passthrough"], ("episodic",), 10),
-        "amem": (["amem"], ("episodic", "notes"), 10),
-        "nemori": (["nemori"], ("episodic", "episodes", "semantic"),
-                   {"episodic": 10, "episodes": 10, "semantic": 20}),
-        "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10),
-        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10),
+        "passthrough": (["passthrough"], ("episodic",), 10, False),
+        "amem": (["amem"], ("notes",), 10, True),
+        "nemori": (["nemori"], ("episodes", "semantic"),
+                   {"episodes": 10, "semantic": 20}, False),
+        "amem_mixed": (["amem"], ("episodic", "notes"), 10, False),
+        "nemori_mixed": (["nemori"], ("episodic", "episodes", "semantic"),
+                         {"episodic": 10, "episodes": 10, "semantic": 20}, False),
+        "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10, False),
+        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10, False),
     }
     for cfg in args.configs:
-        organizers, memory_types, k = known[cfg]
+        organizers, memory_types, k, keyword_queries = known[cfg]
         run(cfg, organizers, memory_types,
-            sample, args.max_sessions, args.limit, embedder, k=k)
+            sample, args.max_sessions, args.limit, embedder, k=k,
+            keyword_queries=keyword_queries)
 
 
 if __name__ == "__main__":

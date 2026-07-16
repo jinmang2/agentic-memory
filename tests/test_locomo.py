@@ -1,5 +1,7 @@
-from agmem.bench.locomo import (bleu1, evidence_sessions, iter_turns,
+from agmem import AgenticMemory
+from agmem.bench.locomo import (answer, bleu1, evidence_sessions, iter_turns,
                                 select_questions, token_f1)
+from agmem.embed.fake import FakeEmbedder
 
 
 def test_token_f1_squad_normalization():
@@ -44,3 +46,62 @@ def test_select_questions_respects_session_prefix():
 
 def test_evidence_sessions_parsing():
     assert evidence_sessions({"evidence": ["D3:12", "D10:4"]}) == {3, 10}
+
+
+class _StubLLM:
+    def chat(self, role, messages):
+        return "stub answer"
+
+
+class _StubStructured:
+    def __init__(self, keywords):
+        self.keywords = keywords
+
+    def call(self, role, prompt, schema, required_keys=()):
+        return {"keywords": self.keywords}
+
+
+def test_keyword_queries_rewrite_the_search_query():
+    """A-Mem official eval: the LLM keyword string replaces the raw question."""
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"],
+                        embedder=FakeEmbedder(dim=128))
+    try:
+        mem.llm = _StubLLM()
+        mem.structured = _StubStructured("paris, museums, travel")
+        seen = {}
+        original_search = mem.search
+
+        def spy(query, **kwargs):
+            seen["query"] = query
+            return original_search(query, **kwargs)
+
+        mem.search = spy
+        answer(mem, "Where did A travel?", keyword_queries=True)
+        assert seen["query"] == "paris, museums, travel"
+
+        answer(mem, "Where did A travel?", keyword_queries=False)
+        assert seen["query"] == "Where did A travel?"
+    finally:
+        mem.close()
+
+
+def test_keyword_queries_fall_back_to_question_on_llm_failure():
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"],
+                        embedder=FakeEmbedder(dim=128))
+    try:
+        mem.llm = _StubLLM()
+        failing = _StubStructured("")
+        failing.call = lambda *a, **k: None
+        mem.structured = failing
+        seen = {}
+        original_search = mem.search
+
+        def spy(query, **kwargs):
+            seen["query"] = query
+            return original_search(query, **kwargs)
+
+        mem.search = spy
+        answer(mem, "Where did A travel?", keyword_queries=True)
+        assert seen["query"] == "Where did A travel?"
+    finally:
+        mem.close()

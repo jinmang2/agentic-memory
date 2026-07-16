@@ -1,5 +1,20 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-16 2차 재감사 (P0/P1 수정 커밋 70ba537 이후, upstream 당일 소스 재대조)**:
+> 병렬 감사 2건으로 A-Mem·Nemori를 재검증. 판정:
+>
+> - **A-Mem ◑ → ◑⁺ (코드 ●)**: P0-1(1-hop 링크 확장) P0-3(예산 6000) P1-5(strengthen
+>   `new_note_tags`) 정확 반영 확인. 잔여: [높음] raw episodic 채널 혼입(→ `amem` config를
+>   notes-only로 순수화, 구 설정은 `amem_mixed`로 분리), [중간] LLM 키워드 질의 생성 부재
+>   (→ `keyword_queries` 옵션으로 구현, `amem` config 기본 on), [낮음] 렌더 keywords 미노출.
+> - **Nemori ◑ → ◑⁺**: P0-2(episodic 10/semantic 2k=20) r=2 원문 첨부·cold-start·30분
+>   갭·timestamp 모두 정확 반영 확인. 잔여: [높음] raw episodic 채널 혼입(→ `nemori` config를
+>   episodes+semantic으로 순수화, 구 설정은 `nemori_mixed`), [중간] episode merging 부재
+>   (upstream 리포 기본 on — LongMemEval 단계 P2-11 유지), [중간] per-message vs 배치
+>   분할 구조 차이(문서화된 의도적 편차, 콜 수 ~N배 캐비앗).
+> - 기존 4-way 수치는 혼합(raw RAG 포함) 조건 측정치이므로 "논문 재현"으로 인용 금지 —
+>   순수 config 재측정 후 교체할 것.
+
 > **2026-07-16 갱신**: 심층 감사(docs/research/fidelity-deep-audit.md)로 대체됨.
 > 재산정: A-Mem ●→◑(read 링크 확장 누락 — P0-1로 수정), Nemori ◑ 측정 보류(검색 설정
 > 불일치 — P0-2/3으로 수정), ReasoningBank ●→◑⁺(검색 단위·온도 분리 — P3).

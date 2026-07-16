@@ -20,6 +20,25 @@ from agmem.memory import AgenticMemory
 CATEGORY_NAMES = {1: "multi-hop", 2: "temporal", 3: "open-domain",
                   4: "single-hop", 5: "adversarial"}
 
+# A-Mem official eval (WujiangXu test_advanced.py generate_query_llm): the
+# question is first rewritten into LLM keywords and the keyword string becomes
+# the retrieval query. Prompt kept verbatim, including the 'cosmos' quirk the
+# comma-separated example overrides in practice.
+KEYWORD_QUERY_SCHEMA = {
+    "type": "object",
+    "properties": {"keywords": {"type": "string"}},
+    "required": ["keywords"],
+}
+
+KEYWORD_QUERY_PROMPT = """Given the following question, generate several keywords, using 'cosmos' as the separator.
+
+Question: {question}
+
+Format your response as a JSON object with a "keywords" field containing the selected text.
+
+Example response format:
+{{"keywords": "keyword1, keyword2, keyword3"}}"""
+
 ANSWER_PROMPT = """Answer the question using ONLY the retrieved memories below.
 Reply with the shortest span that answers the question — a name, phrase, or \
 date — with no explanation. If the memories do not contain the answer, reply \
@@ -123,10 +142,17 @@ def ingest(mem: AgenticMemory, sample: dict[str, Any],
 
 def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
            memory_types: tuple[str, ...] = ("episodic",),
-           budget_tokens: int = 6000) -> str:
+           budget_tokens: int = 6000, keyword_queries: bool = False) -> str:
     # budget default raised 1600->6000 per fidelity audit P0-3: the tight
     # budget structurally penalized long-item methodologies (Nemori).
-    bundle = mem.search(question, memory_types=memory_types, k=k)
+    query = question
+    if keyword_queries and mem.structured is not None:
+        kw = mem.structured.call(
+            "extract", KEYWORD_QUERY_PROMPT.format(question=question),
+            KEYWORD_QUERY_SCHEMA, required_keys=("keywords",))
+        if kw and str(kw.get("keywords", "")).strip():
+            query = str(kw["keywords"]).strip()
+    bundle = mem.search(query, memory_types=memory_types, k=k)
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
@@ -140,14 +166,14 @@ def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
 def evaluate(mem: AgenticMemory, questions: list[dict[str, Any]],
              k: int | dict = 10,
              memory_types: tuple[str, ...] = ("episodic",),
-             budget_tokens: int = 6000,
+             budget_tokens: int = 6000, keyword_queries: bool = False,
              progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
     per_cat: dict[str, list[tuple[float, float]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
         gold = q.get("answer") or q.get("adversarial_answer") or ""
         pred = answer(mem, q["question"], k=k, memory_types=memory_types,
-                      budget_tokens=budget_tokens)
+                      budget_tokens=budget_tokens, keyword_queries=keyword_queries)
         f1, b1 = token_f1(pred, str(gold)), bleu1(pred, str(gold))
         cat = CATEGORY_NAMES.get(q.get("category"), "?")
         per_cat[cat].append((f1, b1))
