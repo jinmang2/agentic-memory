@@ -1,5 +1,13 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-17 5차 검증 (docs/research/fidelity-round5-other-organizers.md)**: 나머지
+> organizer 5종(RB/MemoryOS/ACE/Zep/G-Memory)을 논문+공식 코드 당일 클론으로 대조.
+> 등급은 전부 유지되나 **아래 표의 누락 칸은 과소 기재로 판명** — 교정 목록은 round-5
+> 문서 §2·§4 참조. 특히: MemoryOS "LFU"는 "최저-heat 축출(논문 준수/코드 비준수)"로
+> 정정; ACE는 read 계약(playbook 전체 주입) 미고정; 파이프라인 공통 결함 X1(DELETE
+> 유령 벡터)·X2(INVALIDATE 검색 노출)·X3(strategies description 소실) 발견.
+> 배선 자체는 실엔진 4종 매트릭스(40 tests × sqlite-vec/LanceDB/Qdrant/Chroma) 통과.
+
 > **2026-07-17 4차 검증 (docs/research/fidelity-round4-verification.md)**: round-3
 > 수정 커밋(e7c5f8f)을 업스트림 당일 재다운로드 소스로 독립 재대조 — 24개 클레임
 > 전수 CONFIRMED, REFUTED 없음. 신규 발견(업스트림 write 온도 0.7, 콜드스타트
