@@ -151,6 +151,16 @@ add(episode) ──sync──> raw store 기록 + buffer
 
 ### 5.2 우리 스펙
 
+> **정책 (2026-07-17 사용자 지시로 확정)**: PC 제약을 이유로 실 스택 배선을
+> 생략하지 않는다. **naive in-python 구현(브루트포스 numpy 등)은 런타임 기본값
+> 금지** — 이 스터디의 목적 자체가 실제 백엔드 기술을 다뤄보는 것. 원 시스템의
+> 엔진이 너무 무거우면 **같은 계열의 경량 실물로 대체**한다(예: Milvus →
+> Milvus Lite/Qdrant local/LanceDB; Qdrant 서버 → qdrant-client local 모드;
+> ChromaDB in-memory → PersistentClient+cosine 명시). 현재 배선된 벡터 어댑터:
+> `QdrantVectorStore`(local 모드, Nemori 계열) / `ChromaVectorStore`(#24
+> cosine 교정판, A-Mem 계열) / `LanceDBVectorStore` / `SqliteVecStore`(vec0).
+> `NumpyVectorStore`는 후보에서 제외, 테스트 픽스처로만 잔존.
+
 **단일 파일 SQLite를 lite의 진실 소스로:**
 
 ```

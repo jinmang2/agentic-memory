@@ -1,6 +1,9 @@
-"""Brute-force numpy vector store — the always-available fallback.
+"""Brute-force numpy vector store — TEST FIXTURE ONLY.
 
-Exact cosine search; fine for <100k items. Persists to a single .npz.
+Excluded from VECTOR_STORE_CANDIDATES: naive in-python engines are
+banned as runtime defaults (docs/03 §5 정책 — the study's point is the
+real backends). Kept as the simplest VectorStore protocol reference for
+the test suite. Exact cosine; persists to a single .npz.
 """
 
 from __future__ import annotations

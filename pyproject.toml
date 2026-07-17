@@ -25,9 +25,16 @@ dev = [
     "pytest>=9.1.1",
 ]
 embed = ["sentence-transformers>=3.0"]
+# Real backend engines (user directive: wire the actual stacks, naive
+# in-python fallbacks are banned as runtime defaults — docs/03 §5)
+backends = [
+    "lancedb>=0.15",
+    "qdrant-client>=1.12",
+    "chromadb>=0.5",
+]
 
 [tool.uv]
-default-groups = ["dev", "embed"]
+default-groups = ["dev", "embed", "backends"]
 
 [project.optional-dependencies]
 train = [

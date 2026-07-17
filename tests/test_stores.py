@@ -1,11 +1,22 @@
+from importlib.util import find_spec
+
 import pytest
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode
 from agmem.embed.fake import FakeEmbedder
+from agmem.stores.chroma_vec import ChromaVectorStore
+from agmem.stores.lance_vec import LanceDBVectorStore
 from agmem.stores.numpy_vec import NumpyVectorStore
+from agmem.stores.qdrant_vec import QdrantVectorStore
 from agmem.stores.sqlite_doc import SqliteDocStore
 from agmem.stores.sqlite_vec import SqliteVecStore
+
+
+def _param(cls, pkg: str | None = None):
+    marks = ([] if pkg is None or find_spec(pkg)
+             else [pytest.mark.skip(reason=f"{pkg} not installed")])
+    return pytest.param(cls, id=cls.__name__, marks=marks)
 
 
 @pytest.fixture
@@ -56,13 +67,21 @@ def test_items_roundtrip(doc):
     assert items[0]["title"] == "T"
 
 
-VEC_CLASSES = [NumpyVectorStore, SqliteVecStore]
+# NumpyVectorStore is a protocol reference only (not a runtime candidate —
+# docs/03 §5); the rest are the real engines, skipped if not installed.
+VEC_CLASSES = [
+    _param(NumpyVectorStore),
+    _param(SqliteVecStore, "sqlite_vec"),
+    _param(LanceDBVectorStore, "lancedb"),
+    _param(QdrantVectorStore, "qdrant_client"),
+    _param(ChromaVectorStore, "chromadb"),
+]
 
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_similarity_ordering(vec_cls):
     emb = FakeEmbedder(dim=64)
-    store = vec_cls(dim=64) if vec_cls is SqliteVecStore else vec_cls(None, dim=64)
+    store = vec_cls(None, dim=64)
     texts = {
         "e1": "hiking mountains trail backpack",
         "e2": "sushi ramen tokyo restaurant",
@@ -80,7 +99,7 @@ def test_vector_similarity_ordering(vec_cls):
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_namespace_and_type_filter(vec_cls):
     emb = FakeEmbedder(dim=64)
-    store = vec_cls(dim=64) if vec_cls is SqliteVecStore else vec_cls(None, dim=64)
+    store = vec_cls(None, dim=64)
     v = emb.embed(["same text"])[0]
     store.add("a", v, memory_type="episodic", namespace="ns1")
     store.add("b", v, memory_type="strategies", namespace="ns1")
@@ -92,10 +111,47 @@ def test_vector_namespace_and_type_filter(vec_cls):
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_dim_mismatch_raises(vec_cls):
-    store = vec_cls(dim=8) if vec_cls is SqliteVecStore else vec_cls(None, dim=8)
+    store = vec_cls(None, dim=8)
     with pytest.raises(ValueError):
         store.add("x", [0.1] * 16)
     store.close()
+
+
+@pytest.mark.parametrize("vec_cls", VEC_CLASSES)
+def test_vector_upsert_replaces(vec_cls):
+    emb = FakeEmbedder(dim=32)
+    store = vec_cls(None, dim=32)
+    store.add("a", emb.embed(["old text"])[0], namespace="t")
+    new_vec = emb.embed(["completely different"])[0]
+    store.add("a", new_vec, namespace="t")
+    assert store.count() == 1
+    hits = store.search(new_vec, k=1, namespace="t")
+    assert hits[0][0] == "a" and hits[0][1] > 0.99
+    store.close()
+
+
+ENGINE_CLASSES = [
+    _param(SqliteVecStore, "sqlite_vec"),
+    _param(LanceDBVectorStore, "lancedb"),
+    _param(QdrantVectorStore, "qdrant_client"),
+    _param(ChromaVectorStore, "chromadb"),
+]
+
+
+@pytest.mark.parametrize("vec_cls", ENGINE_CLASSES)
+def test_engine_disk_persistence_and_dim_guard(tmp_path, vec_cls):
+    emb = FakeEmbedder(dim=32)
+    path = tmp_path / ("v.db" if vec_cls is SqliteVecStore else "store")
+    store = vec_cls(path, dim=32)
+    store.add("a", emb.embed(["hello world"])[0])
+    store.persist()
+    store.close()
+    reloaded = vec_cls(path, dim=32)
+    assert reloaded.count() == 1
+    reloaded.close()
+    # dim mismatch on reopen must be loud (docs/03 §1.2)
+    with pytest.raises(ValueError):
+        vec_cls(path, dim=16)
 
 
 def test_numpy_store_persistence(tmp_path):

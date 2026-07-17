@@ -125,6 +125,10 @@ def detect(cache_dir: Path | None = None, force: bool = False,
             raw = json.loads(cache_file.read_text())
             if time.time() - raw.get("detected_at", 0) < CACHE_TTL_SECONDS:
                 raw["llm_endpoints"] = [EndpointInfo(**e) for e in raw.get("llm_endpoints", [])]
+                # never trust cached pkg probes: a pip install between runs
+                # would otherwise stay invisible for the TTL. find_spec is
+                # cheap, so re-probe fresh each process.
+                raw["python_pkgs"] = {p: find_spec(p) is not None for p in PROBE_PKGS}
                 return HostCapabilities(**raw)
         except (json.JSONDecodeError, TypeError):
             pass  # corrupt cache -> re-detect

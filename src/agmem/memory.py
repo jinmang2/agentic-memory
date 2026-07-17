@@ -74,12 +74,16 @@ class AgenticMemory:
             strict=self.config.strict,
         )
         self._degradations.extend(notes)
-        if vec_cls.__name__ == "SqliteVecStore":
-            vec_path = (data_dir / namespace / "vectors.db") if data_dir else ":memory:"
-            self.vec = vec_cls(vec_path, dim=self.embedder.dim)
-        else:  # NumpyVectorStore
-            vec_path = (data_dir / namespace / "vectors.npz") if data_dir else None
-            self.vec = vec_cls(vec_path, dim=self.embedder.dim)
+        # Uniform adapter contract: __init__(path | None, dim). None -> the
+        # engine's in-memory/ephemeral mode.
+        vec_filenames = {"SqliteVecStore": "vectors.db",
+                         "LanceDBVectorStore": "vectors.lance",
+                         "QdrantVectorStore": "vectors.qdrant",
+                         "ChromaVectorStore": "vectors.chroma"}
+        vec_path = (
+            data_dir / namespace / vec_filenames.get(vec_cls.__name__, "vectors")
+        ) if data_dir else None
+        self.vec = vec_cls(vec_path, dim=self.embedder.dim)
 
         # --- llm (optional in Phase 0: passthrough needs none) -------------
         self.budget = BudgetTracker()

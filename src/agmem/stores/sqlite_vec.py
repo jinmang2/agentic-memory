@@ -21,10 +21,10 @@ def _serialize(vec: list[float]) -> bytes:
 class SqliteVecStore:
     requires = Requires(python_pkgs=("sqlite_vec",))
 
-    def __init__(self, path: str | Path = ":memory:", dim: int = 384) -> None:
+    def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
         import sqlite_vec  # gated by requires
 
-        self.path = str(path)
+        self.path = str(path) if path is not None else ":memory:"
         self.dim = dim
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)

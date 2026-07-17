@@ -47,12 +47,14 @@ def make_roles(overrides: dict[str, dict] | None = None) -> dict[str, RoleConfig
 def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
         sample, max_sessions, limit, embedder, k: int | dict = 10,
         keyword_queries: bool = False,
-        role_overrides: dict[str, dict] | None = None) -> dict:
+        role_overrides: dict[str, dict] | None = None,
+        slot_overrides: dict[str, str] | None = None) -> dict:
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}", organizers=organizers,
         embedder=embedder,
         config=AgmemConfig(llm_roles=make_roles(role_overrides),
-                           use_guided_json=False),
+                           use_guided_json=False,
+                           overrides=slot_overrides or {}),
     )
     try:
         t0 = time.perf_counter()
@@ -85,6 +87,7 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
                       "k": k, "budget_tokens": 6000, "dataset": "locomo10 conv0",
                       "keyword_queries": keyword_queries,
                       "role_overrides": role_overrides,
+                      "vector_store": type(mem.vec).__name__,
                       "max_sessions": max_sessions, "n_questions": len(questions)},
             "records": res["records"],
         }
@@ -108,7 +111,8 @@ def main() -> None:
     sample = locomo.load_locomo(DATA)[0]
     embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small",
                                            device="cuda")
-    # config = (organizers, memory_types, k, keyword_queries, role_overrides).
+    # config = (organizers, memory_types, k, keyword_queries, role_overrides,
+    #           slot_overrides).
     # amem/nemori are methodology-pure per the 2nd fidelity re-audit: upstream
     # evals retrieve only the organizer's own memory types (A-Mem notes-only
     # with LLM keyword queries; Nemori episodes k=10 / semantic m=2k=20). The
@@ -119,25 +123,34 @@ def main() -> None:
     AMEM_TEMPS = {"extract": {"temperature": 0.7}, "distill": {"temperature": 0.7}}
     NEMORI_TEMPS = {"extract": {"temperature": 0.2},
                     "distill": {"temperature": 0.7, "max_tokens": 2000}}
+    # Lineage-faithful engines (docs/03 §5): A-Mem ran on ChromaDB -> our
+    # cosine-fixed ChromaVectorStore; Nemori ran on Qdrant -> local-mode
+    # QdrantVectorStore. Others use the profile default (sqlite-vec).
+    AMEM_STORE = {"vector_store": "ChromaVectorStore"}
+    NEMORI_STORE = {"vector_store": "QdrantVectorStore"}
     known = {
-        "passthrough": (["passthrough"], ("episodic",), 10, False, None),
-        "amem": (["amem"], ("notes",), 10, True, AMEM_TEMPS),
+        "passthrough": (["passthrough"], ("episodic",), 10, False, None, None),
+        "amem": (["amem"], ("notes",), 10, True, AMEM_TEMPS, AMEM_STORE),
         "nemori": (["nemori"], ("episodes", "semantic"),
-                   {"episodes": 10, "semantic": 20}, False, NEMORI_TEMPS),
-        "amem_mixed": (["amem"], ("episodic", "notes"), 10, False, AMEM_TEMPS),
+                   {"episodes": 10, "semantic": 20}, False, NEMORI_TEMPS,
+                   NEMORI_STORE),
+        "amem_mixed": (["amem"], ("episodic", "notes"), 10, False, AMEM_TEMPS,
+                       AMEM_STORE),
         "nemori_mixed": (["nemori"], ("episodic", "episodes", "semantic"),
                          {"episodic": 10, "episodes": 10, "semantic": 20},
-                         False, NEMORI_TEMPS),
+                         False, NEMORI_TEMPS, NEMORI_STORE),
         "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10,
-                     False, None),
+                     False, None, None),
         "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10,
-                      False, None),
+                      False, None, None),
     }
     for cfg in args.configs:
-        organizers, memory_types, k, keyword_queries, role_overrides = known[cfg]
+        (organizers, memory_types, k, keyword_queries,
+         role_overrides, slot_overrides) = known[cfg]
         run(cfg, organizers, memory_types,
             sample, args.max_sessions, args.limit, embedder, k=k,
-            keyword_queries=keyword_queries, role_overrides=role_overrides)
+            keyword_queries=keyword_queries, role_overrides=role_overrides,
+            slot_overrides=slot_overrides)
 
 
 if __name__ == "__main__":
