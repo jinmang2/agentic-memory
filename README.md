@@ -1,7 +1,7 @@
 # Agentic Memory Study
 
 MemoryOS · Zep · Nemori · A-Mem · ACE · ReasoningBank · G-Memory 7개 방법론을 직접 구현하고,
-LongMemEval/LoCoMo로 재현 평가하며, MCP로 배포하고, 0.5B급 소형 모델로 PC 재현 한계를 탐구하는 프로젝트.
+LongMemEval/LoCoMo로 재현 평가하며, MCP로 배포
 
 ## 문서 인덱스
 
