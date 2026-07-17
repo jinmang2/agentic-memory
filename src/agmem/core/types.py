@@ -187,17 +187,41 @@ class MemoryBundle:
     # Rough chars-per-token used by render(); good enough for budgeting.
     CHARS_PER_TOKEN = 4
 
+    # Upstream-style section headers (Nemori search.py labels its context
+    # "Episodic Memories:"/"Semantic Memories:"); other types get their name.
+    SECTION_TITLES = {
+        "episodes": "Episodic Memories",
+        "semantic": "Semantic Memories",
+        "episodic": "Messages",
+        "notes": "Notes",
+    }
+
     def render(self, budget_tokens: int = 1600) -> str:
-        """Concatenate item texts by descending score until the budget is spent."""
+        """Select items by descending score until the budget is spent, then
+        render them grouped by memory type (in bundle insertion order) so
+        each type forms one labeled section, as the upstream evals do."""
         budget_chars = budget_tokens * self.CHARS_PER_TOKEN
-        out: list[str] = []
+        selected: list[ScoredItem] = []
         used = 0
         for scored in sorted(self.items, key=lambda s: s.score, reverse=True):
             item = scored.item
             text = item.render() if hasattr(item, "render") else getattr(item, "content", str(item))
-            block = f"[{scored.memory_type}] {text}"
-            if used + len(block) > budget_chars and out:
+            if used + len(text) > budget_chars and selected:
                 break
-            out.append(block)
-            used += len(block)
-        return "\n\n".join(out)
+            selected.append(scored)
+            used += len(text)
+
+        type_order = list(dict.fromkeys(s.memory_type for s in self.items))
+        sections: list[str] = []
+        for memory_type in type_order:
+            picked = [s for s in selected if s.memory_type == memory_type]
+            if not picked:
+                continue
+            title = self.SECTION_TITLES.get(memory_type, memory_type)
+            lines = []
+            for scored in sorted(picked, key=lambda s: s.score, reverse=True):
+                item = scored.item
+                text = item.render() if hasattr(item, "render") else getattr(item, "content", str(item))
+                lines.append(f"- {text}")
+            sections.append(f"{title}:\n" + "\n".join(lines))
+        return "\n\n".join(sections)

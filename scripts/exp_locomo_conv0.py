@@ -25,9 +25,13 @@ NOTHINK = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 def make_roles() -> dict[str, RoleConfig]:
+    # write-path roles 0.1; judge/generate 0.0 (Nemori answers at t=0.0,
+    # ReasoningBank judges at t=0.0). max_tokens 1000 per audit A6: 300 could
+    # truncate multi-neighbor evolution JSON -> parse failure -> drop.
+    temps = {"extract": 0.1, "distill": 0.1, "judge": 0.0, "generate": 0.0}
     return {r: RoleConfig(endpoint="http://localhost:8080/v1", model="qwen3-0.6b",
-                          temperature=0.1, max_tokens=300, extra_body=NOTHINK)
-            for r in ("extract", "distill", "judge", "generate")}
+                          temperature=t, max_tokens=1000, extra_body=NOTHINK)
+            for r, t in temps.items()}
 
 
 def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],

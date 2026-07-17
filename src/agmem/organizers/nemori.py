@@ -14,7 +14,11 @@ Deviations from the reference system (github.com/nemori-ai/nemori):
 - boundary detection is per-message (the paper v1 formalism, f_theta over
   the buffer) rather than the batched BATCH_SEGMENTATION_PROMPT the
   rewritten repo uses for backfill throughput
-- no episode merging (a repo extra absent from the paper's formalism)
+- no episode merging (paper-v4 §3.2.3 module, ON by default in the repo's
+  eval; deferred to the LongMemEval stage — LoCoMo's multi-day session
+  gaps mean upstream's >1h-gap merge ban blocks most merges anyway)
+- no v4 semantic new/merge/conflict integration (§3.3.3): semantic store
+  is append-only, as in the repo's pre-v4 main path
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
 - if episode generation fails we emit a mechanical episode instead of
   losing the segment (title = first words, narrative = raw messages)
@@ -61,13 +65,18 @@ CALIBRATE_SCHEMA = {
     "required": ["facts"],
 }
 
-# Condensed from Nemori's segmentation criteria (topic shift, intent shift,
-# temporal markers, content relatedness; "when in doubt, split").
+# Condensed from Nemori's segmentation criteria (BATCH_SEGMENTATION_PROMPT),
+# recast for our online per-message mode (the paper v1 formalism).
 BOUNDARY_PROMPT = """Decide whether the NEWEST message starts a new episode
 (a different topic, intent, or time context) relative to the buffered
-conversation. Signals: topic change, intent shift (e.g. information request
-to decision), temporal markers ("by the way", or a gap of 30+ minutes
-between message timestamps), content relatedness below ~30%.
+conversation. Be strict — high sensitivity to shifts. Signals:
+- topic change (a different subject or activity)
+- intent transition (e.g. information request to decision, discussion to
+  casual chat)
+- temporal markers ("by the way", "speaking of which", "quick question",
+  or a gap of 30+ minutes between message timestamps)
+- structural signals (a closing statement followed by a new subject)
+- content relatedness below ~30%
 Episodes work best with 2-15 messages. When in doubt, split.
 
 Buffered conversation:
@@ -78,15 +87,22 @@ Newest message:
 
 Return JSON: {{"boundary": true/false, "confidence": 0.0-1.0}}"""
 
-# Condensed from EPISODE_GENERATION_PROMPT; temporal anchoring is mandatory.
-EPISODE_PROMPT = """Convert this conversation segment into one episodic memory.
-1. title: a short, specific title for the episode
-2. narrative: a third-person past-tense narrative of what happened.
-   IMPORTANT: convert every relative time expression ("yesterday",
-   "next week", "last month") into an absolute date/time using the
-   timestamp shown in brackets before each message.
-
-3. timestamp: when the episode happened (copy the first message's timestamp)
+# Condensed from EPISODE_GENERATION_PROMPT; temporal anchoring is mandatory,
+# including upstream's parenthetical conversion style and its example.
+EPISODE_PROMPT = """You are an episodic memory generation expert. Convert this
+conversation segment into one episodic memory.
+1. title: a specific title for the episode (10-20 words)
+2. narrative: a third-person past-tense narrative telling a coherent story:
+   who took part and when, what was discussed, what decisions were made,
+   what emotions were expressed, what plans or outcomes emerged. Include
+   all important details; time should be precise to the hour when known.
+   Time analysis: the timestamp in brackets before each message is the
+   authoritative time. Convert every relative time expression in the text
+   ("yesterday", "next week", "last month") into an absolute date, writing
+   the converted time in parentheses right after the original expression —
+   e.g. "they planned a hike for the upcoming weekend (March 16, 2024)".
+3. timestamp: when the episode actually happened, analyzed from the message
+   timestamps and content (ISO format; never the current time)
 
 Segment:
 {segment}
@@ -95,8 +111,10 @@ Return JSON: {{"title": "...", "narrative": "...", "timestamp": "..."}}"""
 
 # Condensed from PREDICTION_PROMPT: predict knowledge, not style.
 PREDICT_PROMPT = """Given only an episode title and previously known knowledge,
-predict what the episode's content says. Predict actual facts and knowledge,
-not writing style.
+predict what the episode's content says. Focus on: the core facts likely
+discussed, key decisions or actions taken, knowledge exchanged, and the
+logical flow of events. Predict ACTUAL CONTENT and KNOWLEDGE, not writing
+style — ignore formatting, phrasing, timestamps, and tone.
 
 Title: {title}
 
@@ -105,37 +123,44 @@ Known knowledge:
 
 Return JSON: {{"prediction": "..."}}"""
 
-# Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT (the four tests).
-CALIBRATE_PROMPT = """Compare the prediction against the raw conversation and
+# The four tests + value guidance shared by both semantic-extraction prompts
+# (from EXTRACT_KNOWLEDGE_FROM_COMPARISON / SEMANTIC_GENERATION upstream).
+_FOUR_TESTS = """Each statement must pass all four tests:
+- Persistence: still true 6 months from now
+- Specificity: concrete and detailed, not vague
+- Utility: helps predict future user needs or preferences
+- Independence: understandable without the conversation context
+High-value categories: identity & background, preferences, technical
+environment, relationships, goals & plans, beliefs & values, habits &
+patterns. Do NOT extract low-value content: temporary emotional states,
+simple acknowledgments, vague statements, or context-dependent remarks.
+Include ALL specific details (names, versions, titles). Write each
+statement in present tense as one atomic sentence. DO NOT include
+time/date information in the statement. Quality over quantity."""
+
+# Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT.
+CALIBRATE_PROMPT = """Compare the prediction against the actual conversation and
 extract ONLY new or surprising knowledge the prediction missed or got wrong.
-Each statement must pass all four tests:
-- Persistence: still true well after the conversation
-- Specificity: concrete, not vague
-- Utility: useful for future interactions
-- Independence: self-contained and atomic
-Write each statement in present tense with no relative time expressions.
+""" + _FOUR_TESTS + """
 Return an empty list if the prediction already covered everything.
 
 Prediction:
 {prediction}
 
-Raw conversation:
+Actual conversation:
 {segment}
 
 Return JSON: {{"facts": ["...", ...]}}"""
 
 # Cold start (audit P1-7): with no prior semantic knowledge there is nothing
-# to predict from — distill directly, under the same four tests.
-DIRECT_EXTRACT_PROMPT = """Extract knowledge worth remembering from this conversation.
-Each statement must pass all four tests:
-- Persistence: still true well after the conversation
-- Specificity: concrete, not vague
-- Utility: useful for future interactions
-- Independence: self-contained and atomic
-Write each statement in present tense with no relative time expressions.
+# to predict from — distill directly under the same tests. Upstream's direct
+# path reads the generated episode (title+content), not the raw segment.
+DIRECT_EXTRACT_PROMPT = """Extract knowledge worth remembering from this episode.
+""" + _FOUR_TESTS + """
 
-Raw conversation:
-{segment}
+Episode:
+Title: {title}
+Content: {narrative}
 
 Return JSON: {{"facts": ["...", ...]}}"""
 
@@ -228,11 +253,14 @@ class NemoriOrganizer(Organizer):
                      "timestamp": ep_ts, "source_episode_ids": source_ids,
                      "embedding_text": f"{title}\n{narrative}"},
         )]
-        ops.extend(self._predict_calibrate(title, narrative, seg_text,
+        # upstream original_messages format for calibration: role: text,
+        # no timestamps (time/date is banned from semantic statements anyway)
+        plain_text = "\n".join(f"{e.role}: {e.content}" for e in segment)
+        ops.extend(self._predict_calibrate(title, narrative, plain_text,
                                            episode_id, source_ids, ctx))
         return ops
 
-    def _predict_calibrate(self, title: str, narrative: str, seg_text: str,
+    def _predict_calibrate(self, title: str, narrative: str, plain_text: str,
                            episode_id: str, source_ids: list[str],
                            ctx: OrganizerContext) -> list[MemoryOp]:
         # Stage 1: predict the episode from title + retrieved knowledge only.
@@ -242,8 +270,10 @@ class NemoriOrganizer(Organizer):
         known = ctx.doc.get_items([h[0] for h in hits], "semantic")
         if not known:
             # cold start: nothing to predict from -> direct extraction
+            # (upstream reads the generated episode, not the raw segment)
             cal = ctx.llm.call("distill",
-                               DIRECT_EXTRACT_PROMPT.format(segment=seg_text),
+                               DIRECT_EXTRACT_PROMPT.format(title=title,
+                                                            narrative=narrative),
                                CALIBRATE_SCHEMA, required_keys=("facts",))
         else:
             knowledge = "\n".join(f"- {k.get('content', '')}" for k in known)
@@ -257,7 +287,7 @@ class NemoriOrganizer(Organizer):
             cal = ctx.llm.call(
                 "distill",
                 CALIBRATE_PROMPT.format(prediction=str(pred.get("prediction", "")),
-                                        segment=seg_text),
+                                        segment=plain_text),
                 CALIBRATE_SCHEMA, required_keys=("facts",),
             )
         if cal is None:

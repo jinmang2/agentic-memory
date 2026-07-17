@@ -28,7 +28,7 @@ def test_add_and_search_end_to_end(mem):
     assert all("Paris" in c for c in contents)
 
     rendered = bundle.render(budget_tokens=200)
-    assert "Paris" in rendered and "[episodic]" in rendered
+    assert "Paris" in rendered and "Messages:" in rendered
 
 
 def test_evolution_log_records_ingest(mem):

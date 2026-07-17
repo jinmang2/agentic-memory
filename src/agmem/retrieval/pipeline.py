@@ -3,8 +3,9 @@ rerank -> hydrate -> methodology-faithful post-steps.
 
 Post-hydration steps restore upstream read-path semantics that the deep
 fidelity audit (docs/research/fidelity-deep-audit.md) found missing:
-- notes: 1-hop link expansion (A-Mem search_agentic — retrieved notes pull
-  in their linked neighbors, capped)
+- notes: 1-hop link expansion (A-Mem official eval's
+  find_related_memories_raw — retrieved notes pull in their linked
+  neighbors, capped)
 - episodes: top-r narrative episodes attach their original source messages
   (Nemori r=2 — offsets narrative-abstraction information loss)
 """
@@ -97,8 +98,9 @@ class RetrievalPipeline:
     def _expand_links(self, hits: list[ScoredItem]) -> list[ScoredItem]:
         """A-Mem 1-hop: pull linked neighbor notes of retrieved notes.
 
-        Our links are bidirectional (wider than upstream's), so a hard cap
-        keeps expansion bounded; neighbors score just below their parent."""
+        Links are unidirectional as upstream (WujiangXu #16/#21 show even
+        upstream's cap semantics are ambiguous — we use one global cap);
+        neighbors score just below their parent."""
         seen = {s.item.data["id"] for s in hits}
         wanted: list[tuple[str, float]] = []
         for s in sorted(hits, key=lambda s: s.score, reverse=True):

@@ -39,7 +39,13 @@ Format your response as a JSON object with a "keywords" field containing the sel
 Example response format:
 {{"keywords": "keyword1, keyword2, keyword3"}}"""
 
+# Common across all methodologies (fair relative comparison). The temporal
+# instructions are shared by both upstream evals (Nemori search.py computes
+# absolute dates from timestamps; A-Mem cat2 instructs date use).
 ANSWER_PROMPT = """Answer the question using ONLY the retrieved memories below.
+If the question asks when something happened, compute the absolute date from
+the timestamps shown with the memories (e.g. "last year" in a memory dated
+4 May 2022 means 2021). If memories conflict, prefer the most recent one.
 Reply with the shortest span that answers the question — a name, phrase, or \
 date — with no explanation. If the memories do not contain the answer, reply \
 exactly: No information available.

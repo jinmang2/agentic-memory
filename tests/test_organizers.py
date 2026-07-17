@@ -120,9 +120,14 @@ def test_amem_note_link_and_evolution():
         assert (OpType.LINK, "notes") in kinds
         assert (OpType.UPDATE, "notes") in kinds
 
-        # bidirectional link: first note gained a link to the second
+        # unidirectional link, as upstream: the NEW note links to the
+        # neighbor; the neighbor itself gains no back-link
+        second_id = next(o.target_id for o in ops
+                         if o.op is OpType.LINK and o.target_type == "notes")
+        second = mem.doc.get_items([second_id], "notes")[0]
+        assert first_id in second["links"]
         first = mem.doc.get_items([first_id], "notes")[0]
-        assert first["links"], "neighbor should be linked back"
+        assert not first.get("links"), "upstream links are one-way"
         # UPDATE merged, not clobbered: content survived the context rewrite
         assert first["content"] == "다음 달에 파리로 여행 가려고 해"
         assert "300만원" in first["context"]
