@@ -150,6 +150,19 @@ class SqliteDocStore:
                  json.dumps(data, ensure_ascii=False, default=str)),
             )
 
+    def list_items(self, memory_type: str,
+                   namespace: str | None = None) -> list[dict[str, Any]]:
+        """Full scan of one memory type (e.g. ACE's whole-playbook read)."""
+        sql = "SELECT data FROM items WHERE memory_type = ?"
+        args: list[Any] = [memory_type]
+        if namespace:
+            sql += " AND namespace = ?"
+            args.append(namespace)
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY updated_at", args).fetchall()
+        out = [json.loads(r[0]) for r in rows]
+        return [d for d in out if not d.get("deleted")]
+
     def get_items(self, ids: list[str], memory_type: str) -> list[dict[str, Any]]:
         if not ids:
             return []

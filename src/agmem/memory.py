@@ -288,11 +288,13 @@ class AgenticMemory:
         self._apply_ops(ops, actor="feedback")
         return len(ops)
 
-    def get_playbook(self, section: str | None = None, k: int = 200) -> str:
-        """Render the ACE playbook (all bullets, grouped by section)."""
-        hits = self.vec.search(self.embedder.embed(["playbook"], kind="query")[0],
-                               k=k, memory_type="playbook", namespace=self.namespace)
-        bullets = self.doc.get_items([h[0] for h in hits], "playbook")
+    def get_playbook(self, section: str | None = None) -> str:
+        """Render the ACE playbook (ALL bullets, grouped by section).
+
+        This full render IS the methodology's read contract: ACE injects
+        the whole playbook and lets the Generator LLM pick bullets
+        (round-5 ACE §2) — do not swap it for top-k retrieval."""
+        bullets = self.doc.list_items("playbook", namespace=self.namespace)
         if section:
             bullets = [b for b in bullets if b.get("section") == section]
         by_section: dict[str, list[str]] = {}

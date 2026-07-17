@@ -36,6 +36,8 @@ TOPIC_SCHEMA = {
         "items": {"type": "object",
                   "properties": {"topic": {"type": "string"},
                                  "summary": {"type": "string"},
+                                 "keywords": {"type": "array",
+                                              "items": {"type": "string"}},
                                  "message_indexes": {"type": "array",
                                                      "items": {"type": "integer"}}},
                   "required": ["topic", "summary"]}}},
@@ -54,7 +56,8 @@ Messages (indexed):
 {messages}
 
 Return JSON: {{"groups": [{{"topic": "short label", "summary": "2-3 sentence summary \
-covering the concrete facts", "message_indexes": [0, 1, ...]}}]}}"""
+covering the concrete facts", "keywords": ["theme keyword", ...], \
+"message_indexes": [0, 1, ...]}}]}}"""
 
 PROFILE_PROMPT = """Extract durable user-profile facts and knowledge from this hot memory segment
 (things worth remembering long-term about the user or the world; skip pleasantries).
@@ -68,9 +71,10 @@ Return JSON: {{"profile_facts": ["self-contained fact", ...]}}"""
 class MemoryOSOrganizer(Organizer):
     name = "memoryos"
 
-    def __init__(self, stm_capacity: int = 10, mtm_capacity: int = 200,
+    def __init__(self, stm_capacity: int = 10, mtm_capacity: int = 2000,
                  heat_threshold: float = 5.0, similarity_threshold: float = 0.6,
                  recency_tau_hours: float = 24.0) -> None:
+        # mtm_capacity 2000 = upstream default (round-5 N6 fixed 200->2000)
         self.stm_capacity = stm_capacity
         self.mtm_capacity = mtm_capacity
         self.heat_threshold = heat_threshold
@@ -133,20 +137,36 @@ class MemoryOSOrganizer(Organizer):
                     if isinstance(i, int) and 0 <= i < len(batch)] or list(range(len(batch)))
             members = [batch[i] for i in idxs]
             summary = str(g.get("summary", ""))
+            keywords = [str(k).lower() for k in g.get("keywords") or []]
             emb = ctx.embedder.embed([summary])[0]
-            hits = ctx.vec.search(emb, k=1, memory_type="pages", namespace=ctx.namespace)
+            # F_score = cos + Jaccard(keywords), threshold 0.6 — paper eq.(3);
+            # round-5 P0 restored the Jaccard term (cosine-only was stricter
+            # and fragmented segments). Consider top-3 candidates.
+            hits = ctx.vec.search(emb, k=3, memory_type="pages", namespace=ctx.namespace)
+            best_id, best_f = None, 0.0
+            for hid, cos in hits:
+                if hid not in self._heat:
+                    continue
+                cand = ctx.doc.get_items([hid], "pages")
+                cand_kw = set((cand[0] if cand else {}).get("keywords", []))
+                union = cand_kw | set(keywords)
+                jac = (len(cand_kw & set(keywords)) / len(union)) if union else 0.0
+                f = cos + jac
+                if f > best_f:
+                    best_id, best_f = hid, f
 
-            if hits and hits[0][1] >= self.similarity_threshold and hits[0][0] in self._heat:
-                seg_id = hits[0][0]  # merge into existing segment (F_score >= θ)
+            if best_id is not None and best_f >= self.similarity_threshold:
+                seg_id = best_id  # merge into existing segment (F_score >= θ)
                 existing = ctx.doc.get_items([seg_id], "pages")
                 old = existing[0] if existing else {}
                 content = (old.get("content", "") + "\n" + summary).strip()
+                merged_kw = sorted(set(old.get("keywords", [])) | set(keywords))
                 h = self._heat[seg_id]
                 h["length"] += len(members)
                 h["last_access"] = datetime.now(timezone.utc)
                 ops.append(MemoryOp(
                     op=OpType.UPDATE, target_type="pages", target_id=seg_id,
-                    payload={"content": content,
+                    payload={"content": content, "keywords": merged_kw,
                              "source_episode_ids": list(old.get("source_episode_ids", []))
                              + [e.id for e in members],
                              "embedding_text": content[-2000:]},
@@ -157,25 +177,30 @@ class MemoryOSOrganizer(Organizer):
                                       "last_access": datetime.now(timezone.utc)}
                 content = summary
                 ops.append(self._segment_add(seg_id, str(g.get("topic", "?")),
-                                             content, members, ctx))
+                                             content, members, ctx, keywords))
 
             # heat >= τ -> promote to LPM (profile/knowledge), then reset
             if self._segment_heat(seg_id) >= self.heat_threshold:
                 ops.extend(self._promote_to_lpm(seg_id, content, members, ctx))
 
-        # LFU-style eviction when MTM over capacity
+        # Lowest-heat eviction when MTM over capacity (paper-faithful; the
+        # code's access-count LFU needs read-path visit feedback we lack —
+        # round-5 C5/N1)
         while len(self._heat) > self.mtm_capacity:
             coldest = min(self._heat, key=self._segment_heat)
             self._heat.pop(coldest)
             ops.append(MemoryOp(op=OpType.DELETE, target_type="pages",
-                                target_id=coldest, payload={"reason": "lfu_eviction"}))
+                                target_id=coldest,
+                                payload={"reason": "lowest_heat_eviction"}))
         return ops
 
     def _segment_add(self, seg_id: str, topic: str, content: str,
-                     members: list[Episode], ctx: OrganizerContext) -> MemoryOp:
+                     members: list[Episode], ctx: OrganizerContext,
+                     keywords: list[str] | None = None) -> MemoryOp:
         return MemoryOp(
             op=OpType.ADD, target_type="pages", target_id=seg_id,
             payload={"id": seg_id, "topic": topic, "content": content,
+                     "keywords": sorted(set(keywords or [])),
                      "source_episode_ids": [e.id for e in members],
                      "embedding_text": content[:2000]},
         )
@@ -184,10 +209,12 @@ class MemoryOSOrganizer(Organizer):
                         ctx: OrganizerContext) -> list[MemoryOp]:
         result = ctx.llm.call("distill", PROFILE_PROMPT.format(content=content[:4000]),
                               PROFILE_SCHEMA, required_keys=("profile_facts",))
+        if result is None:
+            # upstream keeps heat intact on failure so the segment gets
+            # another promotion attempt (round-5 N5: we used to reset first)
+            return []
         h = self._heat[seg_id]
         h["n_visit"], h["length"] = 0, 0  # paper: reset after analysis
-        if result is None:
-            return []
         ops = []
         for fact in result["profile_facts"]:
             fact = str(fact).strip()

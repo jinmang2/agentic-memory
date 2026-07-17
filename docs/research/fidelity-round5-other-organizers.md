@@ -65,7 +65,7 @@
 
 ## 4. 수정 우선순위 제안
 
-**P0 (버그 — 방법론 무관)**: X1 DELETE 유령 벡터, X2 INVALIDATE 노출(최소 필터), X3 description 렌더.
-**P1 (측정 예정 방법론의 read 정합)**: MemoryOS 프로필 주입 채널+keyword/Jaccard 복원(+docs/09 캐비앗 확장), ACE read 계약 고정(get_playbook full-scan화+ curator 전체 뷰).
+**P0 (버그 — 방법론 무관)**: X1 DELETE 유령 벡터, X2 INVALIDATE 노출(최소 필터), X3 description 렌더. → **완료 (46bc7da)**: VectorStore.delete 프로토콜+5스토어, hydrate tombstone 필터, bi-temporal date-range 렌더+sqlite_graph expired_at, description 렌더.
+**P1 (측정 예정 방법론의 read 정합)**: MemoryOS 프로필 주입 채널+keyword/Jaccard 복원(+docs/09 캐비앗 확장), ACE read 계약 고정(get_playbook full-scan화+ curator 전체 뷰). → **완료 (같은 라운드)**: DocStore.list_items 추가, get_playbook 전체 렌더(계약 docstring 명시), curator 전체 뷰+intra-batch dedup+렌더 포맷 단일화; MemoryOS keywords 추출+F_score=cos+Jaccard(top-3 후보), 승격 실패 시 heat 보존, mtm_capacity 2000, 프로필 무조건 주입(bench, kind=profile 한정). 잔여 P1: read-path visit 피드백(N_visit)·STM 롤링 — 조회 통지 훅 설계 필요(§3).
 **P2 (측정 보류 방법론)**: Zep write 재설계(resolution LLM화+temporal 통합 추출+dedup, 이후 read 5항목), G-Memory 점수·검색 의미론 정합 — 각 벤치 착수 시점에.
 **P-doc**: docs/10 각 행 교정(본 문서 §2의 라벨 정정·누락 확장 반영), deep-audit §3 주입 포맷 행 교정, memoryos/sqlite_graph docstring 갱신.

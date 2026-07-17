@@ -160,6 +160,16 @@ def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
             query = str(kw["keywords"]).strip()
     bundle = mem.search(query, memory_types=memory_types, k=k)
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
+    # MemoryOS injects the user profile UNCONDITIONALLY (upstream eval puts
+    # the whole profile doc in every QA prompt — round-5 memoryos §3). Only
+    # organizers that emit kind="profile" facts produce this section.
+    if "semantic" in memory_types:
+        profile = [d.get("content", "") for d in
+                   mem.doc.list_items("semantic", namespace=mem.namespace)
+                   if d.get("kind") == "profile"][-100:]  # upstream KB cap=100
+        if profile:
+            context = ("User Profile:\n" + "\n".join(f"- {p}" for p in profile)
+                       + "\n\n" + context)
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
     reply = mem.llm.chat("generate", [

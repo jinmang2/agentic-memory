@@ -12,6 +12,13 @@ Deviations from the reference repo, on purpose:
   /ace-longmemeval.md §D), which is the reproduction trap we avoid.
 - Counter updates go through the evolution log (UPDATE ops), so
   helpful/harmful history is auditable.
+Read contract (round-5): ACE injects the FULL playbook — use
+``AgenticMemory.get_playbook()``, never top-k retrieval of bullets. The
+curator likewise sees the whole playbook, and dedup also compares within
+the current batch. Reflector tagging remains trajectory-evidence-based
+(official attributes counters to bullets the Generator actually cited —
+we lack that signal in a post-hoc organizer; report_feedback() is the
+usage-accurate path).
 """
 
 from __future__ import annotations
@@ -90,6 +97,13 @@ Return JSON: {{"operations": [{{"type": "ADD", "section": "<snake_case_section>"
 DEDUP_THRESHOLD = 0.90
 
 
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = sum(x * x for x in a) ** 0.5
+    nb = sum(y * y for y in b) ** 0.5
+    return dot / (na * nb) if na and nb else 0.0
+
+
 class ACEOrganizer(Organizer):
     name = "ace"
 
@@ -100,19 +114,22 @@ class ACEOrganizer(Organizer):
 
     # -- helpers -------------------------------------------------------------
 
-    def _current_playbook(self, ctx: OrganizerContext, query_text: str,
-                          k: int = 30) -> list[dict]:
-        emb = ctx.embedder.embed([query_text])[0]
-        hits = ctx.vec.search(emb, k=k, memory_type="playbook", namespace=ctx.namespace)
-        return ctx.doc.get_items([h[0] for h in hits], "playbook")
+    def _current_playbook(self, ctx: OrganizerContext) -> list[dict]:
+        # The FULL playbook, as the official curator sees it (round-5 ACE
+        # §3.2 — a task-similar top-k partial view let paraphrase duplicates
+        # through, since "MISSING?" was judged against an incomplete list).
+        return ctx.doc.list_items("playbook", namespace=ctx.namespace)
 
     def _render_playbook(self, bullets: list[dict]) -> str:
+        # One display format everywhere: [section-id5], matching
+        # Bullet.render() and memory.get_playbook() (round-5 ACE §3.6).
         if not bullets:
             return "(empty)"
         by_section: dict[str, list[str]] = {}
         for b in bullets:
-            by_section.setdefault(b.get("section", "general"), []).append(
-                f"[{b['id'][:5]}] helpful={b.get('helpful', 0)} "
+            section = b.get("section", "general")
+            by_section.setdefault(section, []).append(
+                f"[{section}-{b['id'][:5]}] helpful={b.get('helpful', 0)} "
                 f"harmful={b.get('harmful', 0)} :: {b.get('content', '')}")
         return "\n".join(f"## {s}\n" + "\n".join(lines)
                          for s, lines in sorted(by_section.items()))
@@ -128,7 +145,7 @@ class ACEOrganizer(Organizer):
         import json as _json
         traj_text = "\n".join(_json.dumps(s, ensure_ascii=False, default=str)
                               for s in trajectory)[:6000]
-        playbook = self._current_playbook(ctx, task)
+        playbook = self._current_playbook(ctx)
         by_id = {b["id"]: b for b in playbook}
 
         reflection = ctx.llm.call(
@@ -144,9 +161,10 @@ class ACEOrganizer(Organizer):
 
         # counter updates from bullet tags (validated against real ids)
         for tag in reflection.get("bullet_tags", []) or []:
-            bid = tag.get("id")
-            # models often echo the truncated 5-char display id — resolve it
-            matches = [full for full in by_id if full == bid or full.startswith(str(bid))]
+            # models echo the display id "[section-xxxxx]" or just "xxxxx" —
+            # strip any section prefix, then resolve the 5-char prefix
+            bid = str(tag.get("id") or "").strip("[]").rsplit("-", 1)[-1]
+            matches = [full for full in by_id if full == bid or full.startswith(bid)]
             if len(matches) != 1 or tag.get("tag") not in ("helpful", "harmful"):
                 continue
             full_id = matches[0]
@@ -166,6 +184,7 @@ class ACEOrganizer(Organizer):
         if curated is None:
             return ops
 
+        accepted_embs: list[list[float]] = []  # intra-batch dedup (round-5 §3.4)
         for raw in (curated.get("operations") or [])[: self.max_ops]:
             content = str(raw.get("content", "")).strip()
             if not content:
@@ -177,6 +196,11 @@ class ACEOrganizer(Organizer):
             if dup and dup[0][1] >= self.dedup_threshold:
                 logger.info("ace: dedup skipped near-duplicate bullet (sim=%.2f)", dup[0][1])
                 continue
+            if any(_cosine(emb, prev) >= self.dedup_threshold
+                   for prev in accepted_embs):
+                logger.info("ace: dedup skipped intra-batch near-duplicate")
+                continue
+            accepted_embs.append(emb)
             bullet = Bullet(content=content,
                             section=str(raw.get("section", "general")) or "general",
                             namespace=ctx.namespace)
