@@ -39,8 +39,8 @@ _ACTIVE = "invalid_at IS NULL AND expired_at IS NULL"
 class SqliteGraphStore:
     requires = Requires()
 
-    def __init__(self, path: str | Path = ":memory:") -> None:
-        self.path = str(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = str(path) if path is not None else ":memory:"
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
@@ -108,6 +108,20 @@ class SqliteGraphStore:
                 )
                 SELECT DISTINCT n.* FROM walk w JOIN graph_nodes n ON n.id = w.id
                 WHERE w.id != ?""", (node_id, hops, namespace, node_id)).fetchall()
+        return [dict(r) for r in rows]
+
+    def edges_for_nodes(self, node_ids: list[str], namespace: str,
+                        active_only: bool = True) -> list[dict]:
+        """Edges incident to any of the nodes (GraphRecall expansion)."""
+        if not node_ids:
+            return []
+        marks = ",".join("?" * len(node_ids))
+        sql = (f"SELECT * FROM graph_edges WHERE namespace=? AND"
+               f" (src IN ({marks}) OR dst IN ({marks}))")
+        if active_only:
+            sql += f" AND {_ACTIVE}"
+        with self._lock:
+            rows = self._conn.execute(sql, (namespace, *node_ids, *node_ids)).fetchall()
         return [dict(r) for r in rows]
 
     def counts(self) -> dict[str, int]:

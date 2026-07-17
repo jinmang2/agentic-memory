@@ -1,3 +1,4 @@
+import os
 from importlib.util import find_spec
 
 import pytest
@@ -179,3 +180,24 @@ def test_numpy_store_persistence(tmp_path):
     # dim mismatch on reload must be loud (docs/03 §1.2)
     with pytest.raises(ValueError):
         NumpyVectorStore(path, dim=16)
+
+
+@pytest.mark.skipif(not os.environ.get("AGMEM_TEST_PG"),
+                    reason="embedded Postgres spins up a real server (~10s); "
+                           "set AGMEM_TEST_PG=1 to include")
+def test_postgres_doc_store_roundtrip():
+    from agmem.stores.postgres_doc import PostgresDocStore
+
+    s = PostgresDocStore(None)
+    try:
+        ep = Episode(content="hiking in the mountains", namespace="t")
+        s.add_episode(ep)
+        assert s.count_episodes("t") == 1
+        assert s.search_lexical("hiking", namespace="t")[0][0] == ep.id
+        s.put_item("i1", "facts", "t", {"id": "i1", "content": "Alice lives in Paris"})
+        assert s.search_lexical_items("Paris", "facts", namespace="t")[0][0] == "i1"
+        s.append([MemoryOp(op=OpType.ADD, target_type="facts", target_id="i1",
+                           payload={}, actor="test")])
+        assert s.count() == 1
+    finally:
+        s.close()

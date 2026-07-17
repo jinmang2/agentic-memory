@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS items (
 );
 CREATE INDEX IF NOT EXISTS idx_items_type_ns ON items(memory_type, namespace);
 
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+    content, item_id UNINDEXED, memory_type UNINDEXED, namespace UNINDEXED
+);
+
 CREATE TABLE IF NOT EXISTS evolution_log (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     op TEXT NOT NULL,
@@ -67,8 +71,8 @@ def _fts_query(query: str) -> str:
 class SqliteDocStore:
     requires = Requires()  # stdlib only — always available
 
-    def __init__(self, path: str | Path = ":memory:") -> None:
-        self.path = str(path)
+    def __init__(self, path: str | Path | None = None) -> None:
+        self.path = str(path) if path is not None else ":memory:"
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
@@ -149,6 +153,30 @@ class SqliteDocStore:
                 (item_id, memory_type, namespace,
                  json.dumps(data, ensure_ascii=False, default=str)),
             )
+            self._conn.execute(
+                "DELETE FROM items_fts WHERE item_id = ? AND memory_type = ?",
+                (item_id, memory_type))
+            content = str(data.get("content") or "")
+            if content and not data.get("deleted"):
+                self._conn.execute(
+                    "INSERT INTO items_fts (content, item_id, memory_type,"
+                    " namespace) VALUES (?,?,?,?)",
+                    (content, item_id, memory_type, namespace))
+
+    def search_lexical_items(self, query: str, memory_type: str, k: int = 10,
+                             namespace: str | None = None) -> list[tuple[str, float]]:
+        """BM25 over derived items of one type (Zep hybrid search channel)."""
+        sql = ("SELECT item_id, bm25(items_fts) AS rank FROM items_fts"
+               " WHERE items_fts MATCH ? AND memory_type = ?")
+        params: list[Any] = [_fts_query(query), memory_type]
+        if namespace:
+            sql += " AND namespace = ?"
+            params.append(namespace)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(k)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [(r[0], -float(r[1])) for r in rows]
 
     def list_items(self, memory_type: str,
                    namespace: str | None = None) -> list[dict[str, Any]]:

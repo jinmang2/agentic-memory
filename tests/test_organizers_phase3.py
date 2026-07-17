@@ -134,7 +134,7 @@ def test_zep_graph_entities_facts_and_invalidation():
         ],
         "distill": [],  # no edges between Caroline-Busan yet -> no contradiction call
     })
-    org = ZepGraphOrganizer(resolve_threshold=0.99)
+    org = ZepGraphOrganizer()
     mem = make_mem(org, llm)
     try:
         mem.add_message("Caroline lives in Seoul.")
@@ -160,7 +160,7 @@ def test_zep_graph_contradiction_invalidates():
         ],
         "distill": [{"contradicts": ["__EDGE__"]}],
     })
-    org = ZepGraphOrganizer(resolve_threshold=0.99)
+    org = ZepGraphOrganizer()
     mem = make_mem(org, llm)
     try:
         mem.add_message("A likes B")

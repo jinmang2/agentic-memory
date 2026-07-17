@@ -66,7 +66,8 @@ def test_reasoning_bank_known_outcome_skips_judge():
     try:
         mem.add_task_result(trajectory=[], outcome="failure", task="t")
         assert [r for r, _ in llm.calls] == ["distill"]
-        assert "FAILED" in llm.calls[0][1]  # failure prompt variant chosen
+        # failure SI variant chosen — the rules ride in the system message
+        assert "FAILED" in llm.systems[0]
     finally:
         mem.close()
 

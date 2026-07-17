@@ -8,8 +8,12 @@ Deviations (documented per docs/research/g-memory.md):
 - The query graph (networkx, k-hop over task similarity) is approximated
   by embedding retrieval — same recall role, no pickle sidecar. TODO:
   optional SqliteGraphStore-backed task graph.
-- FINCH cluster-merge is deferred; the rule cap is enforced by dropping
-  the lowest-score insight instead.
+- FINCH cluster-merge is deferred; the rule cap is enforced upstream-style
+  by suppressing ADD when full + soft REMOVE (-3) + score<=0 pruning.
+Score semantics follow the official code (round-5): ADD init 2, EDIT/AGREE
++1, REMOVE soft -1 (-3 full), prune at <=0 (clear_insights); backward
+reward +1/-2 applies to insights served since the last backward
+(on_retrieval cache).
 - No official license upstream: this is a clean-room reimplementation
   from the paper + published research notes.
 """
@@ -35,10 +39,10 @@ SPARSIFY_SCHEMA = {
 FINETUNE_SCHEMA = {
     "type": "object",
     "properties": {"operations": {
-        "type": "array", "maxItems": 6,
+        "type": "array", "maxItems": 4,  # upstream: at most 4 ops per prompt
         "items": {"type": "object",
                   "properties": {"op": {"type": "string",
-                                        "enum": ["ADD", "EDIT", "REMOVE"]},
+                                        "enum": ["ADD", "EDIT", "REMOVE", "AGREE"]},
                                  "id": {"type": "string"},
                                  "rule": {"type": "string"}},
                   "required": ["op"]}}},
@@ -63,8 +67,11 @@ Return JSON: {{"key_steps": ["...", ...], "mistakes": ["...", ...]}}"""
 
 FINETUNE_PROMPT = """You maintain a list of general insight rules for solving tasks.
 Compare recent successful and failed trajectories against the current rules and
-propose operations: ADD a new rule, EDIT an existing rule (give its id), or
-REMOVE a rule that recent evidence contradicts (give its id). Propose few, high-value ops.
+propose operations: ADD a new rule, EDIT an existing rule (give its id),
+AGREE with a rule that recent evidence supports (give its id), or REMOVE a rule
+that recent evidence contradicts (give its id).
+Do at most 4 operations, and each existing rule can get at most 1 operation.
+Write each rule in the form "XXX, because XXX".
 
 Current rules:
 {rules}
@@ -73,7 +80,8 @@ Recent trajectories:
 {trajectories}
 
 Return JSON: {{"operations": [{{"op": "ADD", "rule": "..."}},
-{{"op": "EDIT", "id": "<rule id>", "rule": "..."}}, {{"op": "REMOVE", "id": "<rule id>"}}]}}"""
+{{"op": "EDIT", "id": "<rule id>", "rule": "..."}},
+{{"op": "AGREE", "id": "<rule id>"}}, {{"op": "REMOVE", "id": "<rule id>"}}]}}"""
 
 PROJECT_PROMPT = """Rewrite these general insights so they are directly actionable for the
 agent role "{role}" (drop insights irrelevant to that role).
@@ -91,6 +99,14 @@ class GMemoryOrganizer(Organizer):
         self.finetune_every = finetune_every
         self.insight_max = insight_max
         self._task_count = 0
+        # upstream insights_cache: ids served since the last backward() —
+        # reward applies only to insights the agent actually saw (round-5 W-4)
+        self._served: set[str] = set()
+
+    def on_retrieval(self, hits: list[tuple[str, str, float]],
+                     ctx: OrganizerContext) -> list[MemoryOp]:
+        self._served.update(i for i, mt, _ in hits if mt == "strategies")
+        return []
 
     def on_task_end(self, trajectory: list[dict], outcome: str,
                     task: str, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -150,32 +166,52 @@ class GMemoryOrganizer(Organizer):
         if result is None:
             return []
 
+        # Upstream score semantics (round-5 §2.2): ADD starts at 2, EDIT and
+        # AGREE reinforce (+1), REMOVE is SOFT (-1; -3 when the list is
+        # full). Actual deletion happens only when a score reaches <= 0
+        # (upstream clear_insights), here and after backward reward.
         valid = {i["id"]: i for i in insights}
+        scores = {i["id"]: float(i.get("score", 0)) for i in insights}
+        touched: set[str] = set()  # each existing rule: at most 1 operation
         ops: list[MemoryOp] = []
         n_insights = len(insights)
-        for raw in result.get("operations", [])[:6]:
+        list_full = n_insights >= self.insight_max
+        for raw in result.get("operations", [])[:4]:
             op, rid, rule = raw.get("op"), raw.get("id"), str(raw.get("rule", "")).strip()
             if op == "ADD" and rule:
+                if list_full:
+                    continue  # upstream suppresses ADD when the list is full
                 iid = new_id()
                 ops.append(MemoryOp(
                     op=OpType.ADD, target_type="strategies", target_id=iid,
                     payload={"id": iid, "title": rule[:60], "content": rule,
-                             "kind": "insight", "score": 0.0, "embedding_text": rule}))
+                             "kind": "insight", "score": 2.0, "embedding_text": rule}))
                 n_insights += 1
-            elif op == "EDIT" and rid in valid and rule:
+                continue
+            if rid not in valid or rid in touched:
+                continue  # hallucinated or double-touched ids emit nothing
+            touched.add(rid)
+            if op == "EDIT" and rule:
+                scores[rid] += 1.0
                 ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
                                     target_id=rid,
-                                    payload={"content": rule, "embedding_text": rule}))
-            elif op == "REMOVE" and rid in valid:
-                ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
-                                    target_id=rid, payload={"reason": "finetune_remove"}))
-                n_insights -= 1
-            # hallucinated ids fall through silently-visible: nothing emitted
+                                    payload={"content": rule, "score": scores[rid],
+                                             "embedding_text": rule}))
+            elif op == "AGREE":
+                scores[rid] += 1.0
+                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
+                                    target_id=rid, payload={"score": scores[rid]}))
+            elif op == "REMOVE":
+                scores[rid] -= 3.0 if list_full else 1.0
+                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
+                                    target_id=rid, payload={"score": scores[rid]}))
 
-        if n_insights > self.insight_max and insights:
-            worst = min(insights, key=lambda i: i.get("score", 0))
-            ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
-                                target_id=worst["id"], payload={"reason": "insight_cap"}))
+        # prune: any insight whose score dropped to <= 0 is deleted
+        for rid, score in scores.items():
+            if score <= 0:
+                ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
+                                    target_id=rid,
+                                    payload={"reason": "score_pruned"}))
         return ops
 
     def project_insights(self, role: str, insights: list[str],
@@ -190,8 +226,19 @@ class GMemoryOrganizer(Organizer):
         return [str(i) for i in result["insights"]] if result else insights
 
     def backward(self, insight_items: list[dict], reward: float) -> list[MemoryOp]:
-        """Reward shaping on retrieved insights (+1 success / -2 failure)."""
-        return [MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                         target_id=i["id"],
-                         payload={"score": float(i.get("score", 0)) + reward})
-                for i in insight_items]
+        """Reward shaping on served insights (+1 success / -2 failure),
+        followed by upstream clear_insights: score <= 0 is pruned. Applies
+        only to items served since the last backward (``self._served``)."""
+        ops: list[MemoryOp] = []
+        for i in insight_items:
+            if self._served and i["id"] not in self._served:
+                continue
+            new_score = float(i.get("score", 0)) + reward
+            ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
+                                target_id=i["id"], payload={"score": new_score}))
+            if new_score <= 0 and i.get("kind") == "insight":
+                ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
+                                    target_id=i["id"],
+                                    payload={"reason": "score_pruned"}))
+        self._served.clear()
+        return ops

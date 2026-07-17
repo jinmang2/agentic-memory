@@ -48,13 +48,15 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
         sample, max_sessions, limit, embedder, k: int | dict = 10,
         keyword_queries: bool = False,
         role_overrides: dict[str, dict] | None = None,
-        slot_overrides: dict[str, str] | None = None) -> dict:
+        slot_overrides: dict[str, str] | None = None,
+        lexical_types: tuple[str, ...] = ("episodic",)) -> dict:
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}", organizers=organizers,
         embedder=embedder,
         config=AgmemConfig(llm_roles=make_roles(role_overrides),
                            use_guided_json=False,
-                           overrides=slot_overrides or {}),
+                           overrides=slot_overrides or {},
+                           lexical_types=lexical_types),
     )
     try:
         t0 = time.perf_counter()
@@ -127,7 +129,10 @@ def main() -> None:
     # cosine-fixed ChromaVectorStore; Nemori ran on Qdrant -> local-mode
     # QdrantVectorStore. Others use the profile default (sqlite-vec).
     AMEM_STORE = {"vector_store": "ChromaVectorStore"}
-    NEMORI_STORE = {"vector_store": "QdrantVectorStore"}
+    # Nemori upstream = PostgreSQL(tsvector) + Qdrant dual — both real via
+    # embedded builds (pgserver / qdrant local mode)
+    NEMORI_STORE = {"vector_store": "QdrantVectorStore",
+                    "doc_store": "PostgresDocStore"}
     known = {
         "passthrough": (["passthrough"], ("episodic",), 10, False, None, None),
         "amem": (["amem"], ("notes",), 10, True, AMEM_TEMPS, AMEM_STORE),
@@ -141,16 +146,21 @@ def main() -> None:
                          False, NEMORI_TEMPS, NEMORI_STORE),
         "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10,
                      False, None, None),
+        # Zep hybrid read-path (round-5 ④): facts/entities get BM25+dense
+        # fusion, plus GraphRecall edge expansion wired in the pipeline.
         "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10,
-                      False, None, None),
+                      False, None, None,
+                      ("episodic", "facts", "entities")),
     }
     for cfg in args.configs:
+        entry = known[cfg]
         (organizers, memory_types, k, keyword_queries,
-         role_overrides, slot_overrides) = known[cfg]
+         role_overrides, slot_overrides) = entry[:6]
+        lexical_types = entry[6] if len(entry) > 6 else ("episodic",)
         run(cfg, organizers, memory_types,
             sample, args.max_sessions, args.limit, embedder, k=k,
             keyword_queries=keyword_queries, role_overrides=role_overrides,
-            slot_overrides=slot_overrides)
+            slot_overrides=slot_overrides, lexical_types=lexical_types)
 
 
 if __name__ == "__main__":

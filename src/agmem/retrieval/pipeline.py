@@ -21,13 +21,21 @@ from agmem.stores.base import DocStore, VectorStore
 class RetrievalPipeline:
     def __init__(self, doc: DocStore, vec: VectorStore, embedder: Embedder,
                  reranker=None, link_expansion_cap: int = 5,
-                 attach_sources_top_r: int = 2) -> None:
+                 attach_sources_top_r: int = 2, graph=None,
+                 lexical_types: tuple[str, ...] = ("episodic",),
+                 graph_expansion_cap: int = 10) -> None:
         self.doc = doc
         self.vec = vec
         self.embedder = embedder
         self.reranker = reranker  # None -> keep fusion order
         self.link_expansion_cap = link_expansion_cap
         self.attach_sources_top_r = attach_sources_top_r
+        # Zep hybrid/GraphRecall (round-5): lexical_types get a BM25 channel
+        # fused via RRF; retrieved entity nodes pull their incident active
+        # edges (facts) from the graph store.
+        self.graph = graph
+        self.lexical_types = set(lexical_types)
+        self.graph_expansion_cap = graph_expansion_cap
 
     def search(
         self,
@@ -53,6 +61,9 @@ class RetrievalPipeline:
                 rankings.append(
                     self.doc.search_lexical(query, k=candidate_k, namespace=namespace)
                 )
+            elif memory_type in self.lexical_types:
+                rankings.append(self.doc.search_lexical_items(
+                    query, memory_type, k=candidate_k, namespace=namespace))
             fused = rrf_fuse(rankings)
             if self.reranker is not None and len(fused) > type_k:
                 vectors = self.vec.get([cid for cid, _ in fused])
@@ -73,9 +84,42 @@ class RetrievalPipeline:
                 hydrated += self._expand_links(hydrated)
             if memory_type == "episodes" and self.attach_sources_top_r:
                 self._attach_sources(hydrated)
+            if memory_type == "experiences":
+                hydrated = self._expand_experiences(hydrated)
+            if memory_type == "entities" and self.graph is not None:
+                hydrated += self._graph_expand(hydrated, bundle, namespace)
 
             bundle.items.extend(hydrated)
         return bundle
+
+    def _graph_expand(self, entity_hits: list[ScoredItem], bundle: MemoryBundle,
+                      namespace: str | None) -> list[ScoredItem]:
+        """Zep GraphRecall (round-5 ④, minimal form): retrieved entity nodes
+        pull their incident ACTIVE edges; the edges' fact items join the
+        bundle (deduped against already-selected facts), scored just below
+        their entity."""
+        seen = {getattr(s.item, "id", None) or s.item.data.get("id")
+                for s in bundle.items} | \
+               {s.item.data.get("id") for s in entity_hits}
+        node_ids = [s.item.data.get("id") for s in entity_hits]
+        edges = self.graph.edges_for_nodes([n for n in node_ids if n],
+                                           namespace or "main")
+        wanted: dict[str, float] = {}
+        base = max((s.score for s in entity_hits), default=0.0) * 0.9
+        for e in edges:
+            eid = e.get("id")
+            if eid and eid not in seen and len(wanted) < self.graph_expansion_cap:
+                seen.add(eid)
+                wanted[eid] = base
+        out: list[ScoredItem] = []
+        for data in self.doc.get_items(list(wanted), "facts"):
+            if data.get("deleted"):
+                continue
+            out.append(ScoredItem(
+                item=_DictItem(data), memory_type="facts",
+                score=wanted.get(data.get("id"), 0.0),
+                provenance=data.get("source_episode_ids", [])))
+        return out
 
     def _hydrate(self, fused: list[tuple[str, float]], memory_type: str) -> list[ScoredItem]:
         ids = [item_id for item_id, _ in fused]
@@ -123,6 +167,23 @@ class RetrievalPipeline:
                 score=by_id.get(data.get("id"), 0.0),
                 provenance=data.get("source_episode_ids", []),
             ))
+        return out
+
+    def _expand_experiences(self, hits: list[ScoredItem]) -> list[ScoredItem]:
+        """ReasoningBank experience mode: an experience hit is REPLACED by
+        its member strategy items (upstream injects the top-1 experience's
+        items, never the record itself). An experience with no surviving
+        items yields nothing — upstream's miss -> no-injection semantics."""
+        out: list[ScoredItem] = []
+        for s in hits:
+            ids = s.item.data.get("item_ids", [])
+            for data in self.doc.get_items(ids, "strategies"):
+                if data.get("deleted"):
+                    continue
+                out.append(ScoredItem(
+                    item=_DictItem(data), memory_type="strategies",
+                    score=s.score,
+                    provenance=data.get("source_episode_ids", [])))
         return out
 
     def _attach_sources(self, hits: list[ScoredItem]) -> None:

@@ -93,7 +93,20 @@ class MemoryOSOrganizer(Organizer):
                  - h["last_access"]).total_seconds() / 3600
         return h["n_visit"] + h["length"] + math.exp(-hours / self.recency_tau_hours)
 
-    # -- hook --------------------------------------------------------------------
+    # -- hooks -------------------------------------------------------------------
+
+    def on_retrieval(self, hits: list[tuple[str, str, float]],
+                     ctx: OrganizerContext) -> list[MemoryOp]:
+        # upstream mid_term.py updates N_visit/last_visit_time on every
+        # retrieval hit (paper §3.4) — the heat feedback loop round-5 N1
+        # found missing. No ops needed: heat lives in organizer state.
+        now = datetime.now(timezone.utc)
+        for item_id, memory_type, _score in hits:
+            if memory_type == "pages" and item_id in self._heat:
+                h = self._heat[item_id]
+                h["n_visit"] += 1
+                h["last_access"] = now
+        return []
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         self._stm.append(ep)

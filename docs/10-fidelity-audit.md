@@ -1,5 +1,13 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-17 round-5 P2/구-P3 일괄 반영** (상세: fidelity-round5-other-organizers.md
+> §4): 조회 통지 훅(on_retrieval — MemoryOS N_visit/G-Memory served 캐시), G-Memory
+> 점수 의미론+reward 폐루프, Zep write 재구축(3단계 resolution·temporal 통합·dedup·
+> n=4 컨텍스트)+hybrid/GraphRecall read, RB 경험 단위 검색+프롬프트 정합. 스토어
+> 슬롯 확장: graph=Kuzu(임베디드)/Neo4j(서비스 감지), doc=pgserver 임베디드
+> PostgreSQL. Zep은 여전히 측정 금지(community 부재·재측정 전 검증 필요)이나
+> "골격(○)" 근거였던 write-path 갭 대부분 해소 — 다음 감사에서 재등급 대상.
+
 > **2026-07-17 5차 검증 (docs/research/fidelity-round5-other-organizers.md)**: 나머지
 > organizer 5종(RB/MemoryOS/ACE/Zep/G-Memory)을 논문+공식 코드 당일 클론으로 대조.
 > 등급은 전부 유지되나 **아래 표의 누락 칸은 과소 기재로 판명** — 교정 목록은 round-5

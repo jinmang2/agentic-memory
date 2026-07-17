@@ -24,6 +24,7 @@ class OrganizerContext:
     embedder: Embedder
     namespace: str
     llm: Any | None = None  # role-routing LLM client; None when no endpoint
+    graph: Any | None = None  # shared graph store (Zep/G-Memory), data_dir-persistent
 
 
 class Organizer:
@@ -36,6 +37,15 @@ class Organizer:
 
     def on_task_end(self, trajectory: list[dict], outcome: str,
                     task: str, ctx: OrganizerContext) -> list[MemoryOp]:
+        return []
+
+    def on_retrieval(self, hits: list[tuple[str, str, float]],
+                     ctx: OrganizerContext) -> list[MemoryOp]:
+        """Read->write feedback: called after every search with the served
+        (item_id, memory_type, score) triples. Restores the upstream loops
+        the round-5 audit found missing — MemoryOS visit-heat (N_visit),
+        G-Memory served-insight cache for backward reward. Must be cheap:
+        no LLM calls here."""
         return []
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:

@@ -18,16 +18,22 @@ from agmem.llm.client import RoleConfig
 PROFILES: dict[str, dict[str, str]] = {
     "lite": {
         "vector_store": "SqliteVecStore",
+        "doc_store": "SqliteDocStore",
+        "graph_store": "KuzuGraphStore",
         "embedder": "SentenceTransformerEmbedder",
         "reranker": "NoopReranker",
     },
     "standard": {
         "vector_store": "LanceDBVectorStore",
+        "doc_store": "SqliteDocStore",
+        "graph_store": "KuzuGraphStore",
         "embedder": "SentenceTransformerEmbedder",
         "reranker": "LLMReranker",
     },
     "full": {
         "vector_store": "QdrantVectorStore",
+        "doc_store": "PostgresDocStore",
+        "graph_store": "Neo4jGraphStore",
         "embedder": "APIEmbedder",
         "reranker": "CrossEncoderReranker",
     },
@@ -50,6 +56,10 @@ class AgmemConfig:
     strict: bool = False
     sync_write: bool = True                 # Phase 0: synchronous apply
     use_guided_json: bool = True
+    # memory types that get a BM25/FTS lexical channel fused with dense
+    # (Zep hybrid search adds "facts"/"entities"; A-Mem/Nemori stay
+    # dense-only as their upstream evals do)
+    lexical_types: tuple[str, ...] = ("episodic",)
 
     def slot_default(self, slot: str) -> str | None:
         if slot in self.overrides:

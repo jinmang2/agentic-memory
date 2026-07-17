@@ -24,7 +24,7 @@ from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
 from agmem.organizers import ORGANIZERS, Organizer, OrganizerContext
 from agmem.retrieval import RetrievalPipeline
 from agmem.retrieval.rerank import RERANKER_CANDIDATES
-from agmem.stores import VECTOR_STORE_CANDIDATES, SqliteDocStore
+from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
 
 logger = logging.getLogger("agmem")
 
@@ -48,8 +48,19 @@ class AgenticMemory:
 
         # --- stores -------------------------------------------------------
         data_dir = self.config.data_dir
-        doc_path = (data_dir / namespace / "memory.db") if data_dir else ":memory:"
-        self.doc = SqliteDocStore(doc_path)
+        doc_cls, notes = resolve(
+            "doc_store", DOC_STORE_CANDIDATES, self.caps,
+            override=self.config.overrides.get("doc_store"),
+            profile_default=self.config.slot_default("doc_store"),
+            strict=self.config.strict,
+        )
+        self._degradations.extend(notes)
+        doc_filenames = {"SqliteDocStore": "memory.db",
+                         "PostgresDocStore": "pgdata"}
+        doc_path = (
+            data_dir / namespace / doc_filenames.get(doc_cls.__name__, "memory.db")
+        ) if data_dir else None
+        self.doc = doc_cls(doc_path)
 
         # --- embedder -----------------------------------------------------
         if embedder is not None:
@@ -103,9 +114,25 @@ class AgenticMemory:
             else:
                 self.organizers.append(org)
 
+        # --- graph store (Zep temporal KG; persistent under data_dir — X4) --
+        from agmem.stores import GRAPH_STORE_CANDIDATES
+        graph_cls, notes = resolve(
+            "graph_store", GRAPH_STORE_CANDIDATES, self.caps,
+            override=self.config.overrides.get("graph_store"),
+            profile_default=self.config.slot_default("graph_store"),
+            strict=self.config.strict,
+        )
+        self._degradations.extend(notes)
+        graph_filenames = {"SqliteGraphStore": "graph.db",
+                           "KuzuGraphStore": "graph.kuzu"}
+        graph_path = (
+            data_dir / namespace / graph_filenames.get(graph_cls.__name__, "graph")
+        ) if data_dir else None
+        self.graph = graph_cls(graph_path)
+
         self._ctx = OrganizerContext(
             doc=self.doc, vec=self.vec, embedder=self.embedder,
-            namespace=self.namespace, llm=self.structured,
+            namespace=self.namespace, llm=self.structured, graph=self.graph,
         )
 
         # --- reranker (Noop keeps fusion order; MMR adds diversity) ---------
@@ -121,7 +148,9 @@ class AgenticMemory:
         else:
             self.reranker = reranker_cls()
         self.pipeline = RetrievalPipeline(self.doc, self.vec, self.embedder,
-                                          reranker=self.reranker)
+                                          reranker=self.reranker,
+                                          graph=self.graph,
+                                          lexical_types=self.config.lexical_types)
 
         # --- async write worker (docs/03 §3.2) ------------------------------
         self._queue: queue.Queue[Callable[[], None]] | None = None
@@ -261,8 +290,14 @@ class AgenticMemory:
 
     def search(self, query: str, memory_types: Sequence[str] = ("episodic",),
                k: int | dict[str, int] = 10) -> MemoryBundle:
-        return self.pipeline.search(query, k=k, memory_types=tuple(memory_types),
-                                    namespace=self.namespace)
+        bundle = self.pipeline.search(query, k=k, memory_types=tuple(memory_types),
+                                      namespace=self.namespace)
+        # read->write feedback (round-5): organizers see what was served.
+        hits = [(getattr(s.item, "id", None) or s.item.data.get("id"),
+                 s.memory_type, s.score) for s in bundle.items]
+        for org in self.organizers:
+            self._apply_ops(org.on_retrieval(hits, self._ctx), actor=org.name)
+        return bundle
 
     def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:
         """Close the loop: usage outcome adjusts memory quality signals.
@@ -282,9 +317,15 @@ class AgenticMemory:
             strategies = self.doc.get_items([mid], "strategies")
             if strategies:
                 delta = 1.0 if helpful else -2.0
+                new_score = float(strategies[0].get("score", 0)) + delta
                 ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                    target_id=mid,
-                                    payload={"score": float(strategies[0].get("score", 0)) + delta}))
+                                    target_id=mid, payload={"score": new_score}))
+                # G-Memory clear_insights: reward closes the loop — an
+                # insight at score <= 0 stops being served (round-5 W-2)
+                if new_score <= 0 and strategies[0].get("kind") == "insight":
+                    ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
+                                        target_id=mid,
+                                        payload={"reason": "score_pruned"}))
         self._apply_ops(ops, actor="feedback")
         return len(ops)
 
@@ -347,4 +388,5 @@ class AgenticMemory:
         if self._queue is not None:
             self._queue.join()  # drain pending organizer work before closing
         self.vec.close()
+        self.graph.close()
         self.doc.close()
