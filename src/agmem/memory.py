@@ -249,10 +249,13 @@ class AgenticMemory:
                 data[key] = sorted(merged)
                 self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
         elif op.op == OpType.DELETE:
-            # physical delete is reserved for capacity eviction (MemoryOS LFU);
-            # the log keeps the audit trail either way
+            # physical delete is reserved for capacity eviction (MemoryOS
+            # heat eviction, G-Memory REMOVE); the log keeps the audit trail.
+            # The vector MUST go too — round-5 X1: a surviving vector made
+            # deleted items resurface as empty ghost hits.
             self.doc.put_item(op.target_id, op.target_type, self.namespace,
                               {"id": op.target_id, "deleted": True})
+            self.vec.delete([op.target_id])
 
     # ---- read ---------------------------------------------------------------
 

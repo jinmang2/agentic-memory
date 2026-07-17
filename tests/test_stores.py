@@ -130,6 +130,20 @@ def test_vector_upsert_replaces(vec_cls):
     store.close()
 
 
+@pytest.mark.parametrize("vec_cls", VEC_CLASSES)
+def test_vector_delete_removes_from_search(vec_cls):
+    emb = FakeEmbedder(dim=32)
+    store = vec_cls(None, dim=32)
+    v = emb.embed(["hello world"])[0]
+    store.add("a", v, namespace="t")
+    store.add("b", emb.embed(["something else"])[0], namespace="t")
+    store.delete(["a"])
+    assert store.count() == 1
+    assert [h[0] for h in store.search(v, k=5, namespace="t")] == ["b"]
+    assert store.get(["a"]) == {}
+    store.close()
+
+
 ENGINE_CLASSES = [
     _param(SqliteVecStore, "sqlite_vec"),
     _param(LanceDBVectorStore, "lancedb"),

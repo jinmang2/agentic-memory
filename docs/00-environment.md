@@ -1,14 +1,22 @@
-# 로컬 환경 제약 (2026-07-16 측정)
+# 로컬 환경 정보 (2026-07-16 측정; 2026-07-17 지위 격하)
 
-이 프로젝트의 모든 설계 결정은 아래 하드웨어 제약을 전제로 한다.
+> **2026-07-17 정책 교체 (사용자 지시)**: 하드웨어 제약은 **설계의 전제가 아니라
+> 런타임 참고 정보**다. 어떤 구성요소도 "이 PC에서 무겁다"는 이유로 설계·구현에서
+> 제외하거나 naive 구현으로 대체하지 않는다 (naive in-python 런타임 기본값 금지 —
+> docs/03 §5.2). 제약 대응은 전적으로 capability detection의 **런타임 해석**
+> (감지→강등 로그)에 맡기고, 코드베이스에는 실 스택을 전부 배선한다. 원 시스템의
+> 엔진이 과중하면 같은 계열의 **경량 실물**(임베디드/local 모드)로 대체한다 —
+> 예: Qdrant 서버→qdrant-client local, PostgreSQL 서버→pgserver(임베디드),
+> Neo4j→Kuzu. 0.6B 로컬 측정은 하드웨어로 인해 중단됐고, 측정은 최저가 API로
+> 전환한다(콜 수·토큰 역산 후) — 즉 **측정 병목도 더 이상 설계 제약이 아니다**.
 
-## 하드웨어
+## 하드웨어 (참고용 스냅샷)
 
-| 항목 | 값 | 시사점 |
+| 항목 | 값 | 런타임 시사점 (설계 제약 아님) |
 |---|---|---|
-| CPU | Intel i7-9750H (WSL2에 4 vCPU 노출) | 병렬 ingestion은 4 worker 이하로 제한 |
-| RAM | 7.8 GiB (WSL 할당, 가용 ~2.4 GiB) | **가장 강한 제약.** 서버형 DB(Neo4j JVM 등) 상주 부적합 → embedded 스토리지 필수 |
-| GPU | NVIDIA RTX 2060 6 GiB (driver 581.57, WSL CUDA) | 0.5B~1.7B FP16 inference 가능, 0.5B QLoRA 학습 가능, 7B는 4bit inference까지만 |
+| CPU | Intel i7-9750H (WSL2에 4 vCPU 노출) | 병렬 ingestion worker 수 기본값 산정에만 사용 |
+| RAM | 7.8 GiB (WSL 할당, 가용 ~2.4 GiB) | JVM 상주형(Neo4j 등)은 capability 감지로 미검출 시 강등될 수 있음 — 코드에서는 1급 유지 |
+| GPU | NVIDIA RTX 2060 6 GiB (driver 581.57, WSL CUDA) | 로컬 inference 티어 참고치 (측정은 API 전환 예정) |
 | Disk | 603 GB 여유 | 데이터셋/체크포인트 충분 |
 | OS | WSL2 (Linux 6.6.87.2) | Windows 쪽 메모리와 공유. `.wslconfig`로 RAM 상향 검토 가능 |
 | Python | 3.12.3 + uv, miniconda | uv 기반 프로젝트 관리 권장 |
@@ -27,9 +35,11 @@
    부적합 시 에러가 아니라 **명시적 fallback 로그와 함께 대체 구현으로 강등**.
 2. **프로파일 시스템**: `lite`(현재 PC 기본) / `standard` / `full`(서버·클라우드) 프리셋
    + config 오버라이드. 동일 코드베이스가 프로파일만 바꿔 모든 방법론을 실행 가능해야 함.
-3. **스토리지 어댑터 이원화**: embedded(SQLite+sqlite-vec / LanceDB / Kuzu)와
-   서버형(Neo4j / Qdrant / FalkorDB)을 동일 인터페이스로 모두 구현.
-   현재 PC에서는 embedded가 기본 선택되지만, 서버형 코드도 1급 시민으로 유지.
+3. **스토리지 어댑터 이원화**: embedded(SQLite+sqlite-vec / LanceDB / Qdrant local /
+   Chroma persistent / Kuzu / pgserver)와 서버형(Neo4j / Qdrant / FalkorDB /
+   PostgreSQL)을 동일 인터페이스로 **모두 실물로 구현**. naive in-python 대체는
+   런타임 기본값 금지(docs/03 §5.2). embedded/서버형 선택은 런타임 capability가
+   결정하며, 어느 쪽도 코드에서 2급이 아니다.
 4. **LLM 호출 추상화**: OpenAI-compatible endpoint 하나로 통일
    (로컬 vLLM/llama.cpp/Ollama ↔ 클라우드 API 스위칭 가능하게). 모델 티어
    (extraction/judge/rerank용)를 역할별로 분리 설정.
@@ -38,6 +48,8 @@
    따라 활성화.
 6. **비동기 write path**: memory 구성(LLM 추출·링크·요약)은 background queue로,
    read path(retrieval)는 저지연 동기로 분리.
-7. **재현 실험 기본 티어는 0.5B급**: Qwen3-0.6B / Qwen2.5-0.5B-Instruct 중심,
-   judge는 API 모델 또는 로컬 4B(4bit) 병용. 단, 실험 하네스는 모델 크기에 독립적으로
-   설계해 서버 환경에서 동일 코드로 대형 모델 재현 가능하게.
+7. **재현 실험 티어 (2026-07-17 개정)**: 0.5B급 로컬 측정은 품질·속도 문제로 중단.
+   측정은 **최저가 API 모델**로 전환하되, 전환 전에 방법론별 LLM 콜 수·토큰량을
+   역산해 비용 상한을 추정하고 지표(F1/BLEU vs LLM judge) 검증을 선행한다.
+   실험 하네스는 모델 크기·엔드포인트에 독립적(역할별 RoleConfig)이므로 코드 변경
+   없이 전환 가능. 로컬 0.6B 서빙(scripts/serve-llm.sh)은 개발용 스모크로만 유지.

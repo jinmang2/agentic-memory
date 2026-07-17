@@ -82,6 +82,11 @@ class ChromaVectorStore:
             for item_id, emb in zip(res["ids"], res["embeddings"])
         }
 
+    def delete(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        self._col.delete(ids=ids)
+
     def count(self) -> int:
         return int(self._col.count())
 

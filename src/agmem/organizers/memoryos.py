@@ -3,12 +3,18 @@
 OS-style hierarchy: STM (fixed-size dialogue buffer) -> MTM (topic
 segments with heat) -> LPM (profile facts). Heat = n_visit + length +
 recency decay; segments crossing the threshold trigger profile/knowledge
-extraction and reset (paper §MTM, code defaults: capacity 10, θ=0.6, τ=5,
-RECENCY_TAU_HOURS=24).
+extraction and reset (paper §MTM; constants match the pypi/chromadb core:
+capacity 10, θ=0.6, τ=5, RECENCY_TAU_HOURS=24 — the eval core that
+produced the paper's LoCoMo numbers differs: heat 0.8/0.8/1e-4, Dice
+keyword term, STM cap=1; see docs/research/round5/memoryos).
 
-Deviations: single vector index instead of FAISS-per-tier; LFU eviction
-emits DELETE ops through the evolution log (auditable, unlike upstream's
-in-place deque loss — their issue #65 was silent data loss on full STM).
+Deviations: single vector index instead of FAISS-per-tier; eviction is
+lowest-heat (paper-faithful) rather than the code's access-count LFU —
+we have no read-path visit feedback, so N_visit stays 0 (round-5 N1);
+STM flushes as a 10-message batch instead of upstream's 1-page FIFO
+rolling window (round-5 N2); eviction emits DELETE ops through the
+evolution log (auditable; upstream's old silent-loss issue #65 has since
+been fixed upstream too).
 """
 
 from __future__ import annotations

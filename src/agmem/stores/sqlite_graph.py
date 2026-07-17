@@ -1,7 +1,9 @@
 """SQLite graph store: entity nodes + bi-temporal edges (Zep design).
 
-Edges are never deleted — ``invalidate_edge`` sets ``invalid_at`` so both
-"what was true then" and "what we believed then" stay queryable
+Edges are never deleted — ``invalidate_edge`` records both temporal axes
+(``invalid_at`` = when the fact stopped holding, T; ``expired_at`` = when
+the system learned it, T', as upstream edge_operations does) so "what was
+true then" and "what we believed then" stay queryable
 (docs/research/zep-graphiti.md §A.2). k-hop via recursive CTE.
 """
 
@@ -85,9 +87,13 @@ class SqliteGraphStore:
         return [dict(r) for r in rows]
 
     def invalidate_edge(self, edge_id: str, t_invalid: str) -> None:
+        # round-5 ⑨: expired_at (T' axis) must be stamped too, preserving an
+        # earlier value if the edge was already expired (upstream semantics).
         with self._lock, self._conn:
-            self._conn.execute("UPDATE graph_edges SET invalid_at=? WHERE id=?",
-                               (t_invalid, edge_id))
+            self._conn.execute(
+                "UPDATE graph_edges SET invalid_at=?, expired_at=COALESCE("
+                "expired_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?",
+                (t_invalid, edge_id))
 
     def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
         with self._lock:

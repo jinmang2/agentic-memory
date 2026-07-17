@@ -91,6 +91,17 @@ class NumpyVectorStore:
         with self._lock:
             return {i: self._vecs[self._pos[i]].tolist() for i in ids if i in self._pos}
 
+    def delete(self, ids: list[str]) -> None:
+        with self._lock:
+            drop = {i for i in ids if i in self._pos}
+            if not drop:
+                return
+            keep = [n for n, i in enumerate(self._ids) if i not in drop]
+            self._vecs = self._vecs[keep]
+            self._ids = [self._ids[n] for n in keep]
+            self._meta = [self._meta[n] for n in keep]
+            self._pos = {i: n for n, i in enumerate(self._ids)}
+
     def count(self) -> int:
         with self._lock:
             return len(self._ids)

@@ -57,7 +57,7 @@ REGISTRY = {
 
 ## 4. Profiles
 
-| slot | `lite` (현 PC 기본) | `standard` | `full` (서버/클라우드) |
+| slot | `lite` (임베디드 실물) | `standard` | `full` (서버/클라우드) |
 |---|---|---|---|
 | vector_store | SqliteVecStore | LanceDBStore | QdrantStore |
 | graph_store | KuzuGraphStore | KuzuGraphStore | Neo4jGraphStore |

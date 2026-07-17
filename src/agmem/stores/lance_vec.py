@@ -78,6 +78,12 @@ class LanceDBVectorStore:
                 .select(["id", "vector"]).to_list())
         return {r["id"]: [float(x) for x in r["vector"]] for r in rows}
 
+    def delete(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        id_list = ", ".join(f"'{i}'" for i in ids)
+        self._tbl.delete(f"id IN ({id_list})")
+
     def count(self) -> int:
         return int(self._tbl.count_rows())
 

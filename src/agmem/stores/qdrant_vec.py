@@ -86,6 +86,12 @@ class QdrantVectorStore:
             _COLLECTION, ids=[_point_id(i) for i in ids], with_vectors=True)
         return {p.payload["item_id"]: list(p.vector) for p in points}
 
+    def delete(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        self._client.delete(_COLLECTION, points_selector=self._qm.PointIdsList(
+            points=[_point_id(i) for i in ids]))
+
     def count(self) -> int:
         return int(self._client.count(_COLLECTION).count)
 

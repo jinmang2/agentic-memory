@@ -114,3 +114,44 @@ def test_namespace_isolation():
 def test_unknown_organizer_raises():
     with pytest.raises(KeyError):
         AgenticMemory(organizers=["nope"], embedder=FakeEmbedder(dim=8))
+
+
+def test_delete_op_leaves_no_ghost_hit(mem):
+    """round-5 X1: DELETE must remove the vector too, not just tombstone."""
+    add = MemoryOp(op=OpType.ADD, target_type="strategies", target_id="s1",
+                   payload={"id": "s1", "title": "T", "content": "verify filters",
+                            "embedding_text": "verify filters"})
+    mem._apply_ops([add], actor="test")
+    assert len(mem.search("verify filters", memory_types=["strategies"]).items) == 1
+
+    mem._apply_ops([MemoryOp(op=OpType.DELETE, target_type="strategies",
+                             target_id="s1")], actor="test")
+    bundle = mem.search("verify filters", memory_types=["strategies"])
+    assert bundle.items == []
+    assert mem.vec.get(["s1"]) == {}
+
+
+def test_strategy_description_rendered(mem):
+    """round-5 X3: description must survive into the injected context."""
+    add = MemoryOp(op=OpType.ADD, target_type="strategies", target_id="s2",
+                   payload={"id": "s2", "title": "Re-read errors",
+                            "description": "Use after any failed action",
+                            "content": "Error text names the missing field.",
+                            "embedding_text": "Re-read errors"})
+    mem._apply_ops([add], actor="test")
+    rendered = mem.search("errors", memory_types=["strategies"]).render()
+    assert "Use after any failed action" in rendered
+
+
+def test_invalidated_fact_renders_date_range(mem):
+    """round-5 X2: bi-temporal facts must expose their validity range."""
+    add = MemoryOp(op=OpType.ADD, target_type="facts", target_id="f1",
+                   payload={"id": "f1", "content": "Alice lives in Paris",
+                            "valid_at": "2024-01-01",
+                            "embedding_text": "Alice lives in Paris"})
+    mem._apply_ops([add], actor="test")
+    mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="facts",
+                             target_id="f1",
+                             payload={"t_invalid": "2025-06-01"})], actor="test")
+    rendered = mem.search("Alice Paris", memory_types=["facts"]).render()
+    assert "Date range: 2024-01-01 - 2025-06-01" in rendered

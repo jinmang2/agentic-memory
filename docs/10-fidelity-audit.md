@@ -45,10 +45,10 @@
 | A-Mem | ● | 2콜 write(Ps1/Ps3), metadata-concat 임베딩, top-k링크, 이웃 배치 진화 + 버그수정 | k스윕 실험용 옵션 일부 | ✔ (측정됨) |
 | ReasoningBank | ● | self-judge, 성공/실패 프롬프트, ≤3 items, k=1 | **MaTTS**(parallel self-contrast/sequential) — 훅만 존재 | ✔ (LoCoMo엔 해당無) |
 | Nemori | ◑ | boundary(σ=0.7)/서사/시간절대화/predict-calibrate 3단계 | episode merging, 배치 세그멘테이션 모드 | ✔ (측정됨, merging 부재 명기) |
-| MemoryOS | ◑ | STM/MTM/heat(공식 동일)/LFU/profile 승격 | **F_score의 Jaccard 항**(cos만 사용), dialogue chain meta, 90-dim trait, agent persona | ✔ (F_score 단순화 명기) |
-| ACE | ◑ | reflect→curate ADD, helpful/harmful, dedup 0.90 상시 | **multi-round reflection**(≤3), offline 모드(train/val 분리) | ✔ (online 모드만) |
-| **Zep-graph** | **○** | entity 추출, 임베딩 resolution, bi-temporal fact, LLM invalidation | **① community subgraph(label propagation) ② resolution의 LLM 판정+fulltext 후보 ③ 시간표현 파싱(t_valid/t_invalid) ④ GraphRecall(BFS) 파이프라인 배선 ⑤ fact dedup(hybrid)** | **✘ 측정 금지 — 4-way에 미포함 (올바름)** |
-| G-Memory | ○ | 궤적 sparsify, insight ADD/EDIT/REMOVE+reward, projection/backward | **query graph k-hop, FINCH merge, StateChain interaction graph** | ✘ MAS 벤치 자체가 미구축 |
+| MemoryOS | ◑ | STM/MTM/heat 공식·상수(pypi판 기준)/최저-heat 축출(논문 준수; 코드의 access-count LFU와 상이)/profile 승격 | **F_score의 Jaccard 항**(keyword 파이프라인 전무), **read-path heat 피드백(N_visit)**, **STM recency 주입**(배치 flush로 소실), dialogue chain meta, 90-dim trait/프로필 문서 교체형 갱신, agent persona, user-KB cap 100 (round-5) | ✔ (캐비앗 확장 — round5/memoryos §3) |
+| ACE | ◑ | reflect→curate ADD(upstream도 ADD-only 확인), helpful/harmful, dedup 0.90 상시 | **read 계약: playbook 전체 주입**(get_playbook full-scan화 필요), **curator 전체-뷰**(현 top-30 부분 뷰), multi-round reflection(코드 3/논문 ablation 5), offline 모드(train/val+multi-epoch+val 기반 best 선택), token budget 80k (round-5) | ✔ 단 read 계약 고정 전 측정 보류 권고 |
+| **Zep-graph** | **○** | entity 추출, bi-temporal fact(expired_at은 round-5 ⑨ 수정으로 기록됨), LLM invalidation(same-pair 한정) | **① community subgraph(label propagation+동적 확장) ② resolution LLM 판정**(현 upstream: cosine 15/0.6 후보+exact/fuzzy MinHash+LLM; 우리 0.85 자동병합은 논문·코드에 없는 경로) **③ 시간표현 파싱**(현 upstream은 fact 추출 프롬프트 통합) **④ GraphRecall(BFS)+hybrid read-path ⑤ fact dedup ⑥ previous-episodes 컨텍스트(n=4~10) ⑦ resolution 시 name/summary 갱신** (round-5) | **✘ 측정 금지 유지** (해금 조건: round5/zep §4) |
+| G-Memory | ○ | 궤적 sparsify, insight ADD/EDIT/REMOVE+reward(값 일치), projection/backward | **query graph k-hop, FINCH merge, StateChain**, + round-5 추가: 검색 의미론 전체(성공/실패 분리 채널·LLM rating·support-set 투표), 점수 의미론(AGREE/soft REMOVE/score≤0 프루닝/Ω_k), _detect_mistakes, reward 폐루프(read-path 미반영) | ✘ MAS 벤치 자체가 미구축. 논문 §4.3↔공식코드 불일치 — 우리는 코드 계보 |
 
 ## 측정 결과(docs/09)의 유효성
 

@@ -87,6 +87,8 @@ class RetrievalPipeline:
                                       score=scores[ep.id], provenance=[ep.id]))
         else:
             for data in self.doc.get_items(ids, memory_type):
+                if data.get("deleted"):
+                    continue  # tombstone (round-5 X1: legacy ghost guard)
                 item_id = data.get("id", "?")
                 out.append(ScoredItem(
                     item=_DictItem(data), memory_type=memory_type,
@@ -149,10 +151,21 @@ class _DictItem:
     def render(self) -> str:
         parts: list[str] = []
         title = self.data.get("title")
-        ts = self.data.get("timestamp") or self.data.get("valid_at")
         head = f"{title}: " if title else ""
-        stamp = f" ({ts})" if ts else ""
+        # Bi-temporal facts render their validity range (Zep's context
+        # template: "FACT (Date range: from - to)") so invalidated facts
+        # are visibly historical instead of passing as current (round-5 X2).
+        if self.data.get("valid_at") or self.data.get("invalid_at"):
+            stamp = (f" (Date range: {self.data.get('valid_at') or 'unknown'}"
+                     f" - {self.data.get('invalid_at') or 'present'})")
+        else:
+            ts = self.data.get("timestamp")
+            stamp = f" ({ts})" if ts else ""
         parts.append(f"{head}{self.content}{stamp}")
+        # ReasoningBank items carry when-to-apply guidance in description;
+        # upstream injects the full item markdown (round-5 X3).
+        if self.data.get("description"):
+            parts.append(f"description: {self.data['description']}")
         if self.data.get("context"):
             parts.append(f"context: {self.data['context']}")
         if self.data.get("tags"):

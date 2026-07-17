@@ -110,6 +110,19 @@ class SqliteVecStore:
             for item_id, blob in rows
         }
 
+    def delete(self, ids: list[str]) -> None:
+        if not ids:
+            return
+        marks = ",".join("?" * len(ids))
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                f"SELECT rowid FROM vec_map WHERE item_id IN ({marks})", ids
+            ).fetchall()
+            for (rowid,) in rows:
+                self._conn.execute("DELETE FROM vectors WHERE rowid = ?", (rowid,))
+            self._conn.execute(
+                f"DELETE FROM vec_map WHERE item_id IN ({marks})", ids)
+
     def count(self) -> int:
         with self._lock:
             return int(self._conn.execute("SELECT COUNT(*) FROM vec_map").fetchone()[0])
