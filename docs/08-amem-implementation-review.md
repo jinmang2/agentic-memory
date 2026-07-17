@@ -34,11 +34,16 @@
 
 ### 2.3 알려진 버그 — 논문-구현 불일치 (발표 하이라이트)
 
+> 2026-07-17 round-4 교정 (docs/research/fidelity-round4-verification.md): 이슈별
+> 실체를 정밀화. 세 이슈 모두 **agiresearch 라이브러리판 한정**이며, 논문 수치를 낸
+> WujiangXu 재현판은 #32/#23/#24와 무관(처음부터 sklearn cosine + 자기일관적 인덱스).
+
 | 이슈 | 내용 | 상태 |
 |---|---|---|
-| **#24/#23** | ChromaDB 컬렉션이 cosine이 아닌 **L2 distance**로 생성 + 거리를 유사도로 오용 | open |
-| **#32** | `find_related_memories()`가 노트 ID가 아닌 **결과 순위 인덱스** 반환 → evolution이 엉뚱한 노트를 갱신 가능 | open |
-| **#10** | 한때 note 구성 시 LLM을 실제로 호출하지 않았음 (#13에서 수정) — 버전에 따라 논문 방법 미실행 | closed |
+| **#23** | `score` 필드에 거리(distance)가 담겨 **의미 반전** (높을수록 나쁨) — 랭킹 자체는 유지 | open |
+| **#24** | ChromaDB 컬렉션이 cosine이 아닌 **L2 distance**로 생성 (`hnsw:space` 미지정) | open |
+| **#32** | `find_related_memories()`가 노트 ID가 아닌 **결과 순위 인덱스** 반환 → evolution이 항상 最古 k개 노트를 오갱신 + dangling link id | open |
+| **#10** | note 구성 시 LLM 미호출 문제 — #13으로 부분 수정 후 정체. round-4 확인: **현 main의 add_note는 여전히 analyze_content를 호출하지 않음** (Ps1 사문). WujiangXu plain판도 `import re` 부재로 Ps1 폴백(robust판만 정상) | open |
 | #7/#14 | 동일 검색 중복 호출, retriever 중복 | — |
 
 ### 2.4 수치 재현성 논란
@@ -62,14 +67,14 @@ on_message(ep):
   1. Ps1 note 구성   (LLM 1회, JSON: keywords/context/tags)
   2. 이웃 top-5 검색  (metadata-concat 임베딩, cosine 보장)
   3. Ps2+Ps3 배치 호출 (LLM 1회, JSON: connections/neighbor_updates)
-  → [ADD(note), LINK(양방향), UPDATE(이웃 context/tags 재임베딩)]
+  → [ADD(note), LINK(단방향 — upstream 정합, round-3 수정), UPDATE(이웃 context/tags 재임베딩)]
 ```
 
-### 3.2 원본 대비 의도적 수정 (fidelity="paper"는 하이퍼파라미터만 재현)
+### 3.2 원본 대비 의도적 수정
 
 | 원본 문제 | 우리 처리 |
 |---|---|
-| L2를 유사도로 오용 (#24) | vector store 계층에서 cosine 보장 (sqlite-vec `distance_metric=cosine`) |
+| score 의미 반전(#23) / L2 공간(#24) — 라이브러리판 한정 | vector store 계층에서 cosine 보장 (sqlite-vec `distance_metric=cosine`) |
 | 인덱스로 이웃 참조 (#32) | **ID로 참조** + LLM이 환각한 ID는 필터 (테스트로 고정) |
 | evolution 실패 시 silent skip | 명시적 **drop 카운터** + 로그 (0.5B 대응 4중 방어의 일부) |
 | UPDATE가 노트 전체 덮어쓰기 위험 | 기존 아이템에 **병합**(merge) 시맨틱 |

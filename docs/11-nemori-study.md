@@ -85,38 +85,41 @@ nemori/
 
 ### 4.1 write 경로 — `NemoriOrganizer` (nemori.py)
 
-메시지 하나가 들어오면 (`on_message`, :185):
+메시지 하나가 들어오면 (`on_message`, :210):
 
 ```
 buffer에 추가
 ├─ len < buffer_min(2)        → 대기
-├─ len ≥ buffer_max(25)       → 버퍼 전체를 세그먼트로 flush   (v1 β_max)
-└─ 그 외 → BOUNDARY_PROMPT LLM 콜 (:70)
+├─ len ≥ buffer_max(25)       → 버퍼 전체를 세그먼트로 flush   (v1 β_max — 단 v1 수식은
+│                                M만 flush하고 m_{t+1}은 잔류; 최신 포함 flush는 경미한 편차)
+└─ 그 외 → BOUNDARY_PROMPT LLM 콜 (:77)
     boundary=true ∧ confidence ≥ 0.7(σ_boundary)
     → buffer[:-1]을 세그먼트로 flush, 최신 메시지는 다음 에피소드의 시작으로 잔류
 ```
 
-세그먼트 flush (`_flush_segment`, :231):
+세그먼트 flush (`_flush_segment`, :256):
 
-1. **에피소드 생성** — `EPISODE_PROMPT`(:92): title(10-20단어) + 3인칭 과거형 서사
+1. **에피소드 생성** — `EPISODE_PROMPT`(:101): title(10-20단어) + 3인칭 과거형 서사
    (결정·감정·계획 포함) + **상대시간 → "원 표현 (절대날짜)" 괄호 병기** + 발생시각
    분석(timestamp). 실패 시 기계적 폴백(title=첫 8단어, narrative=원문) — 세그먼트를
    잃지 않음.
 2. **ADD episodes** — payload에 title/narrative/timestamp/`source_episode_ids`
    (원본 메시지 ID들 — read 경로의 r=2 원문 첨부가 이걸 소비).
    임베딩 텍스트는 `title\nnarrative` (upstream `title + " " + content` 등가).
-3. **Predict-Calibrate** (`_predict_calibrate`, :263):
+3. **Predict-Calibrate** (`_predict_calibrate`, :288):
    - 에피소드 임베딩으로 semantic top-10 검색 (upstream search_top_k_semantic=10)
-   - **cold start**: 검색된 semantic이 없으면 예측 생략, `DIRECT_EXTRACT_PROMPT`(:158)로
-     **에피소드(title+narrative)에서** 직접 추출 (upstream direct 경로와 동일 입력)
-   - 있으면: `PREDICT_PROMPT`(:113) — **title만** + 지식 문장으로 내용 예측
-     → `CALIBRATE_PROMPT`(:142) — 예측 vs **원본 대화**(타임스탬프 제거한
+   - **cold start**: 검색된 semantic이 없으면 예측 생략, `DIRECT_EXTRACT_PROMPT`로
+     **에피소드(title+narrative)에서** 직접 추출 (upstream direct 경로와 동일 입력).
+     round-4 정합: upstream SEMANTIC_GENERATION은 comparison 경로와 규칙이 다름 —
+     **6카테고리 + 시간·날짜 금지 없음**(GOOD 예시에 날짜 포함) — 로컬도 분리 반영
+   - 있으면: `PREDICT_PROMPT` — **title만** + 지식 문장으로 내용 예측
+     → `CALIBRATE_PROMPT` — 예측 vs **원본 대화**(타임스탬프 제거한
      `role: content` 포맷, upstream original_messages와 동일) 대조, gap만 추출
-   - 4-test(6개월 지속/구체성/효용/독립성) + 고가치 7카테고리 + 저가치 금지 +
-     **시간·날짜 정보 금지**(`_FOUR_TESTS`, :128) — upstream 문구 축약 이식
+   - calibrate 경로: 4-test(6개월 지속/구체성/효용/독립성) + 고가치 7카테고리 +
+     저가치 금지 + **시간·날짜 정보 금지** — upstream comparison 프롬프트 축약 이식
 4. **ADD semantic** — fact 문장별 개별 저장(문장 단독 임베딩), append-only.
 
-인제스트 종료 시 `flush_buffer`(:222)가 잔여 버퍼를 마지막 세그먼트로 처리.
+인제스트 종료 시 `flush_buffer`(:247)가 잔여 버퍼를 마지막 세그먼트로 처리.
 
 ### 4.2 read 경로 — `RetrievalPipeline` + bench
 
@@ -141,11 +144,11 @@ buffer에 추가
 
 | 우리 프롬프트 | upstream 원본 | 보존한 핵심 | 의도적 축약 |
 |---|---|---|---|
-| BOUNDARY (:70) | BATCH_SEGMENTATION (online 재구성) | topic/intent/temporal/structural 신호, 30분 갭, 관련도<30%, 2-15msg, "when in doubt split", strict 톤 | 배치의 topic 라벨 출력(우리는 boolean+confidence — v1 형식) |
-| EPISODE (:92) | EPISODE_GENERATION | title 10-20단어, 3인칭 스토리(결정·감정·계획), 괄호 병기 + 예시, 발생시각 분석, ISO | Time Analysis 3단계 블록을 2문장으로 압축 |
-| PREDICT (:113) | PREDICTION | title-only 입력, 4대 초점, "content not style", ignore 목록 | GOOD/BAD 예시 |
-| CALIBRATE (:142) | EXTRACT_KNOWLEDGE_FROM_COMPARISON | 4-test(6개월), 고가치 7카테고리, 저가치 금지, 시간 금지, 디테일 포함, quality>quantity | GOOD/BAD 예시 문장들 |
-| DIRECT (:158) | SEMANTIC_GENERATION | 동일 4-test·카테고리, **에피소드 입력** | 8개 예시 |
+| BOUNDARY (:77) | BATCH_SEGMENTATION (online 재구성) | topic/intent/temporal/structural 신호, 30분 갭, 관련도<30%, 2-15msg, "when in doubt split", strict 톤 | 배치의 topic 라벨 출력(우리는 boolean+confidence — v1 형식) |
+| EPISODE (:101) | EPISODE_GENERATION | title 10-20단어, 3인칭 스토리(결정·감정·계획), 괄호 병기 + 예시, 발생시각 분석, ISO | Time Analysis 3단계 블록을 2문장으로 압축 |
+| PREDICT (:123) | PREDICTION | title-only 입력, 4대 초점, "content not style", ignore 목록 | GOOD/BAD 예시 |
+| CALIBRATE (:146) | EXTRACT_KNOWLEDGE_FROM_COMPARISON | 4-test(6개월), 고가치 7카테고리, 저가치 금지, 시간 금지, 디테일 포함, quality>quantity | GOOD/BAD 예시 문장들 |
+| DIRECT (:173) | SEMANTIC_GENERATION | 4-test, **6카테고리(comparison과 다름)**, **시간·날짜 금지 없음**, **에피소드 입력** (round-4 정합) | 8개 예시 |
 
 ## 5. upstream과의 잔여 편차 (전부 의도적·문서화됨)
 

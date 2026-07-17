@@ -98,9 +98,12 @@ class RetrievalPipeline:
     def _expand_links(self, hits: list[ScoredItem]) -> list[ScoredItem]:
         """A-Mem 1-hop: pull linked neighbor notes of retrieved notes.
 
-        Links are unidirectional as upstream (WujiangXu #16/#21 show even
-        upstream's cap semantics are ambiguous — we use one global cap);
-        neighbors score just below their parent."""
+        Links are unidirectional as upstream. Cap semantics deviate:
+        upstream caps PER HIT (agiresearch k per hit; WujiangXu k+1 via an
+        off-by-one), so eval k=10 can pull ~100 link neighbors — WujiangXu
+        #16/#21 show even upstream considers this ambiguous. We use one
+        global cap (default 5); neighbors score just below their parent.
+        Keep this deviation in result caveats when comparing multi-hop."""
         seen = {s.item.data["id"] for s in hits}
         wanted: list[tuple[str, float]] = []
         for s in sorted(hits, key=lambda s: s.score, reverse=True):
@@ -121,13 +124,16 @@ class RetrievalPipeline:
         return out
 
     def _attach_sources(self, hits: list[ScoredItem]) -> None:
-        """Nemori r=2: top-r episodes carry their raw source messages."""
+        """Nemori r=2: top-r episodes carry their raw source messages,
+        rendered as ``role: content`` lines as upstream search.py does."""
         for s in sorted(hits, key=lambda s: s.score,
                         reverse=True)[: self.attach_sources_top_r]:
             src_ids = s.item.data.get("source_episode_ids", [])
             if src_ids:
                 episodes = self.doc.get_episodes(src_ids)
-                s.item.data["_source_messages"] = [ep.content for ep in episodes]
+                s.item.data["_source_messages"] = [
+                    f"{ep.role}: {ep.content}" for ep in episodes
+                ]
 
 
 class _DictItem:

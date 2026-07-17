@@ -5,19 +5,24 @@ Pipeline per message: note construction (Ps1) -> top-k neighbor retrieval
 neighbor ops.
 
 Deviations from the reference code are deliberate bug fixes (scope per
-docs/research/fidelity-round3-paper-code-forensics.md §1.4 — all affect
-the agiresearch LIBRARY edition):
+docs/research/fidelity-round3-paper-code-forensics.md §1.4 and the
+round-4 verification, docs/research/fidelity-round4-verification.md):
 - neighbors are addressed by note ID, not result-list index (issue #32:
   library edition updates the wrong notes and stores dangling link ids)
 - similarity is true cosine via our vector stores (issue #23: library
   edition's score field has inverted meaning; issue #24: L2-vs-cosine)
 - evolution failure is an explicit drop, never a silent skip (upstream
   wraps evolution in a broad try/except with no counter; no tracker issue)
-The paper-reproduction repo (WujiangXu) has a separate defect: plain
-memory_layer.py lacks ``import re`` so Ps1 metadata always falls back to
-empty values; only memory_layer_robust.py behaves as the paper describes.
-Set ``fidelity="paper"`` only to mirror original hyperparameters (k=5);
-the buggy behaviors themselves are not reproduced.
+- neighbor-retrieval query is the metadata-enriched embedding_text
+  (paper eq.(3)-faithful); both upstream codes query with raw
+  note.content only
+- an empty ``actions`` array falls back to both effects (small models
+  omit the field); upstream treats it as a no-op
+Ps1 is effectively dead in BOTH official editions: agiresearch add_note
+never calls analyze_content (metadata stays at constructor defaults),
+and WujiangXu's plain memory_layer.py lacks ``import re`` so metadata
+falls back to empty keywords/tags and context "General"; only
+memory_layer_robust.py behaves as the paper describes.
 Read-path counterpart (1-hop link expansion, upstream eval's
 find_related_memories_raw) is implemented in retrieval/pipeline.py.
 """
@@ -112,9 +117,10 @@ Return JSON: {{"should_evolve": true/false,
 class AMemOrganizer(Organizer):
     name = "amem"
 
-    def __init__(self, top_k: int = 5, fidelity: str = "fixed") -> None:
-        self.top_k = top_k          # paper default k=5
-        self.fidelity = fidelity
+    def __init__(self, top_k: int = 5) -> None:
+        # k=5 is the upstream CODE default (hardcoded in both editions'
+        # find_related_memories); the paper's k=10 is the QA retrieval k.
+        self.top_k = top_k
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         # upstream "talk start time": the conversation date when known,

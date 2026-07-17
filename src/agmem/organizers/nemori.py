@@ -21,7 +21,14 @@ Deviations from the reference system (github.com/nemori-ai/nemori):
   is append-only, as in the repo's pre-v4 main path
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
 - if episode generation fails we emit a mechanical episode instead of
-  losing the segment (title = first words, narrative = raw messages)
+  losing the segment (title = first words, narrative = raw messages);
+  upstream's timestamp-parse fallback is datetime.now() (contradicting
+  its own prompt) — ours is the first message's date
+- on buffer_max the whole buffer INCLUDING the newest message is flushed;
+  the v1 formalism flushes M only and keeps m_{t+1} for the next buffer
+Upstream temperatures (segmentation 0.2; episode/predict/extract at the
+client default 0.7; answers 0.0) are mirrored per-config in
+scripts/exp_locomo_conv0.py.
 """
 
 from __future__ import annotations
@@ -73,9 +80,11 @@ conversation. Be strict — high sensitivity to shifts. Signals:
 - topic change (a different subject or activity)
 - intent transition (e.g. information request to decision, discussion to
   casual chat)
-- temporal markers ("by the way", "speaking of which", "quick question",
+- temporal markers ("earlier", "before", "by the way", "oh right", "also",
   or a gap of 30+ minutes between message timestamps)
-- structural signals (a closing statement followed by a new subject)
+- structural signals (explicit transition phrases like "changing topics",
+  "speaking of which", "quick question", or a concluding statement
+  indicating the current topic is finished)
 - content relatedness below ~30%
 Episodes work best with 2-15 messages. When in doubt, split.
 
@@ -100,7 +109,8 @@ conversation segment into one episodic memory.
    authoritative time. Convert every relative time expression in the text
    ("yesterday", "next week", "last month") into an absolute date, writing
    the converted time in parentheses right after the original expression —
-   e.g. "they planned a hike for the upcoming weekend (March 16, 2024)".
+   e.g. "the user expressed interest in going hiking on the upcoming
+   weekend (March 16, 2024)".
 3. timestamp: when the episode actually happened, analyzed from the message
    timestamps and content (ISO format; never the current time)
 
@@ -123,25 +133,27 @@ Known knowledge:
 
 Return JSON: {{"prediction": "..."}}"""
 
-# The four tests + value guidance shared by both semantic-extraction prompts
-# (from EXTRACT_KNOWLEDGE_FROM_COMPARISON / SEMANTIC_GENERATION upstream).
+# The four tests shared by both semantic-extraction prompts (upstream
+# EXTRACT_KNOWLEDGE_FROM_COMPARISON and SEMANTIC_GENERATION agree on these).
 _FOUR_TESTS = """Each statement must pass all four tests:
 - Persistence: still true 6 months from now
 - Specificity: concrete and detailed, not vague
 - Utility: helps predict future user needs or preferences
-- Independence: understandable without the conversation context
-High-value categories: identity & background, preferences, technical
-environment, relationships, goals & plans, beliefs & values, habits &
-patterns. Do NOT extract low-value content: temporary emotional states,
-simple acknowledgments, vague statements, or context-dependent remarks.
-Include ALL specific details (names, versions, titles). Write each
-statement in present tense as one atomic sentence. DO NOT include
-time/date information in the statement. Quality over quantity."""
+- Independence: understandable without the conversation context"""
 
-# Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT.
+# Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT: seven high-value
+# categories, the time/date ban, present-tense atomic style.
 CALIBRATE_PROMPT = """Compare the prediction against the actual conversation and
 extract ONLY new or surprising knowledge the prediction missed or got wrong.
 """ + _FOUR_TESTS + """
+High-value categories: identity & background, preferences, technical
+details (technologies, versions, methodologies), relationships, goals &
+plans, beliefs & values, habits & patterns. Do NOT extract low-value
+content: temporary emotional states, simple acknowledgments, vague
+statements, or context-dependent remarks. Include ALL specific details
+(names, versions, titles). Write each statement in present tense as one
+atomic sentence. DO NOT include time/date information in the statement.
+Quality over quantity.
 Return an empty list if the prediction already covered everything.
 
 Prediction:
@@ -153,10 +165,23 @@ Actual conversation:
 Return JSON: {{"facts": ["...", ...]}}"""
 
 # Cold start (audit P1-7): with no prior semantic knowledge there is nothing
-# to predict from — distill directly under the same tests. Upstream's direct
-# path reads the generated episode (title+content), not the raw segment.
-DIRECT_EXTRACT_PROMPT = """Extract knowledge worth remembering from this episode.
+# to predict from — upstream switches to direct extraction over the generated
+# episode (SEMANTIC_GENERATION_PROMPT). Its rules differ from the comparison
+# path: six categories and NO time/date ban — upstream's own good examples
+# carry dates ("joined Amazon in August 2020"), which matters for temporal
+# questions answered from early semantic facts.
+DIRECT_EXTRACT_PROMPT = """Extract HIGH-VALUE, PERSISTENT knowledge from this
+episode — long-term valuable knowledge, not temporary conversation details.
 """ + _FOUR_TESTS + """
+High-value categories: identity & professional (names, titles, companies,
+education), persistent preferences (favorites, technology choices with
+reasons), technical knowledge (technologies with versions, architectures,
+decisions), relationships (family, colleagues, team structure), goals &
+plans, patterns & habits (regular activities, workflows).
+Do NOT extract low-value content: acknowledgments, confusion, temporary
+emotions or reactions, or remarks about the conversation itself.
+Include ALL specific details (names, versions, titles). Quality over
+quantity.
 
 Episode:
 Title: {title}
@@ -175,10 +200,10 @@ class NemoriOrganizer(Organizer):
 
     def __init__(self, buffer_min: int = 2, buffer_max: int = 25,
                  boundary_confidence: float = 0.7, semantic_top_k: int = 10) -> None:
-        self.buffer_min = buffer_min          # paper buffer_size_min=2
+        self.buffer_min = buffer_min          # repo config buffer_size_min=2 (not in paper v1)
         self.buffer_max = buffer_max          # paper beta_max=25
         self.boundary_confidence = boundary_confidence  # paper sigma_boundary=0.7
-        self.semantic_top_k = semantic_top_k  # paper search_top_k_semantic=10
+        self.semantic_top_k = semantic_top_k  # repo config search_top_k_semantic=10
         self.buffer: list[Episode] = []
         self._warned_no_llm = False
 
