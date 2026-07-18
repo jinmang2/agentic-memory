@@ -5,9 +5,10 @@ the online, per-message boundary detector (the paper's v1 f_theta formalism)
 that decides whether the newest buffered message opens a new episode. It is
 v1-equivalent with the logic previously inlined in ``NemoriOrganizer.on_message``
 — same prompt, same schema, same thresholds, same buffer-splitting semantics.
-Later tasks will add the remaining stages (``BatchPartitioner``,
-``EpisodeMerger``, and the semantic integrators) alongside this one so the
-organizer becomes a thin composition of independently testable stages.
+``BatchPartitioner``, ``EpisodeMerger``, and the semantic integrators
+(``AppendIntegrator``/``DedupIdReuseIntegrator``/``ThreeWayIntegrator``) round
+out the remaining stages so the organizer becomes a thin composition of
+independently testable stages.
 """
 
 from __future__ import annotations
@@ -375,3 +376,174 @@ class EpisodeMerger:
             ),
         ]
         return ops, merged_id, m_title, m_narr
+
+
+INTEGRATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["new", "merge", "conflict"]},
+        "target_indexes": {"type": "array", "items": {"type": "integer"}},
+        "statement": {"type": "string"},
+    },
+    "required": ["decision"],
+}
+
+# v4 §3.3.3 P_con condensed: new=distinct, merge=supersede with unified
+# statement, conflict=the new insight invalidates the old entries.
+INTEGRATE_PROMPT = """A new knowledge statement arrived. Compare it with the
+existing similar statements and decide:
+- "new": genuinely distinct knowledge -> keep all
+- "merge": same knowledge (possibly partial overlaps) -> produce ONE unified
+  statement superseding the indexed existing ones
+- "conflict": the new statement invalidates/corrects the indexed existing
+  ones -> they must be replaced
+
+New statement: {fact}
+
+Existing (indexed):
+{existing}
+
+Return JSON: {{"decision": "new"|"merge"|"conflict",
+"target_indexes": [affected indexes],
+"statement": "unified or corrected statement (merge/conflict only)"}}"""
+
+
+class AppendIntegrator:
+    """Current default: every distilled fact becomes its own semantic ADD.
+    No dedup, no LLM call — this is the repo's pre-v4 main path, kept as the
+    baseline so switching semantic_integration doesn't change existing runs."""
+
+    def integrate(
+        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        fid = new_id()
+        return [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id=fid,
+                payload={
+                    "id": fid,
+                    "content": fact,
+                    "episode_id": episode_id,
+                    "source_episode_ids": list(source_ids),
+                    "embedding_text": fact,
+                },
+            )
+        ]
+
+
+class DedupIdReuseIntegrator:
+    """PR#19 semantics: top-1 embedding match >= threshold reuses the id —
+    latest content wins, provenance re-pointed. No LLM call."""
+
+    def __init__(self, threshold: float = 0.85) -> None:
+        self.threshold = threshold
+
+    def integrate(
+        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        emb = ctx.embedder.embed([fact])[0]
+        hits = ctx.vec.search(emb, k=1, memory_type="semantic", namespace=ctx.namespace)
+        if hits and hits[0][1] >= self.threshold:
+            return [
+                MemoryOp(
+                    op=OpType.UPDATE,
+                    target_type="semantic",
+                    target_id=hits[0][0],
+                    payload={
+                        "content": fact,
+                        "episode_id": episode_id,
+                        "source_episode_ids": list(source_ids),
+                        "embedding_text": fact,
+                    },
+                )
+            ]
+        return AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
+
+
+class ThreeWayIntegrator:
+    """v4 §3.3.3 P_con: tau-filter the vector neighborhood, then ask the LLM
+    to decide new/merge/conflict over the top-K survivors. Any failure path
+    (no candidates past tau, LLM call fails, decision=new, no valid target
+    indexes) falls back to a plain AppendIntegrator ADD — a fact is never
+    lost to a failed integration attempt."""
+
+    def __init__(self, top_k: int = 5, tau: float = 0.70) -> None:
+        self.top_k = top_k
+        self.tau = tau
+
+    def integrate(
+        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        emb = ctx.embedder.embed([fact])[0]
+        hits = [
+            (hid, s)
+            for hid, s in ctx.vec.search(
+                emb, k=self.top_k, memory_type="semantic", namespace=ctx.namespace
+            )
+            if s >= self.tau
+        ]
+        cands = [
+            c
+            for c in ctx.doc.get_items([h[0] for h in hits], "semantic")
+            if not c.get("invalid_at")
+        ]
+        add = AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
+        if not cands:
+            return add
+        existing = "\n".join(f"[{i}] {c.get('content', '')}" for i, c in enumerate(cands))
+        verdict = ctx.llm.call(
+            "distill",
+            INTEGRATE_PROMPT.format(fact=fact, existing=existing),
+            INTEGRATE_SCHEMA,
+            required_keys=("decision",),
+        )
+        if verdict is None or verdict.get("decision") == "new":
+            return add
+        idxs = [
+            i
+            for i in verdict.get("target_indexes", [])
+            if isinstance(i, int) and 0 <= i < len(cands)
+        ]
+        if not idxs:
+            return add
+        statement = str(verdict.get("statement", "")).strip() or fact
+        targets = [cands[i]["id"] for i in idxs]
+        fid = new_id()
+        if verdict["decision"] == "merge":
+            head = MemoryOp(
+                op=OpType.MERGE,
+                target_type="semantic",
+                target_id=fid,
+                payload={
+                    "id": fid,
+                    "content": statement,
+                    "episode_id": episode_id,
+                    "source_episode_ids": list(source_ids),
+                    "supersedes": targets,
+                    "embedding_text": statement,
+                },
+            )
+        else:  # conflict — 신규가 구 항목들을 대체 (spec §2.3)
+            head = MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id=fid,
+                payload={
+                    "id": fid,
+                    "content": statement,
+                    "episode_id": episode_id,
+                    "source_episode_ids": list(source_ids),
+                    "embedding_text": statement,
+                },
+            )
+        return [head] + [
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="semantic",
+                target_id=t,
+                payload={"reason": verdict["decision"], "superseded_by": fid},
+            )
+            for t in targets
+        ]

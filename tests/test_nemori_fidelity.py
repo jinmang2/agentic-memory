@@ -1,11 +1,15 @@
 from helpers import StubLLM
 
 from agmem import AgenticMemory
-from agmem.core.ops import OpType
-from agmem.core.types import Episode
+from agmem.core.ops import MemoryOp, OpType
+from agmem.core.types import Episode, new_id
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.nemori import NemoriOrganizer
-from agmem.organizers.nemori_stages import BatchPartitioner
+from agmem.organizers.nemori_stages import (
+    BatchPartitioner,
+    DedupIdReuseIntegrator,
+    ThreeWayIntegrator,
+)
 
 
 def make_mem(organizer, llm):
@@ -110,5 +114,134 @@ def test_episode_merger_merges_and_supersedes():
         assert merged[0].payload["supersedes"] == [inv[0].target_id]
         assert inv[0].payload["superseded_by"] == merged[0].target_id
         assert merged[0].payload["title"] == "hiking plan (merged)"
+    finally:
+        mem.close()
+
+
+# ---------------- SemanticIntegrator: Dedup / ThreeWay (v4 §3.3.3) ----------------
+
+
+def _seed_semantic(mem, entries):
+    """entries: list of (id, content) -> ADD each via the facade so both
+    doc + vec stores are populated, exactly as a real Stage-3 ADD would."""
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id=sid,
+                payload={"id": sid, "content": content, "embedding_text": content},
+            )
+            for sid, content in entries
+        ],
+        actor="test",
+    )
+
+
+def test_dedup_id_reuse_updates_existing():
+    llm = StubLLM({})
+    mem = make_mem(NemoriOrganizer(), llm)
+    try:
+        old_id = new_id()
+        _seed_semantic(mem, [(old_id, "User likes hiking")])
+
+        integrator = DedupIdReuseIntegrator(threshold=0.85)
+        ops = integrator.integrate("User likes hiking", "ep-new", ["s-new"], mem._ctx)
+
+        assert len(ops) == 1
+        assert ops[0].op == OpType.UPDATE
+        assert ops[0].target_id == old_id  # 기존 id 재사용 — 신규 ADD가 아님
+        assert ops[0].payload["episode_id"] == "ep-new"  # PR#19 provenance refresh
+        assert ops[0].payload["content"] == "User likes hiking"
+    finally:
+        mem.close()
+
+
+def test_three_way_merge_branch():
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "decision": "merge",
+                    "target_indexes": [0, 1],
+                    "statement": "unified statement",
+                }
+            ]
+        }
+    )
+    mem = make_mem(NemoriOrganizer(), llm)
+    try:
+        id_a, id_b = new_id(), new_id()
+        # Identical text -> FakeEmbedder gives similarity 1.0, safely above tau.
+        _seed_semantic(
+            mem,
+            [
+                (id_a, "User likes hiking on weekends"),
+                (id_b, "User likes hiking on weekends"),
+            ],
+        )
+
+        integrator = ThreeWayIntegrator()
+        ops = integrator.integrate("User likes hiking on weekends", "ep-new", ["s-new"], mem._ctx)
+
+        assert len(ops) == 3
+        merge_op = next(o for o in ops if o.op == OpType.MERGE)
+        inv_ops = [o for o in ops if o.op == OpType.INVALIDATE]
+        assert len(inv_ops) == 2
+        assert merge_op.payload["content"] == "unified statement"
+        assert set(merge_op.payload["supersedes"]) == {id_a, id_b}
+        assert {o.target_id for o in inv_ops} == {id_a, id_b}
+        assert all(o.payload["superseded_by"] == merge_op.target_id for o in inv_ops)
+        assert llm.calls  # LLM was consulted (candidates cleared tau)
+    finally:
+        mem.close()
+
+
+def test_three_way_conflict_branch():
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "decision": "conflict",
+                    "target_indexes": [0],
+                    "statement": "User now lives in Busan",
+                }
+            ]
+        }
+    )
+    mem = make_mem(NemoriOrganizer(), llm)
+    try:
+        old_id = new_id()
+        _seed_semantic(mem, [(old_id, "User lives in Seattle")])
+
+        integrator = ThreeWayIntegrator()
+        ops = integrator.integrate("User lives in Seattle", "ep-new", ["s-new"], mem._ctx)
+
+        assert len(ops) == 2
+        add_op = next(o for o in ops if o.op == OpType.ADD)
+        inv_op = next(o for o in ops if o.op == OpType.INVALIDATE)
+        assert add_op.payload["content"] == "User now lives in Busan"
+        assert inv_op.target_id == old_id
+        assert inv_op.payload["superseded_by"] == add_op.target_id
+        assert inv_op.payload["reason"] == "conflict"
+    finally:
+        mem.close()
+
+
+def test_three_way_tau_filters_candidates():
+    llm = StubLLM({})  # no "distill" responses queued — a call would return None
+    mem = make_mem(NemoriOrganizer(), llm)
+    try:
+        old_id = new_id()
+        # Disjoint vocabulary -> FakeEmbedder cosine similarity ~0.0, well below tau.
+        _seed_semantic(mem, [(old_id, "banana zebra quantum")])
+
+        integrator = ThreeWayIntegrator()  # tau=0.70 default
+        ops = integrator.integrate("User likes hiking", "ep-new", ["s-new"], mem._ctx)
+
+        assert len(ops) == 1
+        assert ops[0].op == OpType.ADD
+        assert ops[0].payload["content"] == "User likes hiking"
+        assert llm.calls == []  # tau filtered out the only candidate -> no LLM call
     finally:
         mem.close()

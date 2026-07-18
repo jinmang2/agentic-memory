@@ -19,8 +19,10 @@ Deviations from the reference system (github.com/nemori-ai/nemori):
   (``episode_merge="off"``) — a minimal kwarg surface pending Task 10's
   preset resolution; LoCoMo's multi-day session gaps mean upstream's
   >1h-gap merge ban would block most merges anyway
-- no v4 semantic new/merge/conflict integration (§3.3.3): semantic store
-  is append-only, as in the repo's pre-v4 main path
+- v4 semantic new/merge/conflict integration (§3.3.3) is implemented as
+  ``ThreeWayIntegrator`` (plus ``DedupIdReuseIntegrator`` for PR#19) but
+  wired in OFF by default (``semantic_integration="append"``) — same
+  minimal-kwarg posture as ``episode_merge``, pending Task 10
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
 - if episode generation fails we emit a mechanical episode instead of
   losing the segment (title = first words, narrative = raw messages);
@@ -41,10 +43,13 @@ from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
 from agmem.organizers.nemori_stages import (
+    AppendIntegrator,
     BOUNDARY_PROMPT,
     BOUNDARY_SCHEMA,
+    DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
+    ThreeWayIntegrator,
     _fmt,
 )
 
@@ -187,6 +192,10 @@ class NemoriOrganizer(Organizer):
         merge_top_k: int = 5,
         merge_similarity: float | None = None,
         merge_time_gap_hours: float | None = None,
+        semantic_integration: str = "append",
+        dedup_threshold: float = 0.85,
+        integrate_top_k: int = 5,
+        integrate_tau: float = 0.70,
     ) -> None:
         self.buffer_min = buffer_min  # repo config buffer_size_min=2 (not in paper v1)
         self.buffer_max = buffer_max  # paper beta_max=25
@@ -200,6 +209,13 @@ class NemoriOrganizer(Organizer):
             if episode_merge == "llm"
             else None
         )
+        # Minimal kwarg surface — Task 10 replaces this with preset resolution.
+        if semantic_integration == "dedup":
+            self._integrator = DedupIdReuseIntegrator(dedup_threshold)
+        elif semantic_integration == "three_way":
+            self._integrator = ThreeWayIntegrator(integrate_top_k, integrate_tau)
+        else:
+            self._integrator = AppendIntegrator()
         self._warned_no_llm = False
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -344,25 +360,12 @@ class NemoriOrganizer(Organizer):
         if cal is None:
             return []
 
-        # Stage 3: integrate the prediction gap as atomic semantic facts.
+        # Stage 3: integrate the prediction gap as atomic semantic facts
+        # (v4 §3.3.3 P_con — delegated to self._integrator, default Append).
         ops: list[MemoryOp] = []
         for fact in cal.get("facts", []):
             fact = str(fact).strip()
             if not fact:
                 continue
-            fid = new_id()
-            ops.append(
-                MemoryOp(
-                    op=OpType.ADD,
-                    target_type="semantic",
-                    target_id=fid,
-                    payload={
-                        "id": fid,
-                        "content": fact,
-                        "episode_id": episode_id,
-                        "source_episode_ids": source_ids,
-                        "embedding_text": fact,
-                    },
-                )
-            )
+            ops.extend(self._integrator.integrate(fact, episode_id, source_ids, ctx))
         return ops
