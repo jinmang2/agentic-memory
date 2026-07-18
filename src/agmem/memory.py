@@ -314,6 +314,19 @@ class AgenticMemory:
                 self._apply_ops(flush_buffer(self._ctx), actor=org.name)
         self.vec.persist()
 
+    def consolidate(self) -> int:
+        """Deferred management pass (spec §1.4) — explicit trigger only.
+
+        Runs each organizer's consolidate() in list order and applies the
+        returned ops through the evolution log. Benchmarks call this at
+        deterministic points (end of ingest / between sessions)."""
+        applied = 0
+        for org in self.organizers:
+            ops = org.consolidate(self._ctx)
+            self._apply_ops(ops, actor=org.name)
+            applied += len(ops)
+        return applied
+
     def _apply_ops(self, ops: list[MemoryOp], actor: str, propagate: bool = True) -> None:
         if not ops:
             return

@@ -112,3 +112,23 @@ def test_no_self_delivery_and_consumes_filter():
     mem = _mk(organizers=[org])
     mem.add_message("hi")
     assert org.seen == []  # 자기 이벤트 제외
+
+
+def test_consolidate_api_applies_ops_and_cursor():
+    class Cons(Organizer):
+        name = "cons"
+        def consolidate(self, ctx):
+            end = ctx.doc.last_seq()
+            return [MemoryOp(op=OpType.ADD, target_type="semantic", target_id="c1",
+                             payload={"id": "c1", "content": "merged fact",
+                                      "consolidated": True, "embedding_text": "merged fact"}),
+                    self.cursor_op(end)]
+    org = Cons()
+    mem = _mk(organizers=[org])
+    mem.add_message("test")  # add an episode to ensure last_seq() > 0
+    n = mem.consolidate()
+    assert n == 2
+    assert mem.doc.get_items(["c1"], "semantic")
+    assert org.read_cursor(mem._ctx) > 0
+    # state 항목은 벡터를 만들지 않는다
+    assert mem.vec.count() == 2  # one from episode, one from consolidated item
