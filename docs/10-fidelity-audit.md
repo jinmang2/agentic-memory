@@ -1,5 +1,11 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-18 Nemori 라이프사이클 재설계** (스펙:
+> `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`): 아래 표 Nemori 행의
+> "episode merging, 배치 세그멘테이션 모드" 누락은 `fidelity="v4"|"upstream"` 스위치
+> (`EpisodeMerger`, `BatchPartitioner`, `nemori_stages.py`)로 해소됨 — 등급/측정 판정은 실측
+> 전까지 재산정하지 않음(표는 v1 디폴트 기준 그대로 유지).
+
 > **2026-07-17 round-5 P2/구-P3 일괄 반영** (상세: fidelity-round5-other-organizers.md
 > §4): 조회 통지 훅(on_retrieval — MemoryOS N_visit/G-Memory served 캐시), G-Memory
 > 점수 의미론+reward 폐루프, Zep write 재구축(3단계 resolution·temporal 통합·dedup·

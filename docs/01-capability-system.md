@@ -5,18 +5,18 @@
 
 ## 1. Capability Detection
 
-시작 시 1회 감지 후 캐시 (`~/.agentic_memory/capabilities.json`, TTL 24h, `--redetect`로 갱신):
+시작 시 1회 감지 후 캐시 (`~/.agmem/capabilities.json`, TTL 24h, `detect(force=True)`로 갱신):
 
 ```python
 @dataclass
 class HostCapabilities:
-    ram_gb: float              # psutil.virtual_memory().total
-    vram_gb: float | None      # pynvml, 없으면 None
+    ram_gb: float              # /proc/meminfo
     cpu_cores: int
+    vram_gb: float | None      # nvidia-smi, 없으면 None
     gpu_name: str | None
-    services: dict[str, bool]  # {"neo4j": False, "qdrant": False, "ollama": True, ...}
-                               #   → TCP port probe + docker ps 검사
+    services: dict[str, bool]  # {"neo4j": False, "qdrant": False, ...} → TCP port probe
     llm_endpoints: list[EndpointInfo]  # OpenAI-compatible endpoint 헬스체크 결과
+    python_pkgs: dict[str, bool]       # find_spec 기반 패키지 존재 여부 (게이팅의 주 축)
 ```
 
 ## 2. Backend Requirement 선언
@@ -24,28 +24,30 @@ class HostCapabilities:
 모든 어댑터는 클래스 레벨로 요구 스펙을 선언한다:
 
 ```python
-class Neo4jGraphStore(GraphStore):
-    requires = Requires(ram_gb=4.0, services=["neo4j"])
+class Neo4jGraphStore:
+    requires = Requires(python_pkgs=("neo4j",), services=("neo4j",))
 
-class KuzuGraphStore(GraphStore):
-    requires = Requires(ram_gb=0.5)          # embedded
+class KuzuGraphStore:
+    requires = Requires(python_pkgs=("kuzu",))       # embedded
 
-class CrossEncoderReranker(Reranker):
-    requires = Requires(vram_gb=1.5)          # GPU 권장, CPU fallback 허용(slow=True)
+class CrossEncoderReranker:
+    requires = Requires(python_pkgs=("sentence_transformers",), vram_gb=1.0)
 
-class NoopReranker(Reranker):
-    requires = Requires()                     # 항상 가능
+class NoopReranker:
+    requires = Requires()                            # 항상 가능
 ```
+
+게이팅의 주 축은 `python_pkgs`(패키지 설치 여부)이고, 서버형 엔진은 `services`(포트 프로브), 무거운 모델은 `vram_gb`/`ram_gb`가 추가로 걸린다.
 
 ## 3. Registry + Resolver
 
 ```python
 REGISTRY = {
-    "graph_store":  [Neo4jGraphStore, FalkorDBGraphStore, KuzuGraphStore, NetworkXGraphStore],
-    "vector_store": [QdrantStore, ChromaStore, LanceDBStore, SqliteVecStore],
-    "reranker":     [CrossEncoderReranker, LLMReranker, RRFReranker, NoopReranker],
-    "embedder":     [APIEmbedder, Qwen3Embedder06B, BgeM3Embedder, MiniLMEmbedder],
-    ...
+    "graph_store":  [Neo4jGraphStore, KuzuGraphStore, SqliteGraphStore],
+    "vector_store": [QdrantVectorStore, ChromaVectorStore, LanceDBVectorStore, SqliteVecStore],
+    "doc_store":    [PostgresDocStore, SqliteDocStore],
+    "reranker":     [CrossEncoderReranker, LLMReranker, MMRReranker, NoopReranker],
+    "embedder":     [SentenceTransformerEmbedder, FakeEmbedder],  # 모델은 embed_model로 선택
 }
 ```
 
@@ -59,13 +61,14 @@ REGISTRY = {
 
 | slot | `lite` (임베디드 실물) | `standard` | `full` (서버/클라우드) |
 |---|---|---|---|
-| vector_store | SqliteVecStore | LanceDBStore | QdrantStore |
+| vector_store | SqliteVecStore | LanceDBVectorStore | QdrantVectorStore |
+| doc_store | SqliteDocStore | SqliteDocStore | PostgresDocStore |
 | graph_store | KuzuGraphStore | KuzuGraphStore | Neo4jGraphStore |
-| embedder | MiniLM/bge-small (CPU) | Qwen3-Embedding-0.6B (GPU) | API or 대형 embedder |
-| reranker | RRFReranker | LLMReranker | CrossEncoderReranker |
+| embedder | ST(multilingual-e5-small) | ST(bge-m3) | APIEmbedder(text-embedding-3-small) — 미구현, 현재 ST 강등 |
+| reranker | NoopReranker | LLMReranker | CrossEncoderReranker |
 | llm.extract | Qwen3-0.6B (로컬) | Qwen3-4B-AWQ | API (gpt-4o-mini급) |
 | llm.judge | API | API | API or 로컬 70B |
-| write path | async queue | async queue | async queue + workers |
+| write path | sync (기본) | sync (기본) | `sync_write=False` 시 백그라운드 워커 스레드 |
 
 - 프로파일은 시작점일 뿐이며 모든 slot은 TOML config로 오버라이드 가능.
 - 동일 실험 코드가 profile 스위칭만으로 lite↔full 재현 가능해야 함 (실험 결과에 사용 profile 기록 필수).

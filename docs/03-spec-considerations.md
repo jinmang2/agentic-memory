@@ -21,11 +21,12 @@
 query → [1 QueryExpansion] → [2 Recall] → [3 Fusion] → [4 Rerank] → MemoryBundle
 ```
 
-1. **QueryExpansion** (optional): time-range 추출(LongMemEval temporal pruning 이식), 키워드 추출. LLM 불필요한 규칙 기반 우선.
-2. **Recall** (병렬 실행, 소스별):
-   - `DenseRecall`: 벡터 검색 (모든 store 공통)
-   - `LexicalRecall`: BM25/FTS5 (sqlite FTS5 / tantivy / Neo4j fulltext)
-   - `GraphRecall`: seed 노드에서 BFS/k-hop (graph store 활성 시)
+1. **QueryExpansion** (optional, 미구현 — 로드맵): time-range 추출(LongMemEval temporal pruning 이식), 키워드 추출. LLM 불필요한 규칙 기반 우선.
+2. **Recall** (채널별; `retrieval/pipeline.py` 내 메서드로 구현):
+   - dense: 벡터 검색 (모든 store 공통)
+   - lexical: BM25/FTS5 (sqlite FTS5 / Postgres tsvector)
+   - graph: seed(entity) 노드의 incident active edge 1-hop 확장 (graph store 활성 시,
+     `GraphStore.neighbors`는 hops 파라미터로 다단 지원하나 파이프라인은 1-hop만 사용)
    - 각 recall은 `candidate_k = 3×final_k` 반환
 3. **Fusion**: RRF 기본 (rank 기반이라 스코어 정규화 불필요)
 4. **Rerank** (capability-gated):

@@ -14,6 +14,7 @@ LongMemEval/LoCoMo로 재현 평가하며, MCP로 배포
 | [docs/04-architecture.md](docs/04-architecture.md) | 모듈 구조 (Organizer 플러그인 + MemoryOp/EvolutionLog 추상화) |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API + MCP 도구 설계 + 벤치 CLI |
 | [docs/06-roadmap.md](docs/06-roadmap.md) | Phase 0–5 개발 계획, 리스크, 즉시 다음 액션 |
+| [docs/12-code-conventions.md](docs/12-code-conventions.md) | 코드 컨벤션 (이름/docstring/구조) — 리뷰 게이트 기준 |
 | docs/research/ | 논문·공식 코드 원자료 리서치 노트 (시스템별) |
 
 ## Quickstart
@@ -22,7 +23,7 @@ LongMemEval/LoCoMo로 재현 평가하며, MCP로 배포
 uv sync                          # embed 그룹 포함 기본 설치
 scripts/setup-local-llm.sh       # llama.cpp + Qwen3-0.6B (~/.agmem, 멱등)
 scripts/serve-llm.sh &           # 로컬 LLM 데몬 :8080
-uv run pytest tests/ -q          # 56 tests
+uv run pytest tests/ -q          # 126 tests
 
 # 라이브러리
 uv run python -c "
@@ -44,3 +45,5 @@ uv run python scripts/exp_locomo_conv0.py --configs passthrough amem nemori memo
 - **모든 메모리 변경은 append-only `EvolutionLog` 연산**(ADD/UPDATE/MERGE/DELETE/INVALIDATE/LINK) — ACE delta, G-Memory rule ops, Zep invalidation을 하나의 추상화로.
 - **Capability-gated**: Neo4j·cross-encoder 등 무거운 구성요소도 전부 구현하되 감지된 하드웨어에 따라 자동 선택/강등.
 - **원문 episode 불변 보존** — 그래프/요약 추상화의 verbatim 손실(Zep 실증)에 대한 방어.
+- **Organizer 간 chaining**: 한 organizer의 산출물을 다른 organizer가 `consumes` 구독으로 받는 이벤트 훅(`on_memory_event`)과, 명시적 `mem.consolidate()`로만 도는 유예 배치 훅(`consolidate`)을 계약으로 분리 — Nemori(방출)→MemoryOS/A-Mem(`input="episodes"`) 조합으로 검증 (docs/04 §2–3).
+- **Nemori fidelity 스위치**: `NemoriOrganizer(fidelity="v1"|"v4"|"upstream")`으로 논문 v1/v4/upstream 코드/우리 mixing을 같은 구현에서 재현 (docs/11).
