@@ -135,6 +135,42 @@ def test_consolidate_api_applies_ops_and_cursor():
     assert mem.vec.count() == 2  # one from episode, one from consolidated item
 
 
+def test_consolidate_drains_async_queue_first():
+    """Review I3: consolidate() runs on the caller's thread and scans the log,
+    so it must first drain any pending async organizer work — otherwise a
+    just-queued (not-yet-applied) fact is invisible to the cursor scan."""
+    import time
+
+    from agmem import AgenticMemory
+    from agmem.config import AgmemConfig
+    from agmem.embed.fake import FakeEmbedder
+
+    class Cons(Organizer):
+        name = "cons"
+
+        def consolidate(self, ctx):
+            return []
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=[Cons()],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(sync_write=False),
+    )
+    try:
+        seen: list[int] = []
+
+        def slow_work():
+            time.sleep(0.05)
+            seen.append(1)
+
+        mem._dispatch(slow_work)  # queued on the background worker
+        mem.consolidate()  # must join() before returning
+        assert seen == [1]  # queue was drained before consolidate finished
+    finally:
+        mem.close()
+
+
 # ---------------- MemoryOS input="episodes" consumer (Task 12) --------------
 
 
@@ -313,3 +349,97 @@ def test_amem_consumes_episodes_and_retires_notes():
         o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.INVALIDATE
     ]
     assert len(inv) == 1 and inv[0].target_id == notes[0].target_id
+
+
+# ---------------- M3 spec §5 test-gap closures --------------------------------
+
+
+def _ev(op, tid, **payload):
+    return MemoryOp(op=op, target_type="episodes", target_id=tid, payload={"id": tid, **payload})
+
+
+def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
+    """M3(a): a page backed by 2 sources survives when only 1 source is
+    superseded (_retire's srcs.discard leaves a non-empty set); only once the
+    last source is superseded does the page INVALIDATE fire."""
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    mos = MemoryOSOrganizer(stm_capacity=2, input="episodes")
+    mem = _mk(organizers=[mos])  # no LLM -> one mechanical page over the batch
+    mem._propagate_events(
+        [_ev(OpType.ADD, "e1", content="one"), _ev(OpType.ADD, "e2", content="two")],
+        actor="src",
+    )
+    pages = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.ADD]
+    assert len(pages) == 1 and set(pages[0].payload["source_episode_ids"]) == {"e1", "e2"}
+
+    # supersede only e1 -> page still backed by e2 -> no INVALIDATE
+    mem._propagate_events(
+        [_ev(OpType.MERGE, "m1", content="merged", supersedes=["e1"])], actor="src"
+    )
+    still = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
+    assert still == []
+
+    # supersede e2 too -> all sources gone -> page INVALIDATE
+    mem._propagate_events(
+        [_ev(OpType.MERGE, "m2", content="merged2", supersedes=["e2"])], actor="src"
+    )
+    inv = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
+    assert len(inv) == 1 and inv[0].payload["reason"] == "sources_superseded"
+
+
+def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
+    """M3(b): MemoryOS UPDATE replaces the unit while still in STM, but is a
+    no-op once the unit has been paged (documented staleness, spec §3)."""
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    mos = MemoryOSOrganizer(stm_capacity=2, input="episodes")
+    mem = _mk(organizers=[mos])
+    mem._propagate_events([_ev(OpType.ADD, "e1", content="v1")], actor="src")
+    assert [e.content for e in mos._stm] == ["v1"]
+    mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v2")], actor="src")
+    assert [e.content for e in mos._stm] == ["v2"]  # replaced in place
+
+    # fill capacity -> e1(v2)+e2 evicted into a page; STM drains
+    mem._propagate_events([_ev(OpType.ADD, "e2", content="w1")], actor="src")
+    assert mos._stm == []
+    pages_before = [o for o in mem.log.tail(30) if o.target_type == "pages"]
+    # UPDATE for the now-paged e1 must be ignored -> no new page op
+    mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v3")], actor="src")
+    pages_after = [o for o in mem.log.tail(30) if o.target_type == "pages"]
+    assert len(pages_after) == len(pages_before)
+
+
+def test_amem_update_does_not_rewrite_note():
+    """M3(b): A-Mem consuming episodes does not re-distill a note on UPDATE."""
+    from agmem.organizers.amem import AMemOrganizer
+
+    org = AMemOrganizer(input="episodes")
+    mem = _mk(organizers=[org])  # no LLM -> bare note
+    mem._propagate_events(
+        [_ev(OpType.ADD, "e1", content="narrative", timestamp="2026-01-01")], actor="src"
+    )
+    adds = [o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.ADD]
+    assert len(adds) == 1
+    mem._propagate_events([_ev(OpType.UPDATE, "e1", content="revised narrative")], actor="src")
+    adds_after = [o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.ADD]
+    assert len(adds_after) == 1  # no rewrite: still just the original ADD
+
+
+def test_delete_op_is_not_propagated_as_event():
+    """M3(c): DELETE (like INVALIDATE) is never delivered as a MemoryEvent —
+    only ADD/UPDATE/MERGE propagate to subscribed consumers."""
+    consumer = Consumer()
+    mem = _mk(organizers=[consumer])
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.DELETE,
+                target_type="episodes",
+                target_id="e1",
+                payload={"reason": "evicted"},
+            )
+        ],
+        actor="src",
+    )
+    assert consumer.seen == []

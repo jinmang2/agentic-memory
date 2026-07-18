@@ -284,6 +284,44 @@ def test_three_way_tau_filters_candidates():
         mem.close()
 
 
+def test_inline_predict_calibrate_dedupes_mutual_facts_within_batch():
+    """Review I1: the inline v4 path had the consolidator's within-pass
+    supersession blindness — two mutually near-duplicate facts produced by a
+    single predict-calibrate each earn their own ThreeWay merge head against
+    the not-yet-applied store, leaving two live heads and a double-superseded
+    target. A call-local ``superseded`` set threaded through _predict_calibrate
+    (exclude_ids into ThreeWay + accumulate its INVALIDATEs) must absorb fact B
+    into fact A's merge without ever reaching the LLM for B. A 2nd merge
+    response is queued so a regression consumes it and yields a 2nd head."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"prediction": "the dog"},
+                {"facts": ["The user's dog is named Max", "The user's dog is called Max"]},
+                {"decision": "merge", "target_indexes": [0], "statement": "User's dog is Max"},
+                {"decision": "merge", "target_indexes": [0], "statement": "duplicate head"},
+            ]
+        }
+    )
+    org = NemoriOrganizer(fidelity="v4")
+    mem = make_mem(org, llm)
+    try:
+        xid = new_id()
+        _seed_semantic(mem, [(xid, "The user's dog is named Max")])
+        superseded: set[str] = set()
+        ops = org._predict_calibrate(
+            "unrelated topic", "quux blorp", "u: hi", "ep1", ["m1"], mem._ctx, superseded
+        )
+        merges = [o for o in ops if o.op is OpType.MERGE and o.target_type == "semantic"]
+        # Exactly one merge head survives; fact B is excluded from candidates.
+        assert len(merges) == 1
+        # predict + calibrate + one integrate (fact B never reaches the LLM).
+        assert len(llm.calls) == 3
+        assert xid in superseded  # the target the merge absorbed
+    finally:
+        mem.close()
+
+
 # ---------------- SemanticOfflineConsolidator (Task 11, our mixing) ----------------
 
 
@@ -375,5 +413,74 @@ def test_semantic_offline_consolidate_dedupes_mutual_duplicates_within_one_pass(
         assert len(merges) == 1
         # Fact B must be skipped before ever reaching the LLM.
         assert len(llm.calls) == 1
+    finally:
+        mem.close()
+
+
+def test_semantic_offline_consolidate_reprocesses_after_crash():
+    """M3(d) / spec §1.4 crash semantics: if a pass's ops are produced but
+    never applied (crash before the facade commits), the cursor never advances,
+    so the next pass reprocesses the same still-live facts and converges to the
+    same merge — no fact is silently orphaned by the missed commit."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"decision": "merge", "target_indexes": [0], "statement": "User's dog is Max"},
+                {"decision": "merge", "target_indexes": [0], "statement": "User's dog is Max (2)"},
+            ]
+        }
+    )
+    org = NemoriOrganizer(fidelity="v1", consolidation="semantic_offline")
+    mem = make_mem(org, llm)
+    try:
+        for i, f in enumerate(["The user's dog is named Max", "The user's dog is called Max"]):
+            mem._apply_ops(
+                AppendIntegrator().integrate(f, f"ep{i}", [f"m{i}"], mem._ctx),
+                actor="nemori",
+            )
+        # 1st pass: ops are produced but deliberately NOT applied (crash).
+        ops1 = org.consolidate(mem._ctx)
+        merges1 = [o for o in ops1 if o.op is OpType.MERGE and o.target_type == "semantic"]
+        assert len(merges1) == 1
+        assert org.read_cursor(mem._ctx) == 0  # cursor never advanced (nothing committed)
+
+        # 2nd pass reprocesses the same live facts -> same convergent merge.
+        ops2 = org.consolidate(mem._ctx)
+        merges2 = [o for o in ops2 if o.op is OpType.MERGE and o.target_type == "semantic"]
+        assert len(merges2) == 1
+    finally:
+        mem.close()
+
+
+def test_semantic_offline_consolidate_cursor_respects_scan_limit():
+    """Review I2: when the semantic log since the cursor exceeds ops_since's
+    limit, the cursor must advance only to the last scanned seq — not jump to
+    last_seq() — or the truncated tail is dropped forever. With scan_limit=1
+    and two independent facts, the first pass processes only fact 0 and the
+    cursor stays at fact 0's seq; the second pass picks up fact 1."""
+    llm = StubLLM({})  # dissimilar facts -> no candidates -> no LLM call
+    org = NemoriOrganizer(fidelity="v1", consolidation="semantic_offline")
+    org._consolidator.scan_limit = 1
+    mem = make_mem(org, llm)
+    try:
+        for i, f in enumerate(["Alice works at Google", "Bob lives in Paris"]):
+            mem._apply_ops(
+                AppendIntegrator().integrate(f, f"ep{i}", [f"m{i}"], mem._ctx),
+                actor="nemori",
+            )
+        sem = mem.doc.ops_since(0, target_type="semantic")
+        seq0, seq1 = sem[0][0], sem[1][0]
+
+        mem.consolidate()  # scan_limit=1 -> truncated after fact 0
+        assert org.read_cursor(mem._ctx) == seq0  # cursor held at fact 0, not last_seq()
+        assert seq0 < seq1
+
+        mem.consolidate()  # resumes from fact 0's seq -> processes fact 1
+        assert org.read_cursor(mem._ctx) == seq1
+
+        # convergence: nothing left, no LLM calls ever made (facts dissimilar)
+        calls_before = len(llm.calls)
+        mem.consolidate()
+        assert len(llm.calls) == calls_before == 0
     finally:
         mem.close()
