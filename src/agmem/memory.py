@@ -28,6 +28,8 @@ from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
 
 logger = logging.getLogger("agmem")
 
+BITEMPORAL_TYPES = ("facts",)  # Types kept in vector store even after INVALIDATE (Zep bi-temporal)
+
 
 class AgenticMemory:
     def __init__(
@@ -343,8 +345,16 @@ class AgenticMemory:
             items = self.doc.get_items([op.target_id], op.target_type)
             if items:
                 data = items[0]
-                data["invalid_at"] = op.payload.get("t_invalid", utcnow().isoformat())
+                # 최초 무효화 시각 보존 — 이중 무효화 멱등 (spec §1.2)
+                data.setdefault(
+                    "invalid_at", op.payload.get("t_invalid", utcnow().isoformat())
+                )
+                if "superseded_by" in op.payload:
+                    data["superseded_by"] = op.payload["superseded_by"]
                 self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
+                if op.target_type not in BITEMPORAL_TYPES:
+                    # 서빙 제외 보장 — ghost-hit 방지(X1 계열, spec §1.3); doc/로그엔 남음
+                    self.vec.delete([op.target_id])
         elif op.op in (OpType.LINK, OpType.TAG):
             items = self.doc.get_items([op.target_id], op.target_type)
             if items:
