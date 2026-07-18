@@ -55,6 +55,7 @@ from agmem.organizers.nemori_stages import (
     DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
+    SemanticOfflineConsolidator,
     ThreeWayIntegrator,
     _fmt,
 )
@@ -307,11 +308,16 @@ class NemoriOrganizer(Organizer):
                 tau=params.get("integrate_tau", 0.70),
             ),
         }[params["semantic_integration"]]()
-        # consolidation kwarg is recorded in params (default "off") but the
-        # branch itself is Task 11's scope — SemanticOfflineConsolidator
-        # doesn't exist yet, so this stays hard-pinned to None. The mix
-        # test's `_consolidator is not None` assertion activates in Task 11.
-        self._consolidator = None
+        # Task 11: cursor-resumed deferred three-way consolidation (our
+        # mixing — absent from both the paper and upstream, spec §2.3).
+        self._consolidator = (
+            SemanticOfflineConsolidator(
+                top_k=params.get("integrate_top_k", 5),
+                tau=params.get("integrate_tau", 0.70),
+            )
+            if params["consolidation"] == "semantic_offline"
+            else None
+        )
         self.fidelity = fidelity
         self.params = params  # stats/stamping surface
 
@@ -353,6 +359,11 @@ class NemoriOrganizer(Organizer):
         for seg in segments:
             ops.extend(self._flush_segment(seg, ctx))
         return ops
+
+    def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
+        if self._consolidator is None or ctx.llm is None:
+            return []
+        return self._consolidator.run(self, ctx)
 
     # ---- internals ----------------------------------------------------------
 

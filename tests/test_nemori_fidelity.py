@@ -43,8 +43,7 @@ def test_presets_resolve_to_stages():
         fidelity="v4", semantic_integration="append", consolidation="semantic_offline"
     )
     assert isinstance(mix._integrator, AppendIntegrator)
-    # _consolidator 활성화(SemanticOfflineConsolidator)는 Task 11 스코프.
-    # assert mix._consolidator is not None
+    assert mix._consolidator is not None
 
     # 무인자 = v1 동치 (기존 config 호환)
     assert isinstance(NemoriOrganizer()._segmenter, PerMessageBoundary)
@@ -281,5 +280,49 @@ def test_three_way_tau_filters_candidates():
         assert ops[0].op == OpType.ADD
         assert ops[0].payload["content"] == "User likes hiking"
         assert llm.calls == []  # tau filtered out the only candidate -> no LLM call
+    finally:
+        mem.close()
+
+
+# ---------------- SemanticOfflineConsolidator (Task 11, our mixing) ----------------
+
+
+def test_semantic_offline_consolidate_merges_and_advances_cursor():
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "decision": "merge",
+                    "target_indexes": [0],
+                    "statement": "User's dog is named Max",
+                }
+            ]
+        }
+    )
+    org = NemoriOrganizer(fidelity="v1", consolidation="semantic_offline")
+    mem = make_mem(org, llm)
+    try:
+        # Inline-appended as the "nemori" actor so the consolidator's own-actor
+        # filter picks them up, exactly as a real Stage-3 ADD would log them.
+        # High token overlap (7/7 shared but one word) keeps FakeEmbedder's
+        # hashed bag-of-words cosine above the default tau=0.70.
+        for i, f in enumerate(["The user's dog is named Max", "The user's dog is called Max"]):
+            mem._apply_ops(
+                AppendIntegrator().integrate(f, f"ep{i}", [f"m{i}"], mem._ctx),
+                actor="nemori",
+            )
+        n = mem.consolidate()
+        assert n > 0
+        ops = mem.log.tail(20)
+        merges = [o for o in ops if o.op == OpType.MERGE and o.target_type == "semantic"]
+        assert len(merges) == 1 and merges[0].payload["consolidated"] is True
+        cursor = [o for o in ops if o.target_type == "state"]
+        assert cursor and cursor[-1].payload["seq"] > 0
+
+        # 2nd call: no new input -> own consolidated output (MERGE/INVALIDATE,
+        # not ADD) is skipped, cursor advances with zero LLM calls.
+        calls_before = len(llm.calls)
+        mem.consolidate()
+        assert len(llm.calls) == calls_before
     finally:
         mem.close()

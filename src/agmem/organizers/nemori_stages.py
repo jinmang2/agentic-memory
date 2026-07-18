@@ -474,7 +474,12 @@ class ThreeWayIntegrator:
         self.tau = tau
 
     def integrate(
-        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+        self,
+        fact: str,
+        episode_id: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+        exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
         emb = ctx.embedder.embed([fact])[0]
         hits = [
@@ -482,7 +487,7 @@ class ThreeWayIntegrator:
             for hid, s in ctx.vec.search(
                 emb, k=self.top_k, memory_type="semantic", namespace=ctx.namespace
             )
-            if s >= self.tau
+            if s >= self.tau and (exclude_ids is None or hid not in exclude_ids)
         ]
         cands = [
             c
@@ -547,3 +552,58 @@ class ThreeWayIntegrator:
             )
             for t in targets
         ]
+
+
+class SemanticOfflineConsolidator:
+    """Deferred three-way consolidation over facts accumulated since the
+    cursor — our addition (absent from both the paper and upstream; the
+    LightMem/MOOM dual-phase pattern, spec §2.3). Own outputs carry
+    consolidated=True and are skipped on later passes, so repeated calls
+    converge instead of re-judging their own merges."""
+
+    def __init__(self, top_k: int = 5, tau: float = 0.70) -> None:
+        self._inner = ThreeWayIntegrator(top_k=top_k, tau=tau)
+
+    def run(self, organizer, ctx: OrganizerContext) -> list[MemoryOp]:
+        cursor = organizer.read_cursor(ctx)
+        end = ctx.doc.last_seq()
+        if end <= cursor:
+            return []
+        ops: list[MemoryOp] = []
+        for _seq, op in ctx.doc.ops_since(cursor, target_type="semantic"):
+            if op.op is not OpType.ADD or op.payload.get("consolidated"):
+                continue
+            if op.actor != organizer.name:
+                continue  # only re-judge this organizer's own semantic ADDs
+            current = ctx.doc.get_items([op.target_id], "semantic")
+            if not current or current[0].get("invalid_at"):
+                continue  # already superseded by this pass or inline
+            fact = str(current[0].get("content", ""))
+            # exclude_ids drops the fact's own item from ThreeWay's candidate
+            # search — otherwise vec.search reliably returns it as its own
+            # top-1 neighbor (Task 9 signature change, spec §2.3 note).
+            out = self._inner.integrate(
+                fact,
+                current[0].get("episode_id", ""),
+                current[0].get("source_episode_ids", []),
+                ctx,
+                exclude_ids={op.target_id},
+            )
+            if not any(o.op is OpType.INVALIDATE for o in out):
+                continue  # decision=new / no candidates -> keep the stored original
+            produced_new = [o for o in out if o.op in (OpType.ADD, OpType.MERGE)]
+            for o in produced_new:
+                o.payload["consolidated"] = True
+            # the original fact is superseded by the consolidated statement too
+            head_id = produced_new[0].target_id if produced_new else ""
+            out.append(
+                MemoryOp(
+                    op=OpType.INVALIDATE,
+                    target_type="semantic",
+                    target_id=op.target_id,
+                    payload={"reason": "consolidated", "superseded_by": head_id},
+                )
+            )
+            ops.extend(out)
+        ops.append(organizer.cursor_op(end))
+        return ops
