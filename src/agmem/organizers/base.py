@@ -85,10 +85,19 @@ class Organizer:
         return []
 
     def read_cursor(self, ctx: OrganizerContext) -> int:
+        """Read this organizer's consolidate cursor seq (0 if unset).
+
+        The cursor id is scoped to ``self.name`` only, so two instances of the
+        same organizer class in one memory would share (and clobber) one
+        cursor; and ``get_items`` is not namespace-filtered, so a doc store
+        shared across namespaces could collide too. Both are harmless in the
+        current configs (one instance per class; per-namespace db files)."""
         items = ctx.doc.get_items([f"consolidate:{self.name}"], "state")
         return int(items[0].get("seq", 0)) if items else 0
 
     def cursor_op(self, seq: int) -> MemoryOp:
+        """Emit the cursor-advance op (see read_cursor for the name/namespace
+        scope constraint — same ``consolidate:{self.name}`` id)."""
         return MemoryOp(
             op=OpType.UPDATE,
             target_type="state",

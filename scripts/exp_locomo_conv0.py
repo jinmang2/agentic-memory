@@ -90,12 +90,13 @@ def run(
     try:
         t0 = time.perf_counter()
         n_turns = locomo.ingest(mem, sample, max_sessions=max_sessions)  # ingest() flushes
-        # Deferred management pass (spec §1.4): any organizer wired for
-        # semantic_offline consolidation (nemori_mix) gets its explicit
-        # post-ingest consolidate() call, right after the flush inside
-        # ingest() settles the tail buffer.
-        if any(getattr(o, "_consolidator", None) for o in mem.organizers):
-            mem.consolidate()
+        # Deferred management pass (spec §1.4): call the Organizer.consolidate
+        # contract unconditionally right after ingest()'s flush settles the
+        # tail buffer. Organizers without a consolidate hook are a no-op
+        # returning 0 (base default), so this is contract-based rather than
+        # gated on Nemori's private _consolidator attribute (review M4) — it
+        # also covers future consolidate users (ACE refine, Zep refresh).
+        mem.consolidate()
         ingest_s = time.perf_counter() - t0
 
         questions = locomo.select_questions(sample, max_sessions=max_sessions, limit=limit)
@@ -116,7 +117,10 @@ def run(
             "config": config_name,
             # organizers is now resolved to instances (factory callables are
             # consumed above) — record names for JSON-safety, not objects.
-            "organizers": [getattr(o, "name", type(o).__name__) for o in organizers],
+            "organizers": [
+                o if isinstance(o, str) else getattr(o, "name", type(o).__name__)
+                for o in organizers
+            ],
             "memory_types": list(memory_types),
             "n_turns": n_turns,
             "ingest_seconds": round(ingest_s, 1),
