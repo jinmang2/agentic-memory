@@ -251,6 +251,31 @@ class PostgresDocStore:
             cur.execute("SELECT COUNT(*) FROM evolution_log")
             return int(cur.fetchone()[0])
 
+    def ops_since(
+        self, seq: int, target_type: str | None = None, limit: int = 10000
+    ) -> list[tuple[int, MemoryOp]]:
+        """Read log entries after ``seq`` in order — the consolidate cursor surface."""
+        sql = (
+            "SELECT seq, op, target_type, target_id, payload, actor, t_transaction"
+            " FROM evolution_log WHERE seq > %s"
+        )
+        args: list[Any] = [seq]
+        if target_type is not None:
+            sql += " AND target_type = %s"
+            args.append(target_type)
+        sql += " ORDER BY seq ASC LIMIT %s"
+        args.append(limit)
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+        return [(int(r[0]), MemoryOp.from_row(*r[1:])) for r in rows]
+
+    def last_seq(self) -> int:
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute("SELECT MAX(seq) FROM evolution_log")
+            row = cur.fetchone()
+        return int(row[0] or 0)
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()

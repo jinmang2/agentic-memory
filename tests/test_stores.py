@@ -62,6 +62,24 @@ def test_evolution_log_append_only(doc):
     assert tail[1].op is OpType.INVALIDATE
 
 
+def test_ops_since_and_last_seq(doc):
+    assert doc.last_seq() == 0
+    doc.append(
+        [
+            MemoryOp(op=OpType.ADD, target_type="semantic", target_id="s1"),
+            MemoryOp(op=OpType.ADD, target_type="episodes", target_id="e1"),
+        ]
+    )
+    doc.append([MemoryOp(op=OpType.UPDATE, target_type="semantic", target_id="s1")])
+    end = doc.last_seq()
+    assert end == 3
+    all_ops = doc.ops_since(0)
+    assert [o.target_id for _, o in all_ops] == ["s1", "e1", "s1"]
+    assert [s for s, _ in all_ops] == [1, 2, 3]
+    sem = doc.ops_since(1, target_type="semantic")
+    assert [(s, o.op) for s, o in sem] == [(3, OpType.UPDATE)]
+
+
 def test_items_roundtrip(doc):
     doc.put_item("s1", "strategies", "t", {"id": "s1", "title": "T", "content": "C"})
     items = doc.get_items(["s1"], "strategies")
@@ -142,6 +160,13 @@ def test_vector_delete_removes_from_search(vec_cls):
     assert store.count() == 1
     assert [h[0] for h in store.search(v, k=5, namespace="t")] == ["b"]
     assert store.get(["a"]) == {}
+    store.close()
+
+
+@pytest.mark.parametrize("vec_cls", VEC_CLASSES)
+def test_vector_delete_missing_is_noop(vec_cls):
+    store = vec_cls(None, dim=8)
+    store.delete(["no-such-id"])  # must not raise
     store.close()
 
 

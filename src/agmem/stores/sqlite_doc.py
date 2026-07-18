@@ -265,6 +265,29 @@ class SqliteDocStore:
                 self._conn.execute("SELECT COUNT(*) FROM evolution_log").fetchone()[0]
             )
 
+    def ops_since(
+        self, seq: int, target_type: str | None = None, limit: int = 10000
+    ) -> list[tuple[int, MemoryOp]]:
+        """Read log entries after ``seq`` in order — the consolidate cursor surface."""
+        q = (
+            "SELECT seq, op, target_type, target_id, payload, actor, t_transaction"
+            " FROM evolution_log WHERE seq > ?"
+        )
+        args: list = [seq]
+        if target_type is not None:
+            q += " AND target_type = ?"
+            args.append(target_type)
+        q += " ORDER BY seq ASC LIMIT ?"
+        args.append(limit)
+        with self._lock:
+            rows = self._conn.execute(q, args).fetchall()
+        return [(int(r[0]), MemoryOp.from_row(*r[1:])) for r in rows]
+
+    def last_seq(self) -> int:
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(seq) FROM evolution_log").fetchone()
+        return int(row[0] or 0)
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
