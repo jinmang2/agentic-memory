@@ -166,6 +166,21 @@ class MemoryOSOrganizer(Organizer):
             ops.extend(self._evict_to_mtm(batch, ctx))
         return ops
 
+    def _drop_page_index(self, page_id: str) -> None:
+        """Remove page_id from the _page_sources/_unit_pages reverse
+        indexes entirely — shared by heat-eviction (page gone, all its
+        source links are dead) and _retire (page invalidated, same
+        thing). Without this, evicted/invalidated pages leak index
+        entries and a later supersedes can make _retire re-emit a stale
+        INVALIDATE for a page that's already gone (review finding)."""
+        for uid in self._page_sources.pop(page_id, ()):
+            pages = self._unit_pages.get(uid)
+            if pages is None:
+                continue
+            pages.discard(page_id)
+            if not pages:
+                self._unit_pages.pop(uid, None)
+
     def _retire(self, superseded: set[str]) -> list[MemoryOp]:
         """Clean up derived state for absorbed units: drop them from STM;
         invalidate a page only once ALL of its sources are superseded
@@ -179,7 +194,7 @@ class MemoryOSOrganizer(Organizer):
                     continue
                 srcs.discard(uid)
                 if not srcs:
-                    self._page_sources.pop(pid, None)
+                    self._drop_page_index(pid)
                     self._heat.pop(pid, None)
                     ops.append(
                         MemoryOp(
@@ -313,6 +328,7 @@ class MemoryOSOrganizer(Organizer):
         while len(self._heat) > self.mtm_capacity:
             coldest = min(self._heat, key=self._segment_heat)
             self._heat.pop(coldest)
+            self._drop_page_index(coldest)
             ops.append(
                 MemoryOp(
                     op=OpType.DELETE,

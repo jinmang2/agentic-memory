@@ -203,3 +203,75 @@ def test_memoryos_retires_superseded_units():
     )
     inv = [o for o in mem.log.tail(10) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
     assert len(inv) == 1 and inv[0].payload["reason"] == "sources_superseded"
+
+
+def test_memoryos_heat_eviction_drops_reverse_index():
+    """Review finding: lowest-heat eviction in _evict_to_mtm popped
+    self._heat but left _page_sources/_unit_pages entries for the evicted
+    page dangling -> permanent leak, and a later supersedes on the
+    evicted page's source could make _retire emit a stale INVALIDATE for
+    an already-DELETEd page."""
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {"groups": [{"topic": "g1", "summary": "alpha", "keywords": [], "message_indexes": [0]}]},
+                {"groups": [{"topic": "g2", "summary": "beta", "keywords": [], "message_indexes": [0]}]},
+            ]
+        }
+    )
+    mos = MemoryOSOrganizer(stm_capacity=1, mtm_capacity=1, input="episodes")
+    mem = make_mem_multi([mos], llm)
+
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id="e1",
+                payload={"id": "e1", "content": "ep one"},
+            )
+        ],
+        actor="src",
+    )
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id="e2",
+                payload={"id": "e2", "content": "ep two"},
+            )
+        ],
+        actor="src",
+    )
+
+    pages_add = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.ADD]
+    deletes = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.DELETE]
+    assert len(pages_add) == 2  # 두 page 생성
+    assert len(deletes) == 1  # mtm_capacity=1 → 하나는 즉시 축출
+    evicted_id = deletes[0].target_id
+
+    # 축출된 page의 역인덱스 엔트리가 남아있으면 안 됨 (누수 재현)
+    assert evicted_id not in mos._page_sources
+    assert all(evicted_id not in pages for pages in mos._unit_pages.values())
+
+    evicted_add = next(o for o in pages_add if o.target_id == evicted_id)
+    evicted_source = evicted_add.payload["source_episode_ids"][0]
+
+    # 축출된 page의 소스 episode를 supersede하는 MERGE → 이미 DELETE된
+    # page에 대해 stale INVALIDATE가 나오면 안 됨
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.MERGE,
+                target_type="episodes",
+                target_id="e3",
+                payload={"id": "e3", "content": "merged", "supersedes": [evicted_source]},
+            )
+        ],
+        actor="src",
+    )
+    inv = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
+    assert inv == []
