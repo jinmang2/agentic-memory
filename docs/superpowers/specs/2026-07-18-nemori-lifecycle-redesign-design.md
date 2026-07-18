@@ -14,10 +14,11 @@
 2. organizer 계약을 distillation(메모리 단위 형성)과 management(dedup/merge/conflict/
    promote/evict)가 서로를 모른 채 조합되는 management-agnostic 구조로 확장하고,
    한 organizer의 산출물이 다른 organizer의 입력이 되는 chaining을 1급으로 지원.
-3. 첫 조합 검증: MemoryOS×Nemori — Nemori 에피소드를 MemoryOS의 정제된 대화 이력으로.
+3. 조합 검증 2종: MemoryOS×Nemori(에피소드를 정제된 대화 이력으로) + A-Mem×Nemori
+   (에피소드를 note 원문으로) — consumer 2개로 계약의 management-agnostic을 검증.
 
 **비목표 (이번 공사 제외)**
-- 나머지 6개 organizer의 새 훅 활용 마이그레이션 (base 디폴트 no-op으로 기존 동작 보존).
+- 나머지 5개 organizer의 새 훅 활용 마이그레이션 (base 디폴트 no-op으로 기존 동작 보존).
 - consolidate의 자동 트리거(유휴 디바운스/스케줄러) — 효과 검증 후 후속 공사.
 - LongMemEval 하네스, 스토리지 엔진 변경 (MemoryOp 원칙·profile 축 유지).
 
@@ -42,8 +43,9 @@ class MemoryEvent:
     source: str        # 발생 organizer name
     op: OpType         # ADD | UPDATE | MERGE 만 전파
     target_type: str   # "episodes", "semantic", "pages", ...
-    target_id: str
+    target_id: str     # MERGE면 "살아남는" 항목의 id
     payload: dict      # 적용된 op payload 그대로 (재조회 없음)
+    supersedes: tuple[str, ...] = ()  # MERGE가 흡수한 같은 타입 항목 id들
 
 class Organizer:
     consumes: tuple[str, ...] = ()   # 구독할 target_type. 인스턴스 설정으로 변경 가능
@@ -61,6 +63,16 @@ class Organizer:
 - **depth=1**: `on_memory_event`가 반환한 op는 로그·적용되지만 재전파되지 않는다
   (upstream `_on_episode_created`도 1단계; 다단계 요구가 생기면 그때 depth 파라미터화).
 - DELETE/INVALIDATE는 전파하지 않는다 — 관리 결과에 관리가 연쇄되는 사이클 원천 차단.
+  **supersession 정보는 INVALIDATE 이벤트가 아니라 MERGE 이벤트의 `supersedes` 필드로
+  원자적으로 전달**된다: 발생 organizer는 [MERGE(승계 id, 병합 payload) + 흡수된 id들의
+  INVALIDATE]를 같은 배치로 반환하고, 퍼사드는 MERGE op에서 같은 배치의 동일-타입
+  INVALIDATE 대상 id들을 `supersedes`로 채운다. consumer는 이벤트 하나로 "새 단위 +
+  무엇이 사라졌는지"를 함께 안다 (옛 page 미정리 문제의 해결).
+- 전달 순서: 배치 내 op 순서 → organizer 리스트 순서. **chained 구성은 distiller를
+  manager보다 앞에 배치**해야 warm_start/flush에서도 이벤트가 인과 순서로 흐른다
+  (flush()의 flush_buffer 순회도 리스트 순서).
+- 멱등성 요구: INVALIDATE는 기존 `invalid_at`을 보존(최초 시각 유지)하고, 벡터 delete는
+  없는 id에 안전해야 한다 (이중 무효화·재처리 대비 — 스토어 계약 테스트에 추가).
 - 이벤트 전달은 organizer 작업과 동일한 dispatch 경로(sync/워커)를 탄다 — `sync_write=True`
   재현 원칙 유지.
 - `AgenticMemory.consolidate()`: 등록 순서대로 각 organizer의 `consolidate`를 호출·적용.
@@ -79,6 +91,25 @@ class Organizer:
   한다. 규칙 — `_apply_one(INVALIDATE)`는 대상 타입이 bi-temporal 렌더 타입(facts)이
   아니면 **벡터도 제거**한다(doc/log에는 남음). ghost-hit 방지(X1)와 동일 계열 규칙.
 - DELETE는 종전대로 용량 축출(MemoryOS heat, G-Memory REMOVE)과 점수 프루닝 전용.
+
+### 1.4 consolidate 진행 포인터 (커서)
+
+유예 위상의 "어디서 재개하는가"를 evolution log로 해결한다 — 새 인프라 없이:
+
+- **커서 = evolution log 시퀀스 번호** (append-only 로그의 단조 증가 seq). organizer별
+  커서를 doc store의 `target_type="state"` 항목(`consolidate:{organizer}`)으로 영속화한다.
+- `consolidate(ctx)`는 ① 커서 읽기 → ② 커서 이후 로그에서 자기 관심 타입의 신규/변경
+  항목을 수집 → ③ 관리 op 배치(INVALIDATE+ADD/UPDATE) 반환 → ④ **마지막 op로
+  커서 전진**(UPDATE, target_type="state")을 반환한다. 커서 전진 자체가 로그에 남아
+  consolidation 이력이 감사 가능하다 (state 항목은 embedding_text 없음 — 벡터 미생성).
+- 크래시 의미론: op 적용 전에 실패하면 커서가 안 전진했으므로 다음 호출이 재처리한다.
+  재처리는 멱등에 가깝게: INVALIDATE는 멱등(§1.2), ADD 중복은 consolidator가 스토어
+  현재 상태와 대조(dedup)하므로 수렴한다.
+- 위상 분류 명확화(혼동 방지): **MemoryOS heat 승격은 인라인 위상**이다 — 원논문이
+  방출 캐스케이드 내 동작으로 정의하므로 consolidate로 옮기지 않는다. Mem0의 비동기
+  요약은 메모리 관리가 아니라 컨텍스트 준비라 범위 밖. 이 훅의 준거는 LightMem의
+  sleep-time 재조직(항목별 update queue를 우리는 로그 커서로 단순화)과 Letta의 유휴
+  재조직(빈도 결정은 호출자 몫 — 우리는 명시적 API)이다.
 
 ## 2. Nemori 재구조화 — fidelity 프리셋 + 스위치
 
@@ -134,7 +165,7 @@ NemoriOrganizer(
   `llm3way`(인라인) vs `append+semantic_offline`(유예)를 같은 코드로 ablation 비교한다.
 - 프롬프트는 upstream 원문 계보를 docs/11 §4.3 표에 이어 기록 (P_sel/P_int/P_con 축약 이식).
 
-## 3. MemoryOS 마이그레이션 + MemoryOS×Nemori 조합
+## 3. Manager 마이그레이션 (MemoryOS·A-Mem) + Nemori 조합
 
 - `MemoryOSOrganizer(input="messages" | "episodes")`:
   - `"messages"`(기본): 현행 동작 그대로.
@@ -144,11 +175,26 @@ NemoriOrganizer(
     (스터디 제안: "Nemori를 MemoryOS의 대화 이력 정제 레이어로").
 - semantic 타입 충돌 방지: MemoryOS LPM은 `kind="profile"`(현행), Nemori는
   `kind="fact"`를 명시해 출처 구분. 검색 채널은 변경 없음.
-- MERGE 이벤트 처리: manager는 MERGE 이벤트를 ADD와 동일하게 취급한다(병합 서사가 새
-  page로 편입; 중복은 heat 관리가 흡수). 다만 1차 chained 실험은 `fidelity="v1"`(merge off)로
-  시작해 이 경로를 배제하고, v4-chained는 후속 ablation으로 둔다.
-- 조합 config: `organizers=[NemoriOrganizer(fidelity="v1"), MemoryOSOrganizer(input="episodes")]`.
-- 나머지 6개 organizer: 무변경 (신규 훅 base 디폴트).
+- **MERGE/supersedes 처리 (manager 공통 규칙)**: manager는 소비한 단위의 역매핑
+  (`unit_id → 자기 산출물 id`; MemoryOS는 episode→page, 인메모리 dict — `_heat`와 동일한
+  재시작 휘발성, 문서화된 기존 한계)을 유지한다. `supersedes`가 담긴 이벤트 수신 시:
+  - 흡수된 단위가 아직 STM/버퍼에 있으면 → 버퍼에서 교체(승계 payload로 대체).
+  - 이미 page화됐으면 → 해당 page의 source가 **전부** superseded일 때만 page INVALIDATE,
+    일부면 유지(요약문에서 부분 제거는 LLM 재작성 비용 대비 이득 없음 — 중복은 heat가
+    흡수). 이중 무효화는 §1.2 멱등 규칙이 방어.
+  - 승계 단위(target_id)의 UPDATE/MERGE 이벤트를 이미 page화한 뒤 받으면 → 무시(문서화된
+    staleness 허용; STM에 있으면 교체).
+- 1차 chained 실험은 `fidelity="v1"`(merge off)로 시작해 이 경로를 배제하고, v4-chained는
+  supersedes 규칙 검증 후 ablation으로 둔다.
+- **A-Mem도 동일 패턴으로 이번 공사에 포함**: `AMemOrganizer(input="messages" | "episodes")`.
+  `"episodes"`면 `consumes=("episodes",)`, `on_message` no-op, 에피소드가 note 원문이 되어
+  A-Mem의 링크·이웃 진화 관리를 받는다 (방법론 무변경 — 입력 전환만). manager 공통 규칙
+  적용: 흡수된 에피소드의 note는 supersedes 수신 시 INVALIDATE(역매핑 episode→note).
+  consumer 2개(MemoryOS·A-Mem)로 계약의 management-agnostic을 검증한다.
+- 조합 config: `organizers=[NemoriOrganizer(fidelity="v1"), MemoryOSOrganizer(input="episodes")]`
+  (A-Mem 조합은 `[NemoriOrganizer(fidelity="v1"), AMemOrganizer(input="episodes")]`).
+- 나머지 5개 organizer(zep_graph/ace/reasoning_bank/gmemory/passthrough): 무변경 (신규 훅
+  base 디폴트).
 
 ## 4. 효율/확장성
 
@@ -161,8 +207,11 @@ NemoriOrganizer(
 ## 5. 검증 계획
 
 - 단위: 이벤트 전파(consumes 매칭·자기이벤트 제외·depth=1·DELETE/INVALIDATE 비전파),
-  INVALIDATE 벡터 제거 규칙(facts 예외), 프리셋 4종 스모크(스위치→스테이지 해석),
-  chained MemoryOS(input="episodes") 시나리오, consolidate() 공개 API.
+  MERGE `supersedes` 채움과 manager 처리(STM 교체 / 전부-superseded page INVALIDATE /
+  부분 유지), INVALIDATE 멱등(invalid_at 최초 보존)·벡터 delete 멱등(스토어 계약),
+  INVALIDATE 벡터 제거 규칙(facts 예외), consolidate 커서(영속·재개·크래시 재처리 수렴),
+  프리셋 4종 스모크(스위치→스테이지 해석), chained MemoryOS·A-Mem(input="episodes")
+  시나리오, consolidate() 공개 API.
 - 회귀: 기존 조직자 테스트 전부 통과 (`nemori`=v1 동치, `memoryos` 기본 동작 불변).
 - LoCoMo conv0 configs (스위치 명시):
 
@@ -173,6 +222,7 @@ NemoriOrganizer(
   | `nemori_upstream` | batch(20/2/25) | llm(0.85/5) | append | off | repo main 재현 |
   | `nemori_mix` | batch(w=20) | llm(K_e=5) | append | semantic_offline | 우리 기여: 인라인 vs 유예 통합 비교축 |
   | `nemori_memoryos` | per_message | off | append | off | +MemoryOS(input="episodes") chained |
+  | `nemori_amem` | per_message | off | append | off | +A-Mem(input="episodes") chained |
 
   결과 스탬프에 fidelity 스위치 전체 기록 (docs/01 재현성 원칙).
   `nemori_mix`↔`nemori_v4` 비교가 "같은 관리를 인라인으로 vs 유예로" ablation이 된다.
