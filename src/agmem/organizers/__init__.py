@@ -1,6 +1,6 @@
 from agmem.organizers.ace import ACEOrganizer
 from agmem.organizers.amem import AMemOrganizer
-from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
 from agmem.organizers.gmemory import GMemoryOrganizer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
@@ -19,7 +19,7 @@ ORGANIZERS: dict[str, type[Organizer]] = {
     "gmemory": GMemoryOrganizer,
 }
 
-__all__ = ["Organizer", "OrganizerContext", "ORGANIZERS",
+__all__ = ["MemoryEvent", "Organizer", "OrganizerContext", "ORGANIZERS",
            "PassthroughOrganizer", "ReasoningBankOrganizer", "AMemOrganizer",
            "NemoriOrganizer", "MemoryOSOrganizer", "ACEOrganizer",
            "ZepGraphOrganizer", "GMemoryOrganizer"]

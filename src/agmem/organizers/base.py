@@ -4,6 +4,11 @@ Organizers never touch stores directly. They receive read access via the
 context and return ``MemoryOp`` lists; the facade logs and applies them.
 That keeps methodology code decoupled from storage and makes every
 mutation auditable/replayable (docs/04 §2).
+
+Lifecycle hooks (spec §1):
+- ``on_message``, ``on_task_end``, ``on_retrieval``: entry points
+- ``on_memory_event``: chaining hook for subscribed organizers
+- ``consolidate``: deferred management pass with cursor recovery
 """
 
 from __future__ import annotations
@@ -11,10 +16,26 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from agmem.core.ops import MemoryOp
+from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode
 from agmem.embed.base import Embedder
 from agmem.stores.base import DocStore, VectorStore
+
+
+@dataclass
+class MemoryEvent:
+    """One applied ADD/UPDATE/MERGE, delivered to subscribed organizers.
+
+    ``supersedes`` rides only on MERGE and lists same-type ids the merge
+    absorbed — the atomic channel managers use to retire derived state
+    (spec §1.2); INVALIDATE/DELETE ops are never propagated as events."""
+
+    source: str
+    op: OpType
+    target_type: str
+    target_id: str
+    payload: dict
+    supersedes: tuple[str, ...] = ()
 
 
 @dataclass
@@ -31,6 +52,7 @@ class Organizer:
     """Base class. Subclasses override the hooks they care about."""
 
     name = "base"
+    consumes: tuple[str, ...] = ()
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         return []
@@ -49,6 +71,30 @@ class Organizer:
         G-Memory served-insight cache for backward reward. Must be cheap:
         no LLM calls here."""
         return []
+
+    def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Chaining hook: another organizer's applied output, if subscribed
+        via ``consumes``. Runs inline (same dispatch as on_message); returned
+        ops are applied but NOT re-propagated (depth=1)."""
+        return []
+
+    def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Deferred management pass — only via AgenticMemory.consolidate().
+        Implementations resume from read_cursor() and end their batch with
+        cursor_op(new_seq) so progress survives restarts (spec §1.4)."""
+        return []
+
+    def read_cursor(self, ctx: OrganizerContext) -> int:
+        items = ctx.doc.get_items([f"consolidate:{self.name}"], "state")
+        return int(items[0].get("seq", 0)) if items else 0
+
+    def cursor_op(self, seq: int) -> MemoryOp:
+        return MemoryOp(
+            op=OpType.UPDATE,
+            target_type="state",
+            target_id=f"consolidate:{self.name}",
+            payload={"seq": seq},
+        )
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
         """Default warm start: replay the corpus through on_message."""
