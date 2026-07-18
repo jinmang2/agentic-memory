@@ -1,6 +1,19 @@
 """Shared test doubles."""
 
 
+def make_mem_multi(organizers, llm):
+    """make_mem, generalized to a list of organizer instances (Task 12) —
+    for scenarios where one organizer's output chains into another's
+    on_memory_event (e.g. Nemori episodes -> MemoryOS pages)."""
+    from agmem import AgenticMemory
+    from agmem.embed.fake import FakeEmbedder
+
+    mem = AgenticMemory(namespace="t", organizers=list(organizers), embedder=FakeEmbedder(dim=128))
+    mem.structured = llm
+    mem._ctx.llm = llm
+    return mem
+
+
 class StubLLM:
     """StructuredCaller stand-in: returns queued responses per role."""
 

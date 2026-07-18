@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
-from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.memoryos")
 
@@ -83,6 +83,7 @@ class MemoryOSOrganizer(Organizer):
         heat_threshold: float = 5.0,
         similarity_threshold: float = 0.6,
         recency_tau_hours: float = 24.0,
+        input: str = "messages",
     ) -> None:
         # mtm_capacity 2000 = upstream default (round-5 N6 fixed 200->2000)
         self.stm_capacity = stm_capacity
@@ -92,6 +93,20 @@ class MemoryOSOrganizer(Organizer):
         self.recency_tau_hours = recency_tau_hours
         self._stm: list[Episode] = []
         self._heat: dict[str, dict] = {}  # segment_id -> {n_visit, length, last_access}
+        # input="episodes": chained-manager mode (Task 12) — subscribe to
+        # another organizer's episodes instead of the raw message stream.
+        # on_memory_event does the STM append/capacity cascade; on_message
+        # becomes a no-op. Reverse indexes below track which units back
+        # which pages so a supersedes chain (e.g. Nemori episode merges)
+        # can retire STM units and invalidate pages whose sources are all
+        # gone. Registered for both input modes (kept common for
+        # simplicity) though only the episodes mode ever consumes them.
+        # In-memory only — volatile across restarts, same as ``_heat``.
+        self.input_mode = input
+        if input == "episodes":
+            self.consumes = ("episodes",)
+        self._page_sources: dict[str, set[str]] = {}  # page_id -> {unit_id, ...}
+        self._unit_pages: dict[str, set[str]] = {}  # unit_id -> {page_id, ...}
 
     # -- heat ------------------------------------------------------------------
 
@@ -119,11 +134,62 @@ class MemoryOSOrganizer(Organizer):
         return []
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        if self.input_mode == "episodes":
+            return []  # input is fed via on_memory_event only (spec §3)
         self._stm.append(ep)
         if len(self._stm) < self.stm_capacity:
             return []
         batch, self._stm = self._stm, []
         return self._evict_to_mtm(batch, ctx)
+
+    def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
+        if self.input_mode != "episodes":
+            return []
+        ops: list[MemoryOp] = []
+        if ev.supersedes:
+            ops.extend(self._retire(set(ev.supersedes)))
+        content = str(ev.payload.get("content", ""))
+        unit = Episode(
+            content=content,
+            role="episode",
+            id=ev.target_id,
+            namespace=ctx.namespace,
+            meta={"date": ev.payload.get("timestamp", "")},
+        )
+        if ev.op is OpType.UPDATE:
+            if any(e.id == ev.target_id for e in self._stm):
+                self._stm = [unit if e.id == ev.target_id else e for e in self._stm]
+            return ops  # already paged: documented staleness allowed (spec §3)
+        self._stm.append(unit)  # ADD / MERGE
+        if len(self._stm) >= self.stm_capacity:
+            batch, self._stm = self._stm, []
+            ops.extend(self._evict_to_mtm(batch, ctx))
+        return ops
+
+    def _retire(self, superseded: set[str]) -> list[MemoryOp]:
+        """Clean up derived state for absorbed units: drop them from STM;
+        invalidate a page only once ALL of its sources are superseded
+        (partial absorption leaves the page intact, spec §3)."""
+        ops: list[MemoryOp] = []
+        self._stm = [e for e in self._stm if e.id not in superseded]
+        for uid in superseded:
+            for pid in self._unit_pages.pop(uid, set()):
+                srcs = self._page_sources.get(pid)
+                if srcs is None:
+                    continue
+                srcs.discard(uid)
+                if not srcs:
+                    self._page_sources.pop(pid, None)
+                    self._heat.pop(pid, None)
+                    ops.append(
+                        MemoryOp(
+                            op=OpType.INVALIDATE,
+                            target_type="pages",
+                            target_id=pid,
+                            payload={"reason": "sources_superseded"},
+                        )
+                    )
+        return ops
 
     def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
         if not self._stm:
@@ -201,6 +267,9 @@ class MemoryOSOrganizer(Organizer):
                 h = self._heat[seg_id]
                 h["length"] += len(members)
                 h["last_access"] = datetime.now(timezone.utc)
+                for e in members:
+                    self._unit_pages.setdefault(e.id, set()).add(seg_id)
+                self._page_sources.setdefault(seg_id, set()).update(e.id for e in members)
                 ops.append(
                     MemoryOp(
                         op=OpType.UPDATE,
@@ -263,6 +332,9 @@ class MemoryOSOrganizer(Organizer):
         ctx: OrganizerContext,
         keywords: list[str] | None = None,
     ) -> MemoryOp:
+        for e in members:
+            self._unit_pages.setdefault(e.id, set()).add(seg_id)
+        self._page_sources.setdefault(seg_id, set()).update(e.id for e in members)
         return MemoryOp(
             op=OpType.ADD,
             target_type="pages",

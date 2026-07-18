@@ -2,6 +2,7 @@
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
+from helpers import StubLLM, make_mem_multi
 
 
 def _mk(organizers=("passthrough",)):
@@ -132,3 +133,73 @@ def test_consolidate_api_applies_ops_and_cursor():
     assert org.read_cursor(mem._ctx) > 0
     # state 항목은 벡터를 만들지 않는다
     assert mem.vec.count() == 2  # one from episode, one from consolidated item
+
+
+# ---------------- MemoryOS input="episodes" consumer (Task 12) --------------
+
+
+def test_memoryos_consumes_nemori_episodes():
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+    from agmem.organizers.nemori import NemoriOrganizer
+
+    llm = StubLLM(
+        {
+            "extract": [
+                {"boundary": False, "confidence": 0.9},  # msg1: nothing to compare yet
+                {"boundary": True, "confidence": 0.9},  # msg2: cut -> episode = [msg1]
+            ],
+            "distill": [
+                {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},  # episode
+                {"facts": []},  # cold-start direct extract
+                {"groups": [{"topic": "g", "summary": "s", "message_indexes": [0]}]},  # MemoryOS segment
+            ],
+        }
+    )
+    mos = MemoryOSOrganizer(stm_capacity=1, input="episodes")
+    mem = make_mem_multi([NemoriOrganizer(fidelity="v1", buffer_min=1), mos], llm)
+    mem.add_message("hello", meta={"date": "2026-01-01"})
+    mem.add_message("new topic", meta={"date": "2026-01-01"})  # boundary -> episode flush
+    pages = [
+        o for o in mem.log.tail(30) if o.target_type == "pages" and o.actor == "memoryos"
+    ]
+    assert pages  # Nemori 에피소드가 MemoryOS page로 흘러들어감
+    # 에피소드 원문이 아니라 Nemori 서사가 STM에 들어갔는지: page의 source가 episode id
+    ep_ids = [
+        o.target_id for o in mem.log.tail(30) if o.target_type == "episodes" and o.op == OpType.ADD
+    ]
+    assert set(pages[0].payload["source_episode_ids"]) <= set(ep_ids)
+
+
+def test_memoryos_retires_superseded_units():
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    mos = MemoryOSOrganizer(stm_capacity=1, input="episodes")
+    mem = _mk(organizers=[mos])
+    # page화 유도: LLM 없음 → mechanical segment (explicit degradation 경로)
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id="e1",
+                payload={"id": "e1", "content": "ep one"},
+            )
+        ],
+        actor="src",
+    )
+    pages = [o for o in mem.log.tail(10) if o.target_type == "pages"]
+    assert len(pages) == 1
+    # e1을 흡수한 MERGE 도착 → page의 유일 소스가 superseded → page INVALIDATE
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.MERGE,
+                target_type="episodes",
+                target_id="e2",
+                payload={"id": "e2", "content": "merged", "supersedes": ["e1"]},
+            )
+        ],
+        actor="src",
+    )
+    inv = [o for o in mem.log.tail(10) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
+    assert len(inv) == 1 and inv[0].payload["reason"] == "sources_superseded"
