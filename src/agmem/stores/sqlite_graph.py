@@ -38,7 +38,6 @@ _ACTIVE = "invalid_at IS NULL AND expired_at IS NULL"
 
 class SqliteGraphStore:
     """SQL recursive-CTE emulation of the shared graph-store contract used by
-
     Zep/G-Memory organizers (no formal `Protocol` collects it — Kuzu/Neo4j
     implement the same methods). Nodes are upserted by id; edges are never
     hard-deleted, only invalidated (see module docstring for the bi-temporal
