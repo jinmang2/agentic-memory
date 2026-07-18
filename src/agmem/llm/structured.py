@@ -85,9 +85,9 @@ class StructuredCaller:
         """Return the validated dict, or None after an explicit drop.
 
         ``phase`` tags the budget entry as ``f"{role}/{phase}"`` (docs/04
-        lifecycle phases — segment/narrate/merge/integrate/consolidate) so
-        methodology cost comparisons can break down spend by write-path
-        stage instead of just by role.
+        lifecycle phases — segment/narrate/merge/integrate/consolidate/
+        predict_calibrate) so methodology cost comparisons can break down
+        spend by write-path stage instead of just by role.
         """
         messages = [
             {"role": "system", "content": system},

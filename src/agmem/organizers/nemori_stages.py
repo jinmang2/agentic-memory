@@ -293,7 +293,10 @@ class EpisodeMerger:
         ep_ts: str,
         source_ids: list[str],
         ctx: OrganizerContext,
+        exclude_ids: set[str] | None = None,
     ) -> tuple[list[MemoryOp], str, str, str] | None:
+        # exclude_ids drops episodes already merged-away earlier in this same
+        # on_message batch (I1) — same within-pass guard as ThreeWayIntegrator.
         emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
         hits = ctx.vec.search(
             emb, k=self.top_k, memory_type="episodes", namespace=ctx.namespace
@@ -303,7 +306,7 @@ class EpisodeMerger:
         cands = [
             c
             for c in ctx.doc.get_items([h[0] for h in hits], "episodes")
-            if not c.get("invalid_at")
+            if not c.get("invalid_at") and (exclude_ids is None or c["id"] not in exclude_ids)
         ]
         if not cands:
             return None
@@ -418,8 +421,15 @@ class AppendIntegrator:
     baseline so switching semantic_integration doesn't change existing runs."""
 
     def integrate(
-        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+        self,
+        fact: str,
+        episode_id: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+        exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
+        # exclude_ids is part of the common integrator contract (I1) but has no
+        # effect here — Append never searches for candidates.
         fid = new_id()
         return [
             MemoryOp(
@@ -445,10 +455,19 @@ class DedupIdReuseIntegrator:
         self.threshold = threshold
 
     def integrate(
-        self, fact: str, episode_id: str, source_ids: list[str], ctx: OrganizerContext
+        self,
+        fact: str,
+        episode_id: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+        exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
         emb = ctx.embedder.embed([fact])[0]
-        hits = ctx.vec.search(emb, k=1, memory_type="semantic", namespace=ctx.namespace)
+        hits = [
+            (hid, s)
+            for hid, s in ctx.vec.search(emb, k=1, memory_type="semantic", namespace=ctx.namespace)
+            if exclude_ids is None or hid not in exclude_ids
+        ]
         if hits and hits[0][1] >= self.threshold:
             return [
                 MemoryOp(
@@ -570,12 +589,26 @@ class SemanticOfflineConsolidator:
     consolidated=True and are skipped on later passes, so repeated calls
     converge instead of re-judging their own merges."""
 
-    def __init__(self, top_k: int = 5, tau: float = 0.70) -> None:
+    def __init__(self, top_k: int = 5, tau: float = 0.70, scan_limit: int = 10000) -> None:
         self._inner = ThreeWayIntegrator(top_k=top_k, tau=tau)
+        # scan_limit mirrors the doc store's ops_since page size; exposed so a
+        # test can force truncation with a tiny value (review I2).
+        self.scan_limit = scan_limit
 
     def run(self, organizer, ctx: OrganizerContext) -> list[MemoryOp]:
         cursor = organizer.read_cursor(ctx)
-        end = ctx.doc.last_seq()
+        rows = ctx.doc.ops_since(cursor, target_type="semantic", limit=self.scan_limit)
+        # Cursor advance must respect ops_since's limit truncation (review I2):
+        # if the semantic log since the cursor filled scan_limit, the tail is
+        # cut off here, so advance only to the last row we actually scanned and
+        # let the next call resume from there. Jumping to last_seq() would step
+        # the cursor past the unscanned facts, dropping them from consolidation
+        # forever. With no truncation, advance to last_seq() so trailing
+        # non-semantic ops aren't re-scanned next pass (original behavior).
+        if len(rows) >= self.scan_limit:
+            end = rows[-1][0]
+        else:
+            end = ctx.doc.last_seq()
         if end <= cursor:
             return []
         ops: list[MemoryOp] = []
@@ -589,7 +622,7 @@ class SemanticOfflineConsolidator:
         # MERGE-typed outputs are never re-judged (op.op is not OpType.ADD
         # above), the duplication becomes permanent (review Critical-1).
         superseded_this_pass: set[str] = set()
-        for _seq, op in ctx.doc.ops_since(cursor, target_type="semantic"):
+        for _seq, op in rows:
             if op.op is not OpType.ADD or op.payload.get("consolidated"):
                 continue
             if op.actor != organizer.name:

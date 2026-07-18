@@ -319,7 +319,14 @@ class AgenticMemory:
 
         Runs each organizer's consolidate() in list order and applies the
         returned ops through the evolution log. Benchmarks call this at
-        deterministic points (end of ingest / between sessions)."""
+        deterministic points (end of ingest / between sessions).
+
+        Drains the async write queue first (review I3): consolidate() runs on
+        the caller's thread and reads the log via ops_since, so any organizer
+        work still queued must land before the cursor scan to avoid missing
+        just-appended-but-not-yet-applied facts."""
+        if self._queue is not None:
+            self._queue.join()
         applied = 0
         for org in self.organizers:
             ops = org.consolidate(self._ctx)

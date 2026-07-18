@@ -341,8 +341,16 @@ class NemoriOrganizer(Organizer):
         self.buffer.append(ep)
         segments, self.buffer = self._segmenter.push(self.buffer, ctx)
         ops: list[MemoryOp] = []
+        # Call-local supersession guard (review I1): the whole batch of ops is
+        # applied to doc/vec only after this method returns, so a fact/episode
+        # invalidated by an earlier segment still looks live to a later
+        # segment's candidate search. Threading one ``superseded`` set through
+        # every _flush_segment (into merger + ThreeWay exclude_ids) mirrors the
+        # consolidator's within-pass guard so the inline v4 path can't earn two
+        # merge heads for the same target within one on_message batch.
+        superseded: set[str] = set()
         for seg in segments:
-            ops.extend(self._flush_segment(seg, ctx))
+            ops.extend(self._flush_segment(seg, ctx, superseded))
         return ops
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
@@ -356,8 +364,9 @@ class NemoriOrganizer(Organizer):
             return []
         segments, self.buffer = self._segmenter.flush(self.buffer, ctx), []
         ops: list[MemoryOp] = []
+        superseded: set[str] = set()  # same within-batch guard as on_message (I1)
         for seg in segments:
-            ops.extend(self._flush_segment(seg, ctx))
+            ops.extend(self._flush_segment(seg, ctx, superseded))
         return ops
 
     def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -367,7 +376,17 @@ class NemoriOrganizer(Organizer):
 
     # ---- internals ----------------------------------------------------------
 
-    def _flush_segment(self, segment: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
+    def _flush_segment(
+        self,
+        segment: list[Episode],
+        ctx: OrganizerContext,
+        superseded: set[str] | None = None,
+    ) -> list[MemoryOp]:
+        # ``superseded`` is the call-local guard threaded from on_message /
+        # flush_buffer (I1). None keeps _flush_segment independently callable
+        # (tests) — a fresh set then guards only within this single segment.
+        if superseded is None:
+            superseded = set()
         seg_text = "\n".join(_fmt(e) for e in segment)
 
         # 1. representation alignment: title + temporally-anchored narrative
@@ -397,13 +416,18 @@ class NemoriOrganizer(Organizer):
         # keeps the plain ADD path so a segment is never lost to a merge
         # attempt.
         merged = (
-            self._merger.merge_or_none(title, narrative, ep_ts, source_ids, ctx)
+            self._merger.merge_or_none(
+                title, narrative, ep_ts, source_ids, ctx, exclude_ids=superseded
+            )
             if self._merger
             else None
         )
         if merged is not None:
             merge_ops, episode_id, title, narrative = merged
             ops = list(merge_ops)  # ADD 대신 MERGE+INVALIDATE
+            # the merged-away episode must not be re-offered as a live merge
+            # candidate to a later segment in this same batch (I1)
+            superseded.update(o.target_id for o in merge_ops if o.op is OpType.INVALIDATE)
         else:
             ops = [
                 MemoryOp(
@@ -424,7 +448,9 @@ class NemoriOrganizer(Organizer):
         # no timestamps (time/date is banned from semantic statements anyway)
         plain_text = "\n".join(f"{e.role}: {e.content}" for e in segment)
         ops.extend(
-            self._predict_calibrate(title, narrative, plain_text, episode_id, source_ids, ctx)
+            self._predict_calibrate(
+                title, narrative, plain_text, episode_id, source_ids, ctx, superseded
+            )
         )
         return ops
 
@@ -436,7 +462,10 @@ class NemoriOrganizer(Organizer):
         episode_id: str,
         source_ids: list[str],
         ctx: OrganizerContext,
+        superseded: set[str] | None = None,
     ) -> list[MemoryOp]:
+        if superseded is None:
+            superseded = set()
         # Stage 1: predict the episode from title + retrieved knowledge only.
         emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
         hits = ctx.vec.search(
@@ -451,6 +480,7 @@ class NemoriOrganizer(Organizer):
                 DIRECT_EXTRACT_PROMPT.format(title=title, narrative=narrative),
                 CALIBRATE_SCHEMA,
                 required_keys=("facts",),
+                phase="predict_calibrate",
             )
         else:
             knowledge = "\n".join(f"- {k.get('content', '')}" for k in known)
@@ -459,6 +489,7 @@ class NemoriOrganizer(Organizer):
                 PREDICT_PROMPT.format(title=title, knowledge=knowledge),
                 PREDICT_SCHEMA,
                 required_keys=("prediction",),
+                phase="predict_calibrate",
             )
             if pred is None:
                 return []  # episode is stored; only distillation is skipped
@@ -471,6 +502,7 @@ class NemoriOrganizer(Organizer):
                 ),
                 CALIBRATE_SCHEMA,
                 required_keys=("facts",),
+                phase="predict_calibrate",
             )
         if cal is None:
             return []
@@ -482,5 +514,14 @@ class NemoriOrganizer(Organizer):
             fact = str(fact).strip()
             if not fact:
                 continue
-            ops.extend(self._integrator.integrate(fact, episode_id, source_ids, ctx))
+            # exclude_ids drops anything already superseded earlier in this
+            # batch from ThreeWay's candidate search, and each fact's own
+            # INVALIDATEs feed back in so a later mutually-similar fact can't
+            # re-merge an already-absorbed target (I1). Append/Dedup accept and
+            # ignore the kwarg.
+            out = self._integrator.integrate(
+                fact, episode_id, source_ids, ctx, exclude_ids=superseded
+            )
+            superseded.update(o.target_id for o in out if o.op is OpType.INVALIDATE)
+            ops.extend(out)
         return ops

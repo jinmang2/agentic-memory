@@ -170,6 +170,7 @@ ablation)가 이 세 조합을 각각 재현한다. 기본 실험 config `nemori
 | 편차 | 이유 | 영향 |
 |---|---|---|
 | confidence 0.7 게이트 (v1 기본 config 한정) | v1 σ_boundary. `fidelity="v4"/"upstream"`로 전환하면 배치 분할이라 무관 | v1 재현 관점에선 정확 |
+| 한 `on_message` 배치 안에서 갓 생성된 에피소드/fact와는 병합 불가 (인라인 v4) | 배치 ops가 return 후에야 doc/vec에 적용됨 — 배치-로컬 `superseded` 가드는 이중 supersede만 막고, v4 Alg.1의 "매 단계 갱신된 스토어 참조"까지 재현하진 않음 (review I1) | 미미 — 같은 배치 내 중복은 후속 배치/consolidate가 흡수 |
 | 저장소: MemoryOp 로그 + SQLite/FTS5 (vs PostgreSQL+Qdrant) | 프로젝트 공통 인프라 | 없음 (검색은 동일하게 dense) |
 | 평가: token-F1/BLEU (vs LLM judge) | judge LLM 비용 회피 + 결정론 (docs/06) | 논문 절대치와 비교 불가, 방법 간 상대 비교 유효 |
 | 임베더/LLM: e5-small / Qwen3-0.6B (vs text-embedding-3-small 또는 gemini / gpt-4.1-mini) | 로컬 재현 (docs/07) | §6 캐비앗 참조 |
