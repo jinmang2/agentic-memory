@@ -101,3 +101,96 @@ class PerMessageBoundary:
     def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
         """Flush whatever remains in the buffer as the final segment(s)."""
         return [buffer] if buffer else []
+
+
+BATCH_SEGMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "episodes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "indices": {"type": "array", "items": {"type": "integer"}},
+                    "topic": {"type": "string"},
+                },
+                "required": ["indices"],
+            },
+        }
+    },
+    "required": ["episodes"],
+}
+
+# Condensed from upstream BATCH_SEGMENTATION_PROMPT (v4 Local Message
+# Partitioning P_par): topic independence, 2-15 messages, when in doubt
+# split, relevance < ~30% cut; indexed batch in, index groups out.
+BATCH_SEGMENT_PROMPT = """Partition this conversation into topically coherent
+episodes. Each episode centers on ONE core topic or event. Signals for a cut:
+explicit topic shifts, intent transitions, temporal markers ("earlier",
+"by the way", 30+ minute gaps), structural signals (transition phrases,
+concluding statements), content relatedness below ~30%. Episodes work best
+with 2-15 messages; when in doubt, split. Every message index must appear in
+exactly one episode, in order.
+
+Messages (indexed):
+{messages}
+
+Return JSON: {{"episodes": [{{"indices": [0, 1, ...], "topic": "..."}}]}}"""
+
+
+class BatchPartitioner:
+    """v4 §3.2.1 Local Message Partitioning / upstream batch segmentation.
+
+    Buffers until ``window`` then LLM-partitions the whole buffer. flush()
+    on a tail shorter than the window stores it as one segment without an
+    LLM call — upstream's single-'conversation'-group path below
+    batch_threshold."""
+
+    def __init__(self, window: int = 20, buffer_min: int = 2, chunk_max: int = 80) -> None:
+        self.window = window
+        self.buffer_min = buffer_min
+        self.chunk_max = chunk_max  # upstream: >80msg batches are chunked
+
+    def push(
+        self, buffer: list[Episode], ctx: OrganizerContext
+    ) -> tuple[list[list[Episode]], list[Episode]]:
+        if len(buffer) < self.window:
+            return [], buffer
+        return self._partition(buffer, ctx), []
+
+    def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
+        if not buffer:
+            return []
+        if len(buffer) < self.window:
+            return [buffer]
+        return self._partition(buffer, ctx)
+
+    def _partition(
+        self, buffer: list[Episode], ctx: OrganizerContext
+    ) -> list[list[Episode]]:
+        segments: list[list[Episode]] = []
+        for start in range(0, len(buffer), self.chunk_max):
+            chunk = buffer[start : start + self.chunk_max]
+            indexed = "\n".join(f"[{i}] {_fmt(e)}" for i, e in enumerate(chunk))
+            result = ctx.llm.call(
+                "extract",
+                BATCH_SEGMENT_PROMPT.format(messages=indexed),
+                BATCH_SEGMENT_SCHEMA,
+                required_keys=("episodes",),
+            )
+            groups = (result or {}).get("episodes") or []
+            covered: set[int] = set()
+            for g in groups:
+                idxs = sorted(
+                    i
+                    for i in g.get("indices", [])
+                    if isinstance(i, int) and 0 <= i < len(chunk) and i not in covered
+                )
+                if not idxs:
+                    continue
+                covered.update(idxs)
+                segments.append([chunk[i] for i in idxs])
+            leftover = [chunk[i] for i in range(len(chunk)) if i not in covered]
+            if leftover:  # LLM 실패/누락 인덱스 — 세그먼트를 잃지 않는다 (프로젝트 원칙)
+                segments.append(leftover)
+        return segments
