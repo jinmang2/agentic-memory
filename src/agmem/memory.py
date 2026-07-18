@@ -21,7 +21,7 @@ from agmem.core.types import Episode, MemoryBundle, utcnow
 from agmem.embed import EMBEDDER_CANDIDATES
 from agmem.embed.base import Embedder
 from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
-from agmem.organizers import ORGANIZERS, Organizer, OrganizerContext
+from agmem.organizers import ORGANIZERS, MemoryEvent, Organizer, OrganizerContext
 from agmem.retrieval import RetrievalPipeline
 from agmem.retrieval.rerank import RERANKER_CANDIDATES
 from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
@@ -314,7 +314,7 @@ class AgenticMemory:
                 self._apply_ops(flush_buffer(self._ctx), actor=org.name)
         self.vec.persist()
 
-    def _apply_ops(self, ops: list[MemoryOp], actor: str) -> None:
+    def _apply_ops(self, ops: list[MemoryOp], actor: str, propagate: bool = True) -> None:
         if not ops:
             return
         for op in ops:
@@ -322,6 +322,34 @@ class AgenticMemory:
         self.doc.append(ops)  # log first — replayable audit trail
         for op in ops:
             self._apply_one(op)
+        if propagate:
+            self._propagate_events(ops, actor)
+
+    def _propagate_events(self, ops: list[MemoryOp], actor: str) -> None:
+        """Applied ADD/UPDATE/MERGE ops become MemoryEvents for subscribed
+        organizers (spec §1.2). depth=1: handler ops apply without re-propagation."""
+        for op in ops:
+            if op.op not in (OpType.ADD, OpType.UPDATE, OpType.MERGE):
+                continue
+            ev = MemoryEvent(
+                source=actor,
+                op=op.op,
+                target_type=op.target_type,
+                target_id=op.target_id,
+                payload=dict(op.payload),
+                supersedes=tuple(op.payload.get("supersedes", ()))
+                if op.op is OpType.MERGE
+                else (),
+            )
+            for org in self.organizers:
+                if org.name == actor or ev.target_type not in org.consumes:
+                    continue
+                try:
+                    out = org.on_memory_event(ev, self._ctx)
+                except Exception:
+                    logger.exception("on_memory_event failed (organizer=%s)", org.name)
+                    continue
+                self._apply_ops(out, actor=org.name, propagate=False)
 
     def _apply_one(self, op: MemoryOp) -> None:
         if op.op in (OpType.ADD, OpType.UPDATE, OpType.MERGE):

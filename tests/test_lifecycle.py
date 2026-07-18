@@ -63,3 +63,52 @@ def test_invalidate_facts_keeps_vector():
     mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="facts", target_id="f1",
                              payload={})], actor="t")
     assert mem.vec.count() == 1  # Zep bi-temporal: 무효화돼도 validity 렌더 대상
+
+
+class Emitter(Organizer):
+    name = "emitter"
+    def on_message(self, ep, ctx):
+        return [
+            MemoryOp(op=OpType.MERGE, target_type="episodes", target_id="new",
+                     payload={"id": "new", "content": "merged", "supersedes": ["old"]}),
+            MemoryOp(op=OpType.INVALIDATE, target_type="episodes", target_id="old",
+                     payload={"superseded_by": "new"}),
+        ]
+
+
+class Consumer(Organizer):
+    name = "consumer"
+    consumes = ("episodes",)
+    def __init__(self):
+        self.seen: list[MemoryEvent] = []
+    def on_memory_event(self, ev, ctx):
+        self.seen.append(ev)
+        # depth=1 검증용: consumer도 episodes를 반환하지만 재전파되면 안 됨
+        return [MemoryOp(op=OpType.ADD, target_type="episodes", target_id=f"d1-{len(self.seen)}",
+                         payload={"id": f"d1-{len(self.seen)}", "content": "derived"})]
+
+
+def test_event_propagation_supersedes_and_depth1():
+    consumer = Consumer()
+    mem = _mk(organizers=[Emitter(), consumer])
+    mem.add_message("hi")
+    assert len(consumer.seen) == 1            # MERGE만 전파 (INVALIDATE 비전파)
+    ev = consumer.seen[0]
+    assert (ev.op, ev.target_id, ev.supersedes) == (OpType.MERGE, "new", ("old",))
+    assert ev.source == "emitter"
+    # consumer의 반환 op는 적용됐지만 (자기 자신에게도) 재전파되지 않음
+    assert mem.doc.get_items(["d1-1"], "episodes")
+    assert len(consumer.seen) == 1
+
+
+def test_no_self_delivery_and_consumes_filter():
+    class SelfSub(Emitter):
+        name = "selfsub"
+        consumes = ("episodes",)
+        def __init__(self): self.seen = []
+        def on_memory_event(self, ev, ctx):
+            self.seen.append(ev); return []
+    org = SelfSub()
+    mem = _mk(organizers=[org])
+    mem.add_message("hi")
+    assert org.seen == []  # 자기 이벤트 제외
