@@ -29,7 +29,7 @@ def test_cursor_helpers_roundtrip():
         name = "curs"
 
     org, doc = C(), SqliteDocStore(None)
-    ctx = OrganizerContext(doc=doc, vec=None, embedder=None, namespace="t")
+    ctx = OrganizerContext(doc_store=doc, vector_store=None, embedder=None, namespace="t")
     assert org.read_cursor(ctx) == 0
     op = org.cursor_op(7)
     assert (op.op, op.target_type, op.target_id) == (OpType.UPDATE, "state", "consolidate:curs")
@@ -42,18 +42,18 @@ def test_invalidate_preserves_first_and_removes_vector():
     mem._apply_ops([MemoryOp(op=OpType.ADD, target_type="semantic", target_id="s1",
                              payload={"id": "s1", "content": "fact", "embedding_text": "fact"})],
                    actor="t")
-    assert mem.vec.count() == 1
+    assert mem.vector_store.count() == 1
     mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="semantic", target_id="s1",
                              payload={"t_invalid": "2026-01-01T00:00:00",
                                       "superseded_by": "s2"})], actor="t")
-    item = mem.doc.get_items(["s1"], "semantic")[0]
+    item = mem.doc_store.get_items(["s1"], "semantic")[0]
     assert item["invalid_at"] == "2026-01-01T00:00:00"
     assert item["superseded_by"] == "s2"
-    assert mem.vec.count() == 0  # semantic은 bi-temporal 렌더 타입이 아님 → 벡터 제거
+    assert mem.vector_store.count() == 0  # semantic은 bi-temporal 렌더 타입이 아님 → 벡터 제거
     # 이중 무효화: 최초 시각 보존, 예외 없음
     mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="semantic", target_id="s1",
                              payload={"t_invalid": "2027-01-01T00:00:00"})], actor="t")
-    assert mem.doc.get_items(["s1"], "semantic")[0]["invalid_at"] == "2026-01-01T00:00:00"
+    assert mem.doc_store.get_items(["s1"], "semantic")[0]["invalid_at"] == "2026-01-01T00:00:00"
 
 
 def test_invalidate_facts_keeps_vector():
@@ -63,12 +63,12 @@ def test_invalidate_facts_keeps_vector():
                    actor="t")
     mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="facts", target_id="f1",
                              payload={})], actor="t")
-    assert mem.vec.count() == 1  # Zep bi-temporal: 무효화돼도 validity 렌더 대상
+    assert mem.vector_store.count() == 1  # Zep bi-temporal: 무효화돼도 validity 렌더 대상
 
 
 class Emitter(Organizer):
     name = "emitter"
-    def on_message(self, ep, ctx):
+    def on_message(self, episode, ctx):
         return [
             MemoryOp(op=OpType.MERGE, target_type="episodes", target_id="new",
                      payload={"id": "new", "content": "merged", "supersedes": ["old"]}),
@@ -98,7 +98,7 @@ def test_event_propagation_supersedes_and_depth1():
     assert (ev.op, ev.target_id, ev.supersedes) == (OpType.MERGE, "new", ("old",))
     assert ev.source == "emitter"
     # consumer의 반환 op는 적용됐지만 (자기 자신에게도) 재전파되지 않음
-    assert mem.doc.get_items(["d1-1"], "episodes")
+    assert mem.doc_store.get_items(["d1-1"], "episodes")
     assert len(consumer.seen) == 1
 
 
@@ -119,7 +119,7 @@ def test_consolidate_api_applies_ops_and_cursor():
     class Cons(Organizer):
         name = "cons"
         def consolidate(self, ctx):
-            end = ctx.doc.last_seq()
+            end = ctx.doc_store.last_seq()
             return [MemoryOp(op=OpType.ADD, target_type="semantic", target_id="c1",
                              payload={"id": "c1", "content": "merged fact",
                                       "consolidated": True, "embedding_text": "merged fact"}),
@@ -129,10 +129,10 @@ def test_consolidate_api_applies_ops_and_cursor():
     mem.add_message("test")  # add an episode to ensure last_seq() > 0
     n = mem.consolidate()
     assert n == 2
-    assert mem.doc.get_items(["c1"], "semantic")
+    assert mem.doc_store.get_items(["c1"], "semantic")
     assert org.read_cursor(mem._ctx) > 0
     # state 항목은 벡터를 만들지 않는다
-    assert mem.vec.count() == 2  # one from episode, one from consolidated item
+    assert mem.vector_store.count() == 2  # one from episode, one from consolidated item
 
 
 def test_consolidate_drains_async_queue_first():
@@ -360,8 +360,8 @@ def _ev(op, tid, **payload):
 
 def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
     """M3(a): a page backed by 2 sources survives when only 1 source is
-    superseded (_retire's srcs.discard leaves a non-empty set); only once the
-    last source is superseded does the page INVALIDATE fire."""
+    superseded (_retire's source_ids.discard leaves a non-empty set); only
+    once the last source is superseded does the page INVALIDATE fire."""
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
     mos = MemoryOSOrganizer(stm_capacity=2, input="episodes")

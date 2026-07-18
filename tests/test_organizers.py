@@ -125,9 +125,9 @@ def test_amem_note_link_and_evolution():
         # neighbor; the neighbor itself gains no back-link
         second_id = next(o.target_id for o in ops
                          if o.op is OpType.LINK and o.target_type == "notes")
-        second = mem.doc.get_items([second_id], "notes")[0]
+        second = mem.doc_store.get_items([second_id], "notes")[0]
         assert first_id in second["links"]
-        first = mem.doc.get_items([first_id], "notes")[0]
+        first = mem.doc_store.get_items([first_id], "notes")[0]
         assert not first.get("links"), "upstream links are one-way"
         # UPDATE merged, not clobbered: content survived the context rewrite
         assert first["content"] == "다음 달에 파리로 여행 가려고 해"

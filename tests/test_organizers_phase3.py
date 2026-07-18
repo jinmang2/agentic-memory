@@ -170,7 +170,7 @@ def test_zep_graph_contradiction_invalidates():
         invalidations = [o for o in ops_of(mem, "facts") if o.op is OpType.INVALIDATE]
         assert len(invalidations) == 1 and invalidations[0].target_id == first_edge
         # bi-temporal: doc item got invalid_at; graph edge no longer active
-        item = mem.doc.get_items([first_edge], "facts")[0]
+        item = mem.doc_store.get_items([first_edge], "facts")[0]
         assert item.get("invalid_at")
         a_node = org.graph.find_node_by_name("A", "t")
         b_node = org.graph.find_node_by_name("B", "t")

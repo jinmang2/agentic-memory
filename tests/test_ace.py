@@ -68,7 +68,7 @@ def test_ace_feedback_increments_counters():
         bullet_id = [o for o in mem.log.tail(10) if o.target_type == "playbook"][0].target_id
         assert mem.report_feedback([bullet_id], helpful=True) == 1
         assert mem.report_feedback([bullet_id], helpful=False) == 1
-        data = mem.doc.get_items([bullet_id], "playbook")[0]
+        data = mem.doc_store.get_items([bullet_id], "playbook")[0]
         assert data["helpful"] == 1 and data["harmful"] == 1
     finally:
         mem.close()

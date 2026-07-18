@@ -327,7 +327,7 @@ class NemoriOrganizer(Organizer):
         self.semantic_top_k = params.get("semantic_top_k", 10)  # repo search_top_k_semantic=10
         self._warned_no_llm = False
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         if ctx.llm is None:
             if not self._warned_no_llm:
                 logger.warning(
@@ -338,19 +338,20 @@ class NemoriOrganizer(Organizer):
                 self._warned_no_llm = True
             return []
 
-        self.buffer.append(ep)
+        self.buffer.append(episode)
         segments, self.buffer = self._segmenter.push(self.buffer, ctx)
         ops: list[MemoryOp] = []
         # Call-local supersession guard (review I1): the whole batch of ops is
-        # applied to doc/vec only after this method returns, so a fact/episode
-        # invalidated by an earlier segment still looks live to a later
-        # segment's candidate search. Threading one ``superseded`` set through
-        # every _flush_segment (into merger + ThreeWay exclude_ids) mirrors the
-        # consolidator's within-pass guard so the inline v4 path can't earn two
-        # merge heads for the same target within one on_message batch.
+        # applied to doc_store/vector_store only after this method returns, so
+        # a fact/episode invalidated by an earlier segment still looks live to
+        # a later segment's candidate search. Threading one ``superseded`` set
+        # through every _flush_segment (into merger + ThreeWay exclude_ids)
+        # mirrors the consolidator's within-pass guard so the inline v4 path
+        # can't earn two merge heads for the same target within one
+        # on_message batch.
         superseded: set[str] = set()
-        for seg in segments:
-            ops.extend(self._flush_segment(seg, ctx, superseded))
+        for segment in segments:
+            ops.extend(self._flush_segment(segment, ctx, superseded))
         return ops
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
@@ -365,8 +366,8 @@ class NemoriOrganizer(Organizer):
         segments, self.buffer = self._segmenter.flush(self.buffer, ctx), []
         ops: list[MemoryOp] = []
         superseded: set[str] = set()  # same within-batch guard as on_message (I1)
-        for seg in segments:
-            ops.extend(self._flush_segment(seg, ctx, superseded))
+        for segment in segments:
+            ops.extend(self._flush_segment(segment, ctx, superseded))
         return ops
 
     def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -387,25 +388,25 @@ class NemoriOrganizer(Organizer):
         # (tests) — a fresh set then guards only within this single segment.
         if superseded is None:
             superseded = set()
-        seg_text = "\n".join(_fmt(e) for e in segment)
+        segment_text = "\n".join(_fmt(e) for e in segment)
 
         # 1. representation alignment: title + temporally-anchored narrative
-        gen = ctx.llm.call(
+        generated = ctx.llm.call(
             "distill",
-            EPISODE_PROMPT.format(segment=seg_text),
+            EPISODE_PROMPT.format(segment=segment_text),
             EPISODE_SCHEMA,
             required_keys=("title", "narrative"),
             phase="narrate",
         )
         fallback_title = " ".join(segment[0].content.split()[:8])
         fallback_ts = segment[0].meta.get("date") or segment[0].timestamp.isoformat()
-        if gen is None:
+        if generated is None:
             logger.warning("nemori: episode generation failed — mechanical fallback episode")
-            title, narrative, ep_ts = fallback_title, seg_text, fallback_ts
+            title, narrative, episode_timestamp = fallback_title, segment_text, fallback_ts
         else:
-            title = str(gen.get("title", "")).strip() or fallback_title
-            narrative = str(gen.get("narrative", "")).strip() or seg_text
-            ep_ts = str(gen.get("timestamp", "")).strip() or fallback_ts
+            title = str(generated.get("title", "")).strip() or fallback_title
+            narrative = str(generated.get("narrative", "")).strip() or segment_text
+            episode_timestamp = str(generated.get("timestamp", "")).strip() or fallback_ts
 
         source_ids = [e.id for e in segment]
         episode_id = new_id()
@@ -417,7 +418,7 @@ class NemoriOrganizer(Organizer):
         # attempt.
         merged = (
             self._merger.merge_or_none(
-                title, narrative, ep_ts, source_ids, ctx, exclude_ids=superseded
+                title, narrative, episode_timestamp, source_ids, ctx, exclude_ids=superseded
             )
             if self._merger
             else None
@@ -438,7 +439,7 @@ class NemoriOrganizer(Organizer):
                         "id": episode_id,
                         "title": title,
                         "content": narrative,
-                        "timestamp": ep_ts,
+                        "timestamp": episode_timestamp,
                         "source_episode_ids": source_ids,
                         "embedding_text": f"{title}\n{narrative}",
                     },
@@ -467,15 +468,15 @@ class NemoriOrganizer(Organizer):
         if superseded is None:
             superseded = set()
         # Stage 1: predict the episode from title + retrieved knowledge only.
-        emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
-        hits = ctx.vec.search(
-            emb, k=self.semantic_top_k, memory_type="semantic", namespace=ctx.namespace
+        query_embedding = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
+        hits = ctx.vector_store.search(
+            query_embedding, k=self.semantic_top_k, memory_type="semantic", namespace=ctx.namespace
         )
-        known = ctx.doc.get_items([h[0] for h in hits], "semantic")
+        known = ctx.doc_store.get_items([h[0] for h in hits], "semantic")
         if not known:
             # cold start: nothing to predict from -> direct extraction
             # (upstream reads the generated episode, not the raw segment)
-            cal = ctx.llm.call(
+            calibration = ctx.llm.call(
                 "distill",
                 DIRECT_EXTRACT_PROMPT.format(title=title, narrative=narrative),
                 CALIBRATE_SCHEMA,
@@ -484,33 +485,33 @@ class NemoriOrganizer(Organizer):
             )
         else:
             knowledge = "\n".join(f"- {k.get('content', '')}" for k in known)
-            pred = ctx.llm.call(
+            prediction = ctx.llm.call(
                 "distill",
                 PREDICT_PROMPT.format(title=title, knowledge=knowledge),
                 PREDICT_SCHEMA,
                 required_keys=("prediction",),
                 phase="predict_calibrate",
             )
-            if pred is None:
+            if prediction is None:
                 return []  # episode is stored; only distillation is skipped
 
             # Stage 2: calibrate against the RAW segment — extract the gap only.
-            cal = ctx.llm.call(
+            calibration = ctx.llm.call(
                 "distill",
                 CALIBRATE_PROMPT.format(
-                    prediction=str(pred.get("prediction", "")), segment=plain_text
+                    prediction=str(prediction.get("prediction", "")), segment=plain_text
                 ),
                 CALIBRATE_SCHEMA,
                 required_keys=("facts",),
                 phase="predict_calibrate",
             )
-        if cal is None:
+        if calibration is None:
             return []
 
         # Stage 3: integrate the prediction gap as atomic semantic facts
         # (v4 §3.3.3 P_con — delegated to self._integrator, default Append).
         ops: list[MemoryOp] = []
-        for fact in cal.get("facts", []):
+        for fact in calibration.get("facts", []):
             fact = str(fact).strip()
             if not fact:
                 continue

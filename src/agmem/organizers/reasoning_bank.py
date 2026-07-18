@@ -197,14 +197,14 @@ class ReasoningBankOrganizer(Organizer):
         if item_ids:
             # experience record: the retrieval unit upstream actually uses —
             # task-query embedding, expanded to its member items at read time
-            exp_id = new_id()
+            experience_id = new_id()
             ops.append(
                 MemoryOp(
                     op=OpType.ADD,
                     target_type="experiences",
-                    target_id=exp_id,
+                    target_id=experience_id,
                     payload={
-                        "id": exp_id,
+                        "id": experience_id,
                         "task": task,
                         "outcome": outcome,
                         "item_ids": item_ids,

@@ -124,7 +124,7 @@ class ACEOrganizer(Organizer):
         # The FULL playbook, as the official curator sees it (round-5 ACE
         # §3.2 — a task-similar top-k partial view let paraphrase duplicates
         # through, since "MISSING?" was judged against an incomplete list).
-        return ctx.doc.list_items("playbook", namespace=ctx.namespace)
+        return ctx.doc_store.list_items("playbook", namespace=ctx.namespace)
 
     def _render_playbook(self, bullets: list[dict]) -> str:
         # One display format everywhere: [section-id5], matching
@@ -177,8 +177,12 @@ class ACEOrganizer(Organizer):
         for tag in reflection.get("bullet_tags", []) or []:
             # models echo the display id "[section-xxxxx]" or just "xxxxx" —
             # strip any section prefix, then resolve the 5-char prefix
-            bid = str(tag.get("id") or "").strip("[]").rsplit("-", 1)[-1]
-            matches = [full for full in by_id if full == bid or full.startswith(bid)]
+            bullet_id_prefix = str(tag.get("id") or "").strip("[]").rsplit("-", 1)[-1]
+            matches = [
+                full
+                for full in by_id
+                if full == bullet_id_prefix or full.startswith(bullet_id_prefix)
+            ]
             if len(matches) != 1 or tag.get("tag") not in ("helpful", "harmful"):
                 continue
             full_id = matches[0]
@@ -205,21 +209,25 @@ class ACEOrganizer(Organizer):
         if curated is None:
             return ops
 
-        accepted_embs: list[list[float]] = []  # intra-batch dedup (round-5 §3.4)
+        accepted_embeddings: list[list[float]] = []  # intra-batch dedup (round-5 §3.4)
         for raw in (curated.get("operations") or [])[: self.max_ops]:
             content = str(raw.get("content", "")).strip()
             if not content:
                 continue
             # deterministic grow-and-refine: embedding dedup, always on
-            emb = ctx.embedder.embed([content])[0]
-            dup = ctx.vec.search(emb, k=1, memory_type="playbook", namespace=ctx.namespace)
+            embedding = ctx.embedder.embed([content])[0]
+            dup = ctx.vector_store.search(
+                embedding, k=1, memory_type="playbook", namespace=ctx.namespace
+            )
             if dup and dup[0][1] >= self.dedup_threshold:
                 logger.info("ace: dedup skipped near-duplicate bullet (sim=%.2f)", dup[0][1])
                 continue
-            if any(_cosine(emb, prev) >= self.dedup_threshold for prev in accepted_embs):
+            if any(
+                _cosine(embedding, prev) >= self.dedup_threshold for prev in accepted_embeddings
+            ):
                 logger.info("ace: dedup skipped intra-batch near-duplicate")
                 continue
-            accepted_embs.append(emb)
+            accepted_embeddings.append(embedding)
             bullet = Bullet(
                 content=content,
                 section=str(raw.get("section", "general")) or "general",

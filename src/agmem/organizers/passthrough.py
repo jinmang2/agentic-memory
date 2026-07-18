@@ -14,5 +14,5 @@ from agmem.organizers.base import Organizer, OrganizerContext
 class PassthroughOrganizer(Organizer):
     name = "passthrough"
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         return []  # the facade already stored/indexed the raw episode

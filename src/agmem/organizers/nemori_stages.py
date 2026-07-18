@@ -51,9 +51,9 @@ Newest message:
 Return JSON: {{"boundary": true/false, "confidence": 0.0-1.0}}"""
 
 
-def _fmt(ep: Episode) -> str:
-    ts = ep.meta.get("date") or ep.timestamp.isoformat()
-    return f"[{ts}] {ep.role}: {ep.content}"
+def _fmt(episode: Episode) -> str:
+    ts = episode.meta.get("date") or episode.timestamp.isoformat()
+    return f"[{ts}] {episode.role}: {episode.content}"
 
 
 class PerMessageBoundary:
@@ -185,15 +185,15 @@ class BatchPartitioner:
             groups = (result or {}).get("episodes") or []
             covered: set[int] = set()
             for g in groups:
-                idxs = sorted(
+                indexes = sorted(
                     i
                     for i in g.get("indices", [])
                     if isinstance(i, int) and 0 <= i < len(chunk) and i not in covered
                 )
-                if not idxs:
+                if not indexes:
                     continue
-                covered.update(idxs)
-                segments.append([chunk[i] for i in idxs])
+                covered.update(indexes)
+                segments.append([chunk[i] for i in indexes])
             leftover = [chunk[i] for i in range(len(chunk)) if i not in covered]
             if leftover:  # LLM 실패/누락 인덱스 — 세그먼트를 잃지 않는다 (프로젝트 원칙)
                 segments.append(leftover)
@@ -290,33 +290,33 @@ class EpisodeMerger:
         self,
         title: str,
         narrative: str,
-        ep_ts: str,
+        episode_timestamp: str,
         source_ids: list[str],
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
     ) -> tuple[list[MemoryOp], str, str, str] | None:
         # exclude_ids drops episodes already merged-away earlier in this same
         # on_message batch (I1) — same within-pass guard as ThreeWayIntegrator.
-        emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
-        hits = ctx.vec.search(
-            emb, k=self.top_k, memory_type="episodes", namespace=ctx.namespace
+        query_embedding = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
+        hits = ctx.vector_store.search(
+            query_embedding, k=self.top_k, memory_type="episodes", namespace=ctx.namespace
         )
         if self.similarity is not None:
-            hits = [(hid, s) for hid, s in hits if s >= self.similarity]
-        cands = [
+            hits = [(hit_id, s) for hit_id, s in hits if s >= self.similarity]
+        candidates = [
             c
-            for c in ctx.doc.get_items([h[0] for h in hits], "episodes")
+            for c in ctx.doc_store.get_items([h[0] for h in hits], "episodes")
             if not c.get("invalid_at") and (exclude_ids is None or c["id"] not in exclude_ids)
         ]
-        if not cands:
+        if not candidates:
             return None
         gap_rule = (
             TIME_GAP_RULE.format(hours=self.time_gap_hours) if self.time_gap_hours else ""
         )
-        cand_text = "\n".join(
+        candidate_text = "\n".join(
             f"[{i}] title: {c.get('title', '')} | timestamp: {c.get('timestamp', '')}\n"
             f"    narrative: {c.get('content', '')}"
-            for i, c in enumerate(cands)
+            for i, c in enumerate(candidates)
         )
         verdict = ctx.llm.call(
             "distill",
@@ -324,8 +324,8 @@ class EpisodeMerger:
                 time_gap_rule=gap_rule,
                 title=title,
                 narrative=narrative,
-                timestamp=ep_ts,
-                candidates=cand_text,
+                timestamp=episode_timestamp,
+                candidates=candidate_text,
             ),
             MERGE_DECISION_SCHEMA,
             required_keys=("decision",),
@@ -333,10 +333,10 @@ class EpisodeMerger:
         )
         if not verdict or verdict.get("decision") != "merge":
             return None
-        idx = verdict.get("target_index")
-        if not isinstance(idx, int) or not 0 <= idx < len(cands):
+        target_index = verdict.get("target_index")
+        if not isinstance(target_index, int) or not 0 <= target_index < len(candidates):
             return None
-        old = cands[idx]
+        old = candidates[target_index]
         merged = ctx.llm.call(
             "distill",
             MERGE_CONTENT_PROMPT.format(
@@ -345,7 +345,7 @@ class EpisodeMerger:
                 ts_a=old.get("timestamp", ""),
                 title_b=title,
                 narrative_b=narrative,
-                ts_b=ep_ts,
+                ts_b=episode_timestamp,
             ),
             MERGE_CONTENT_SCHEMA,
             required_keys=("title", "narrative"),
@@ -354,10 +354,10 @@ class EpisodeMerger:
         if merged is None:
             return None  # 병합 실패 → 호출측이 일반 ADD로 저장 (세그먼트 불손실)
         merged_id = new_id()
-        m_title = str(merged.get("title", "")).strip() or title
-        m_narr = str(merged.get("narrative", "")).strip() or narrative
-        m_ts = str(merged.get("timestamp", "")).strip() or min(
-            str(old.get("timestamp", "")), str(ep_ts)
+        merged_title = str(merged.get("title", "")).strip() or title
+        merged_narrative = str(merged.get("narrative", "")).strip() or narrative
+        merged_timestamp = str(merged.get("timestamp", "")).strip() or min(
+            str(old.get("timestamp", "")), str(episode_timestamp)
         )
         ops = [
             MemoryOp(
@@ -366,13 +366,13 @@ class EpisodeMerger:
                 target_id=merged_id,
                 payload={
                     "id": merged_id,
-                    "title": m_title,
-                    "content": m_narr,
-                    "timestamp": m_ts,
+                    "title": merged_title,
+                    "content": merged_narrative,
+                    "timestamp": merged_timestamp,
                     "supersedes": [old["id"]],
                     "source_episode_ids": list(old.get("source_episode_ids", []))
                     + list(source_ids),
-                    "embedding_text": f"{m_title}\n{m_narr}",
+                    "embedding_text": f"{merged_title}\n{merged_narrative}",
                 },
             ),
             MemoryOp(
@@ -382,7 +382,7 @@ class EpisodeMerger:
                 payload={"reason": "merged", "superseded_by": merged_id},
             ),
         ]
-        return ops, merged_id, m_title, m_narr
+        return ops, merged_id, merged_title, merged_narrative
 
 
 INTEGRATE_SCHEMA = {
@@ -430,14 +430,14 @@ class AppendIntegrator:
     ) -> list[MemoryOp]:
         # exclude_ids is part of the common integrator contract (I1) but has no
         # effect here — Append never searches for candidates.
-        fid = new_id()
+        fact_id = new_id()
         return [
             MemoryOp(
                 op=OpType.ADD,
                 target_type="semantic",
-                target_id=fid,
+                target_id=fact_id,
                 payload={
-                    "id": fid,
+                    "id": fact_id,
                     "content": fact,
                     "episode_id": episode_id,
                     "source_episode_ids": list(source_ids),
@@ -462,11 +462,13 @@ class DedupIdReuseIntegrator:
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
-        emb = ctx.embedder.embed([fact])[0]
+        query_embedding = ctx.embedder.embed([fact])[0]
         hits = [
-            (hid, s)
-            for hid, s in ctx.vec.search(emb, k=1, memory_type="semantic", namespace=ctx.namespace)
-            if exclude_ids is None or hid not in exclude_ids
+            (hit_id, s)
+            for hit_id, s in ctx.vector_store.search(
+                query_embedding, k=1, memory_type="semantic", namespace=ctx.namespace
+            )
+            if exclude_ids is None or hit_id not in exclude_ids
         ]
         if hits and hits[0][1] >= self.threshold:
             return [
@@ -508,23 +510,23 @@ class ThreeWayIntegrator:
         # ``phase`` distinguishes the same integration code running inline
         # (llm3way, phase="integrate") from SemanticOfflineConsolidator's
         # deferred pass over the shared implementation (phase="consolidate").
-        emb = ctx.embedder.embed([fact])[0]
+        query_embedding = ctx.embedder.embed([fact])[0]
         hits = [
-            (hid, s)
-            for hid, s in ctx.vec.search(
-                emb, k=self.top_k, memory_type="semantic", namespace=ctx.namespace
+            (hit_id, s)
+            for hit_id, s in ctx.vector_store.search(
+                query_embedding, k=self.top_k, memory_type="semantic", namespace=ctx.namespace
             )
-            if s >= self.tau and (exclude_ids is None or hid not in exclude_ids)
+            if s >= self.tau and (exclude_ids is None or hit_id not in exclude_ids)
         ]
-        cands = [
+        candidates = [
             c
-            for c in ctx.doc.get_items([h[0] for h in hits], "semantic")
+            for c in ctx.doc_store.get_items([h[0] for h in hits], "semantic")
             if not c.get("invalid_at")
         ]
         add = AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
-        if not cands:
+        if not candidates:
             return add
-        existing = "\n".join(f"[{i}] {c.get('content', '')}" for i, c in enumerate(cands))
+        existing = "\n".join(f"[{i}] {c.get('content', '')}" for i, c in enumerate(candidates))
         verdict = ctx.llm.call(
             "distill",
             INTEGRATE_PROMPT.format(fact=fact, existing=existing),
@@ -534,23 +536,23 @@ class ThreeWayIntegrator:
         )
         if verdict is None or verdict.get("decision") == "new":
             return add
-        idxs = [
+        indexes = [
             i
             for i in verdict.get("target_indexes", [])
-            if isinstance(i, int) and 0 <= i < len(cands)
+            if isinstance(i, int) and 0 <= i < len(candidates)
         ]
-        if not idxs:
+        if not indexes:
             return add
         statement = str(verdict.get("statement", "")).strip() or fact
-        targets = [cands[i]["id"] for i in idxs]
-        fid = new_id()
+        targets = [candidates[i]["id"] for i in indexes]
+        fact_id = new_id()
         if verdict["decision"] == "merge":
             head = MemoryOp(
                 op=OpType.MERGE,
                 target_type="semantic",
-                target_id=fid,
+                target_id=fact_id,
                 payload={
-                    "id": fid,
+                    "id": fact_id,
                     "content": statement,
                     "episode_id": episode_id,
                     "source_episode_ids": list(source_ids),
@@ -562,9 +564,9 @@ class ThreeWayIntegrator:
             head = MemoryOp(
                 op=OpType.ADD,
                 target_type="semantic",
-                target_id=fid,
+                target_id=fact_id,
                 payload={
-                    "id": fid,
+                    "id": fact_id,
                     "content": statement,
                     "episode_id": episode_id,
                     "source_episode_ids": list(source_ids),
@@ -575,10 +577,10 @@ class ThreeWayIntegrator:
             MemoryOp(
                 op=OpType.INVALIDATE,
                 target_type="semantic",
-                target_id=t,
-                payload={"reason": verdict["decision"], "superseded_by": fid},
+                target_id=target_id,
+                payload={"reason": verdict["decision"], "superseded_by": fact_id},
             )
-            for t in targets
+            for target_id in targets
         ]
 
 
@@ -597,7 +599,7 @@ class SemanticOfflineConsolidator:
 
     def run(self, organizer, ctx: OrganizerContext) -> list[MemoryOp]:
         cursor = organizer.read_cursor(ctx)
-        rows = ctx.doc.ops_since(cursor, target_type="semantic", limit=self.scan_limit)
+        rows = ctx.doc_store.ops_since(cursor, target_type="semantic", limit=self.scan_limit)
         # Cursor advance must respect ops_since's limit truncation (review I2):
         # if the semantic log since the cursor filled scan_limit, the tail is
         # cut off here, so advance only to the last row we actually scanned and
@@ -608,14 +610,15 @@ class SemanticOfflineConsolidator:
         if len(rows) >= self.scan_limit:
             end = rows[-1][0]
         else:
-            end = ctx.doc.last_seq()
+            end = ctx.doc_store.last_seq()
         if end <= cursor:
             return []
         ops: list[MemoryOp] = []
-        # Ops accumulated so far in *this* run() are only applied to doc/vec
-        # after run() returns (facade appends the whole batch atomically), so
-        # a fact merged-away earlier in this same pass still looks perfectly
-        # live to ctx.doc/ctx.vec for every later iteration of this loop.
+        # Ops accumulated so far in *this* run() are only applied to
+        # doc_store/vector_store after run() returns (facade appends the
+        # whole batch atomically), so a fact merged-away earlier in this same
+        # pass still looks perfectly live to ctx.doc_store/ctx.vector_store
+        # for every later iteration of this loop.
         # Without tracking that here, two mutually-similar facts queued since
         # the cursor would each independently earn their own merge head
         # against the not-yet-updated store — both survive live, and since
@@ -629,14 +632,15 @@ class SemanticOfflineConsolidator:
                 continue  # only re-judge this organizer's own semantic ADDs
             if op.target_id in superseded_this_pass:
                 continue  # already absorbed by another merge earlier in this pass
-            current = ctx.doc.get_items([op.target_id], "semantic")
+            current = ctx.doc_store.get_items([op.target_id], "semantic")
             if not current or current[0].get("invalid_at"):
                 continue  # already superseded by this pass or inline
             fact = str(current[0].get("content", ""))
             # exclude_ids drops the fact's own item, plus everything already
             # superseded earlier in this pass, from ThreeWay's candidate
-            # search — otherwise vec.search reliably returns the fact's own
-            # top-1 neighbor (Task 9 signature change, spec §2.3 note), and
+            # search — otherwise vector_store.search reliably returns the
+            # fact's own top-1 neighbor (Task 9 signature change, spec §2.3
+            # note), and
             # would also happily re-offer an already-absorbed duplicate as a
             # fresh merge candidate.
             out = self._inner.integrate(

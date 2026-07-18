@@ -133,23 +133,23 @@ class AMemOrganizer(Organizer):
             self.consumes = ("episodes",)
         self._episode_notes: dict[str, str] = {}
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         if self.input_mode == "episodes":
             return []  # input is fed via on_memory_event only (spec §3)
-        return self._ingest(ep, ctx)
+        return self._ingest(episode, ctx)
 
     def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
         if self.input_mode != "episodes":
             return []
         ops: list[MemoryOp] = []
-        for sid in ev.supersedes:
-            nid = self._episode_notes.pop(sid, None)
-            if nid:
+        for superseded_id in ev.supersedes:
+            note_id = self._episode_notes.pop(superseded_id, None)
+            if note_id:
                 ops.append(
                     MemoryOp(
                         op=OpType.INVALIDATE,
                         target_type="notes",
-                        target_id=nid,
+                        target_id=note_id,
                         payload={"reason": "episode_superseded"},
                     )
                 )
@@ -167,43 +167,45 @@ class AMemOrganizer(Organizer):
             self._episode_notes[ev.target_id] = note_ops[0].target_id  # 첫 op = ADD note
         return ops + note_ops
 
-    def _ingest(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def _ingest(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         # upstream "talk start time": the conversation date when known,
         # not the ingest wall clock
-        talk_time = ep.meta.get("date") or ep.timestamp.isoformat()
+        talk_time = episode.meta.get("date") or episode.timestamp.isoformat()
         if ctx.llm is None:
             logger.warning("amem: no LLM configured — storing bare note (explicit degradation)")
             note = Note(
-                content=ep.content,
+                content=episode.content,
                 namespace=ctx.namespace,
-                source_episode_ids=[ep.id],
-                timestamp=ep.timestamp,
+                source_episode_ids=[episode.id],
+                timestamp=episode.timestamp,
             )
             return [self._add_op(note, talk_time)]
 
         # 1. note construction (Ps1) — one LLM call
         meta = ctx.llm.call(
             "extract",
-            NOTE_PROMPT.format(content=ep.content),
+            NOTE_PROMPT.format(content=episode.content),
             NOTE_SCHEMA,
             required_keys=("keywords", "context", "tags"),
         )
         note = Note(
-            content=ep.content,
+            content=episode.content,
             namespace=ctx.namespace,
             keywords=[str(x) for x in (meta or {}).get("keywords", [])],
             tags=[str(x) for x in (meta or {}).get("tags", [])],
             context=str((meta or {}).get("context", "")),
-            source_episode_ids=[ep.id],
-            timestamp=ep.timestamp,
+            source_episode_ids=[episode.id],
+            timestamp=episode.timestamp,
         )
         ops = [self._add_op(note, talk_time)]
 
         # 2. neighbor retrieval — embedding includes metadata (A-Mem finding)
-        note_emb = ctx.embedder.embed([note.embedding_text()])[0]
-        hits = ctx.vec.search(note_emb, k=self.top_k, memory_type="notes", namespace=ctx.namespace)
+        query_embedding = ctx.embedder.embed([note.embedding_text()])[0]
+        hits = ctx.vector_store.search(
+            query_embedding, k=self.top_k, memory_type="notes", namespace=ctx.namespace
+        )
         neighbor_ids = [h[0] for h in hits]
-        neighbors = ctx.doc.get_items(neighbor_ids, "notes")
+        neighbors = ctx.doc_store.get_items(neighbor_ids, "notes")
         if not neighbors:
             return ops
 
@@ -214,7 +216,7 @@ class AMemOrganizer(Organizer):
             f'keywords={n.get("keywords", [])} tags={n.get("tags", [])}'
             for n in neighbors
         )
-        evo = ctx.llm.call(
+        evolution_verdict = ctx.llm.call(
             "distill",
             EVOLVE_PROMPT.format(
                 content=note.content,
@@ -226,21 +228,21 @@ class AMemOrganizer(Organizer):
             EVOLVE_SCHEMA,
             required_keys=("should_evolve", "connections"),
         )
-        if evo is None:
+        if evolution_verdict is None:
             return ops  # drop counted; note itself is still stored
 
         # Upstream gating: nothing happens unless should_evolve, and each
         # effect belongs to an action ("strengthen" -> links + new-note tags,
         # "update_neighbor" -> neighbor rewrites).
-        if not evo.get("should_evolve"):
+        if not evolution_verdict.get("should_evolve"):
             return ops
-        actions = {str(a).lower() for a in evo.get("actions") or []}
+        actions = {str(a).lower() for a in evolution_verdict.get("actions") or []}
         if not actions:  # small models may omit the field; keep both effects
             actions = {"strengthen", "update_neighbor"}
         valid_ids = set(neighbor_ids)  # bug fix #32: only real note IDs
 
         if "strengthen" in actions:
-            connections = [c for c in evo.get("connections", []) if c in valid_ids]
+            connections = [c for c in evolution_verdict.get("connections", []) if c in valid_ids]
             if connections:
                 # unidirectional, as upstream: only the new note gains links
                 ops.append(
@@ -253,7 +255,7 @@ class AMemOrganizer(Organizer):
                 )
             # the evolution call may refine the NEW note's tags
             # (upstream tags_to_update — audit P1-5)
-            new_tags = [str(t) for t in evo.get("new_note_tags") or []]
+            new_tags = [str(t) for t in evolution_verdict.get("new_note_tags") or []]
             if new_tags and new_tags != note.tags:
                 refreshed_self = Note(
                     content=note.content,
@@ -276,16 +278,16 @@ class AMemOrganizer(Organizer):
 
         if "update_neighbor" in actions:
             by_id = {n["id"]: n for n in neighbors}
-            for upd in evo.get("neighbor_updates", []):
-                nid = upd.get("id")
-                if nid not in valid_ids:
+            for upd in evolution_verdict.get("neighbor_updates", []):
+                note_id = upd.get("id")
+                if note_id not in valid_ids:
                     continue
-                old = by_id[nid]
+                old = by_id[note_id]
                 new_context = str(upd.get("new_context") or old.get("context", ""))
                 new_tags = [str(t) for t in (upd.get("new_tags") or old.get("tags", []))]
                 refreshed = Note(
                     content=old.get("content", ""),
-                    id=nid,
+                    id=note_id,
                     context=new_context,
                     tags=new_tags,
                     keywords=old.get("keywords", []),
@@ -294,7 +296,7 @@ class AMemOrganizer(Organizer):
                     MemoryOp(
                         op=OpType.UPDATE,
                         target_type="notes",
-                        target_id=nid,
+                        target_id=note_id,
                         payload={
                             "context": new_context,
                             "tags": new_tags,

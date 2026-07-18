@@ -57,8 +57,10 @@ def build_prompts(task: str, data_path: Path, limit: int, seed: int = 7) -> list
                 prompts.append(nemori.BOUNDARY_PROMPT.format(buffer=buf, message=f"[{d}] {s}: {t}"))
         elif task == "episode":
             for start in range(0, len(turns) - 6, 6):
-                seg = "\n".join(f"[{d}] {s}: {t}" for _, d, s, t in turns[start : start + 6])
-                prompts.append(nemori.EPISODE_PROMPT.format(segment=seg))
+                segment_text = "\n".join(
+                    f"[{d}] {s}: {t}" for _, d, s, t in turns[start : start + 6]
+                )
+                prompts.append(nemori.EPISODE_PROMPT.format(segment=segment_text))
     rng.shuffle(prompts)
     return prompts[:limit]
 

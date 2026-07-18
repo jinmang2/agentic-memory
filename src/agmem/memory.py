@@ -65,7 +65,7 @@ class AgenticMemory:
             if data_dir
             else None
         )
-        self.doc = doc_cls(doc_path)
+        self.doc_store = doc_cls(doc_path)
 
         # --- embedder -----------------------------------------------------
         if embedder is not None:
@@ -107,7 +107,7 @@ class AgenticMemory:
             if data_dir
             else None
         )
-        self.vec = vec_cls(vec_path, dim=self.embedder.dim)
+        self.vector_store = vec_cls(vec_path, dim=self.embedder.dim)
 
         # --- llm (optional: built only when llm_roles configured) ----------
         self.budget = BudgetTracker()
@@ -148,15 +148,15 @@ class AgenticMemory:
             if data_dir
             else None
         )
-        self.graph = graph_cls(graph_path)
+        self.graph_store = graph_cls(graph_path)
 
         self._ctx = OrganizerContext(
-            doc=self.doc,
-            vec=self.vec,
+            doc_store=self.doc_store,
+            vector_store=self.vector_store,
             embedder=self.embedder,
             namespace=self.namespace,
             llm=self.structured,
-            graph=self.graph,
+            graph_store=self.graph_store,
         )
 
         # --- reranker (Noop keeps fusion order; MMR adds diversity) ---------
@@ -174,11 +174,11 @@ class AgenticMemory:
         else:
             self.reranker = reranker_cls()
         self.pipeline = RetrievalPipeline(
-            self.doc,
-            self.vec,
+            self.doc_store,
+            self.vector_store,
             self.embedder,
             reranker=self.reranker,
-            graph=self.graph,
+            graph_store=self.graph_store,
             lexical_types=self.config.lexical_types,
         )
 
@@ -199,7 +199,7 @@ class AgenticMemory:
         timestamp: Any = None,
         meta: dict | None = None,
     ) -> Episode:
-        ep = Episode(
+        episode = Episode(
             content=content,
             role=role,
             namespace=self.namespace,
@@ -207,19 +207,19 @@ class AgenticMemory:
             meta=meta or {},
         )
         # sync: raw episode is immediately searchable
-        self.doc.add_episode(ep)
-        self.vec.add(
-            ep.id,
-            self.embedder.embed([ep.embedding_text()])[0],
+        self.doc_store.add_episode(episode)
+        self.vector_store.add(
+            episode.id,
+            self.embedder.embed([episode.embedding_text()])[0],
             memory_type="episodic",
             namespace=self.namespace,
         )
-        self.doc.append(
+        self.doc_store.append(
             [
                 MemoryOp(
                     op=OpType.ADD,
                     target_type="episodic",
-                    target_id=ep.id,
+                    target_id=episode.id,
                     actor="ingest",
                     payload={"role": role},
                 )
@@ -227,34 +227,34 @@ class AgenticMemory:
         )
         self._dispatch(
             lambda: [
-                self._apply_ops(org.on_message(ep, self._ctx), actor=org.name)
+                self._apply_ops(org.on_message(episode, self._ctx), actor=org.name)
                 for org in self.organizers
             ]
         )
-        return ep
+        return episode
 
     def add_task_result(
         self, trajectory: list[dict], outcome: str, task: str, agent_id: str = "agent"
     ) -> None:
-        ep = Episode(
+        episode = Episode(
             content=task,
             role="task",
             namespace=self.namespace,
             meta={"outcome": outcome, "agent_id": agent_id, "steps": len(trajectory)},
         )
-        self.doc.add_episode(ep)
-        self.vec.add(
-            ep.id,
-            self.embedder.embed([ep.embedding_text()])[0],
+        self.doc_store.add_episode(episode)
+        self.vector_store.add(
+            episode.id,
+            self.embedder.embed([episode.embedding_text()])[0],
             memory_type="episodic",
             namespace=self.namespace,
         )
-        self.doc.append(
+        self.doc_store.append(
             [
                 MemoryOp(
                     op=OpType.ADD,
                     target_type="episodic",
-                    target_id=ep.id,
+                    target_id=episode.id,
                     actor="ingest",
                     payload={"outcome": outcome},
                 )
@@ -271,11 +271,11 @@ class AgenticMemory:
         )
 
     def warm_start(self, corpus: list[Episode]) -> None:
-        for ep in corpus:
-            self.doc.add_episode(ep)
-            self.vec.add(
-                ep.id,
-                self.embedder.embed([ep.embedding_text()])[0],
+        for episode in corpus:
+            self.doc_store.add_episode(episode)
+            self.vector_store.add(
+                episode.id,
+                self.embedder.embed([episode.embedding_text()])[0],
                 memory_type="episodic",
                 namespace=self.namespace,
             )
@@ -312,7 +312,7 @@ class AgenticMemory:
             flush_buffer = getattr(org, "flush_buffer", None)
             if callable(flush_buffer):
                 self._apply_ops(flush_buffer(self._ctx), actor=org.name)
-        self.vec.persist()
+        self.vector_store.persist()
 
     def consolidate(self) -> int:
         """Deferred management pass (spec §1.4) — explicit trigger only.
@@ -339,7 +339,7 @@ class AgenticMemory:
             return
         for op in ops:
             op.actor = actor
-        self.doc.append(ops)  # log first — replayable audit trail
+        self.doc_store.append(ops)  # log first — replayable audit trail
         for op in ops:
             self._apply_one(op)
         if propagate:
@@ -376,21 +376,21 @@ class AgenticMemory:
             if op.op is OpType.ADD:
                 data = dict(op.payload)
             else:  # UPDATE/MERGE: merge into existing item, don't clobber
-                existing = self.doc.get_items([op.target_id], op.target_type)
+                existing = self.doc_store.get_items([op.target_id], op.target_type)
                 data = dict(existing[0]) if existing else {}
                 data.update(op.payload)
             data.setdefault("id", op.target_id)
-            self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
+            self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
             text = data.get("embedding_text") or data.get("content")
             if text:
-                self.vec.add(
+                self.vector_store.add(
                     op.target_id,
                     self.embedder.embed([text])[0],
                     memory_type=op.target_type,
                     namespace=self.namespace,
                 )
         elif op.op == OpType.INVALIDATE:
-            items = self.doc.get_items([op.target_id], op.target_type)
+            items = self.doc_store.get_items([op.target_id], op.target_type)
             if items:
                 data = items[0]
                 # 최초 무효화 시각 보존 — 이중 무효화 멱등 (spec §1.2)
@@ -399,30 +399,30 @@ class AgenticMemory:
                 )
                 if "superseded_by" in op.payload:
                     data["superseded_by"] = op.payload["superseded_by"]
-                self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
+                self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
                 if op.target_type not in BITEMPORAL_TYPES:
                     # 서빙 제외 보장 — ghost-hit 방지(X1 계열, spec §1.3); doc/로그엔 남음
-                    self.vec.delete([op.target_id])
+                    self.vector_store.delete([op.target_id])
         elif op.op in (OpType.LINK, OpType.TAG):
-            items = self.doc.get_items([op.target_id], op.target_type)
+            items = self.doc_store.get_items([op.target_id], op.target_type)
             if items:
                 data = items[0]
                 key = "links" if op.op == OpType.LINK else "tags"
                 merged = set(data.get(key, [])) | set(op.payload.get(key, []))
                 data[key] = sorted(merged)
-                self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
+                self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
         elif op.op == OpType.DELETE:
             # physical delete is reserved for capacity eviction (MemoryOS
             # heat eviction, G-Memory REMOVE); the log keeps the audit trail.
             # The vector MUST go too — round-5 X1: a surviving vector made
             # deleted items resurface as empty ghost hits.
-            self.doc.put_item(
+            self.doc_store.put_item(
                 op.target_id,
                 op.target_type,
                 self.namespace,
                 {"id": op.target_id, "deleted": True},
             )
-            self.vec.delete([op.target_id])
+            self.vector_store.delete([op.target_id])
 
     # ---- read ---------------------------------------------------------------
 
@@ -456,7 +456,7 @@ class AgenticMemory:
         number of memories updated."""
         ops: list[MemoryOp] = []
         for mid in memory_ids:
-            bullets = self.doc.get_items([mid], "playbook")
+            bullets = self.doc_store.get_items([mid], "playbook")
             if bullets:
                 field = "helpful" if helpful else "harmful"
                 ops.append(
@@ -468,7 +468,7 @@ class AgenticMemory:
                     )
                 )
                 continue
-            strategies = self.doc.get_items([mid], "strategies")
+            strategies = self.doc_store.get_items([mid], "strategies")
             if strategies:
                 delta = 1.0 if helpful else -2.0
                 new_score = float(strategies[0].get("score", 0)) + delta
@@ -500,7 +500,7 @@ class AgenticMemory:
         This full render IS the methodology's read contract: ACE injects
         the whole playbook and lets the Generator LLM pick bullets
         (round-5 ACE §2) — do not swap it for top-k retrieval."""
-        bullets = self.doc.list_items("playbook", namespace=self.namespace)
+        bullets = self.doc_store.list_items("playbook", namespace=self.namespace)
         if section:
             bullets = [b for b in bullets if b.get("section") == section]
         by_section: dict[str, list[str]] = {}
@@ -516,19 +516,19 @@ class AgenticMemory:
 
     @property
     def log(self):
-        return self.doc  # EvolutionLog protocol: tail()/count()
+        return self.doc_store  # EvolutionLog protocol: tail()/count()
 
     def stats(self) -> dict[str, Any]:
         return {
             "namespace": self.namespace,
             "profile": self.config.profile,
-            "episodes": self.doc.count_episodes(self.namespace),
-            "vectors": self.vec.count(),
-            "evolution_ops": self.doc.count(),
+            "episodes": self.doc_store.count_episodes(self.namespace),
+            "vectors": self.vector_store.count(),
+            "evolution_ops": self.doc_store.count(),
             "llm": self.budget.summary(),
             "structured_drops": dict(self.structured.drops) if self.structured else {},
             "embedder": self.embedder.name,
-            "vector_store": type(self.vec).__name__,
+            "vector_store": type(self.vector_store).__name__,
         }
 
     def capabilities(self) -> dict[str, Any]:
@@ -543,7 +543,7 @@ class AgenticMemory:
             },
             "active": {
                 "embedder": self.embedder.name,
-                "vector_store": type(self.vec).__name__,
+                "vector_store": type(self.vector_store).__name__,
                 "organizers": [o.name for o in self.organizers],
             },
             "degradations": self._degradations,
@@ -552,6 +552,6 @@ class AgenticMemory:
     def close(self) -> None:
         if self._queue is not None:
             self._queue.join()  # drain pending organizer work before closing
-        self.vec.close()
-        self.graph.close()
-        self.doc.close()
+        self.vector_store.close()
+        self.graph_store.close()
+        self.doc_store.close()

@@ -170,9 +170,11 @@ class GMemoryOrganizer(Organizer):
         return ops
 
     def _fetch(self, ctx: OrganizerContext, query: str, kind: str, k: int) -> list[dict]:
-        emb = ctx.embedder.embed([query])[0]
-        hits = ctx.vec.search(emb, k=k * 3, memory_type="strategies", namespace=ctx.namespace)
-        items = ctx.doc.get_items([h[0] for h in hits], "strategies")
+        query_embedding = ctx.embedder.embed([query])[0]
+        hits = ctx.vector_store.search(
+            query_embedding, k=k * 3, memory_type="strategies", namespace=ctx.namespace
+        )
+        items = ctx.doc_store.get_items([h[0] for h in hits], "strategies")
         return [i for i in items if i.get("kind") == kind and not i.get("deleted")][:k]
 
     def _finetune_insights(self, task: str, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -207,7 +209,7 @@ class GMemoryOrganizer(Organizer):
         n_insights = len(insights)
         list_full = n_insights >= self.insight_max
         for raw in result.get("operations", [])[:4]:
-            op, rid, rule = (
+            op, rule_id, rule = (
                 raw.get("op"),
                 raw.get("id"),
                 str(raw.get("rule", "")).strip(),
@@ -215,14 +217,14 @@ class GMemoryOrganizer(Organizer):
             if op == "ADD" and rule:
                 if list_full:
                     continue  # upstream suppresses ADD when the list is full
-                iid = new_id()
+                insight_id = new_id()
                 ops.append(
                     MemoryOp(
                         op=OpType.ADD,
                         target_type="strategies",
-                        target_id=iid,
+                        target_id=insight_id,
                         payload={
-                            "id": iid,
+                            "id": insight_id,
                             "title": rule[:60],
                             "content": rule,
                             "kind": "insight",
@@ -233,52 +235,52 @@ class GMemoryOrganizer(Organizer):
                 )
                 n_insights += 1
                 continue
-            if rid not in valid or rid in touched:
+            if rule_id not in valid or rule_id in touched:
                 continue  # hallucinated or double-touched ids emit nothing
-            touched.add(rid)
+            touched.add(rule_id)
             if op == "EDIT" and rule:
-                scores[rid] += 1.0
+                scores[rule_id] += 1.0
                 ops.append(
                     MemoryOp(
                         op=OpType.UPDATE,
                         target_type="strategies",
-                        target_id=rid,
+                        target_id=rule_id,
                         payload={
                             "content": rule,
-                            "score": scores[rid],
+                            "score": scores[rule_id],
                             "embedding_text": rule,
                         },
                     )
                 )
             elif op == "AGREE":
-                scores[rid] += 1.0
+                scores[rule_id] += 1.0
                 ops.append(
                     MemoryOp(
                         op=OpType.UPDATE,
                         target_type="strategies",
-                        target_id=rid,
-                        payload={"score": scores[rid]},
+                        target_id=rule_id,
+                        payload={"score": scores[rule_id]},
                     )
                 )
             elif op == "REMOVE":
-                scores[rid] -= 3.0 if list_full else 1.0
+                scores[rule_id] -= 3.0 if list_full else 1.0
                 ops.append(
                     MemoryOp(
                         op=OpType.UPDATE,
                         target_type="strategies",
-                        target_id=rid,
-                        payload={"score": scores[rid]},
+                        target_id=rule_id,
+                        payload={"score": scores[rule_id]},
                     )
                 )
 
         # prune: any insight whose score dropped to <= 0 is deleted
-        for rid, score in scores.items():
+        for rule_id, score in scores.items():
             if score <= 0:
                 ops.append(
                     MemoryOp(
                         op=OpType.DELETE,
                         target_type="strategies",
-                        target_id=rid,
+                        target_id=rule_id,
                         payload={"reason": "score_pruned"},
                     )
                 )

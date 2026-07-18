@@ -171,14 +171,14 @@ def answer(
     # budget structurally penalized long-item methodologies (Nemori).
     query = question
     if keyword_queries and mem.structured is not None:
-        kw = mem.structured.call(
+        keyword_result = mem.structured.call(
             "extract",
             KEYWORD_QUERY_PROMPT.format(question=question),
             KEYWORD_QUERY_SCHEMA,
             required_keys=("keywords",),
         )
-        if kw and str(kw.get("keywords", "")).strip():
-            query = str(kw["keywords"]).strip()
+        if keyword_result and str(keyword_result.get("keywords", "")).strip():
+            query = str(keyword_result["keywords"]).strip()
     bundle = mem.search(query, memory_types=memory_types, k=k)
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
     # MemoryOS injects the user profile UNCONDITIONALLY (upstream eval puts
@@ -187,7 +187,7 @@ def answer(
     if "semantic" in memory_types:
         profile = [
             d.get("content", "")
-            for d in mem.doc.list_items("semantic", namespace=mem.namespace)
+            for d in mem.doc_store.list_items("semantic", namespace=mem.namespace)
             if d.get("kind") == "profile"
         ][
             -100:

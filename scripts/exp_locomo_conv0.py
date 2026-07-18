@@ -137,7 +137,7 @@ def run(
                 "dataset": "locomo10 conv0",
                 "keyword_queries": keyword_queries,
                 "role_overrides": role_overrides,
-                "vector_store": type(mem.vec).__name__,
+                "vector_store": type(mem.vector_store).__name__,
                 "max_sessions": max_sessions,
                 "n_questions": len(questions),
                 "organizer_detail": [

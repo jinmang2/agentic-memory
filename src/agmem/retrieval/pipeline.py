@@ -19,13 +19,20 @@ from agmem.stores.base import DocStore, VectorStore
 
 
 class RetrievalPipeline:
-    def __init__(self, doc: DocStore, vec: VectorStore, embedder: Embedder,
-                 reranker=None, link_expansion_cap: int = 5,
-                 attach_sources_top_r: int = 2, graph=None,
-                 lexical_types: tuple[str, ...] = ("episodic",),
-                 graph_expansion_cap: int = 10) -> None:
-        self.doc = doc
-        self.vec = vec
+    def __init__(
+        self,
+        doc_store: DocStore,
+        vector_store: VectorStore,
+        embedder: Embedder,
+        reranker=None,
+        link_expansion_cap: int = 5,
+        attach_sources_top_r: int = 2,
+        graph_store=None,
+        lexical_types: tuple[str, ...] = ("episodic",),
+        graph_expansion_cap: int = 10,
+    ) -> None:
+        self.doc_store = doc_store
+        self.vector_store = vector_store
         self.embedder = embedder
         self.reranker = reranker  # None -> keep fusion order
         self.link_expansion_cap = link_expansion_cap
@@ -33,7 +40,7 @@ class RetrievalPipeline:
         # Zep hybrid/GraphRecall (round-5): lexical_types get a BM25 channel
         # fused via RRF; retrieved entity nodes pull their incident active
         # edges (facts) from the graph store.
-        self.graph = graph
+        self.graph_store = graph_store
         self.lexical_types = set(lexical_types)
         self.graph_expansion_cap = graph_expansion_cap
 
@@ -46,7 +53,7 @@ class RetrievalPipeline:
     ) -> MemoryBundle:
         """``k`` may be a dict per memory type (e.g. Nemori's official
         episodic k=10 / semantic m=2k=20)."""
-        query_emb = self.embedder.embed([query], kind="query")[0]
+        query_embedding = self.embedder.embed([query], kind="query")[0]
 
         bundle = MemoryBundle(query=query)
         for memory_type in memory_types:
@@ -54,28 +61,34 @@ class RetrievalPipeline:
             candidate_k = type_k * 3  # over-fetch per source, fuse down
 
             rankings = [
-                self.vec.search(query_emb, k=candidate_k,
-                                memory_type=memory_type, namespace=namespace)
+                self.vector_store.search(
+                    query_embedding, k=candidate_k, memory_type=memory_type, namespace=namespace
+                )
             ]
             if memory_type == "episodic":
                 rankings.append(
-                    self.doc.search_lexical(query, k=candidate_k, namespace=namespace)
+                    self.doc_store.search_lexical(query, k=candidate_k, namespace=namespace)
                 )
             elif memory_type in self.lexical_types:
-                rankings.append(self.doc.search_lexical_items(
-                    query, memory_type, k=candidate_k, namespace=namespace))
+                rankings.append(
+                    self.doc_store.search_lexical_items(
+                        query, memory_type, k=candidate_k, namespace=namespace
+                    )
+                )
             fused = rrf_fuse(rankings)
             if self.reranker is not None and len(fused) > type_k:
-                vectors = self.vec.get([cid for cid, _ in fused])
+                vectors = self.vector_store.get([item_id for item_id, _ in fused])
                 texts = None
                 if getattr(self.reranker, "needs_text", False):
                     texts = {
-                        s.item.id if hasattr(s.item, "id") else s.item.data["id"]:
-                        (s.item.content or "")
+                        s.item.id if hasattr(s.item, "id") else s.item.data["id"]: (
+                            s.item.content or ""
+                        )
                         for s in self._hydrate(fused, memory_type)
                     }
-                fused = self.reranker.rerank(query_emb, fused, vectors, type_k,
-                                             texts=texts, query=query)
+                fused = self.reranker.rerank(
+                    query_embedding, fused, vectors, type_k, texts=texts, query=query
+                )
             else:
                 fused = fused[:type_k]
             hydrated = self._hydrate(fused, memory_type)
@@ -86,39 +99,43 @@ class RetrievalPipeline:
                 self._attach_sources(hydrated)
             if memory_type == "experiences":
                 hydrated = self._expand_experiences(hydrated)
-            if memory_type == "entities" and self.graph is not None:
+            if memory_type == "entities" and self.graph_store is not None:
                 hydrated += self._graph_expand(hydrated, bundle, namespace)
 
             bundle.items.extend(hydrated)
         return bundle
 
-    def _graph_expand(self, entity_hits: list[ScoredItem], bundle: MemoryBundle,
-                      namespace: str | None) -> list[ScoredItem]:
+    def _graph_expand(
+        self, entity_hits: list[ScoredItem], bundle: MemoryBundle, namespace: str | None
+    ) -> list[ScoredItem]:
         """Zep GraphRecall (round-5 ④, minimal form): retrieved entity nodes
         pull their incident ACTIVE edges; the edges' fact items join the
         bundle (deduped against already-selected facts), scored just below
         their entity."""
-        seen = {getattr(s.item, "id", None) or s.item.data.get("id")
-                for s in bundle.items} | \
-               {s.item.data.get("id") for s in entity_hits}
+        seen = {getattr(s.item, "id", None) or s.item.data.get("id") for s in bundle.items} | {
+            s.item.data.get("id") for s in entity_hits
+        }
         node_ids = [s.item.data.get("id") for s in entity_hits]
-        edges = self.graph.edges_for_nodes([n for n in node_ids if n],
-                                           namespace or "main")
+        edges = self.graph_store.edges_for_nodes([n for n in node_ids if n], namespace or "main")
         wanted: dict[str, float] = {}
         base = max((s.score for s in entity_hits), default=0.0) * 0.9
         for e in edges:
-            eid = e.get("id")
-            if eid and eid not in seen and len(wanted) < self.graph_expansion_cap:
-                seen.add(eid)
-                wanted[eid] = base
+            edge_id = e.get("id")
+            if edge_id and edge_id not in seen and len(wanted) < self.graph_expansion_cap:
+                seen.add(edge_id)
+                wanted[edge_id] = base
         out: list[ScoredItem] = []
-        for data in self.doc.get_items(list(wanted), "facts"):
+        for data in self.doc_store.get_items(list(wanted), "facts"):
             if data.get("deleted"):
                 continue
-            out.append(ScoredItem(
-                item=_DictItem(data), memory_type="facts",
-                score=wanted.get(data.get("id"), 0.0),
-                provenance=data.get("source_episode_ids", [])))
+            out.append(
+                ScoredItem(
+                    item=_DictItem(data),
+                    memory_type="facts",
+                    score=wanted.get(data.get("id"), 0.0),
+                    provenance=data.get("source_episode_ids", []),
+                )
+            )
         return out
 
     def _hydrate(self, fused: list[tuple[str, float]], memory_type: str) -> list[ScoredItem]:
@@ -126,19 +143,28 @@ class RetrievalPipeline:
         scores = dict(fused)
         out: list[ScoredItem] = []
         if memory_type == "episodic":
-            for ep in self.doc.get_episodes(ids):
-                out.append(ScoredItem(item=ep, memory_type=memory_type,
-                                      score=scores[ep.id], provenance=[ep.id]))
+            for episode in self.doc_store.get_episodes(ids):
+                out.append(
+                    ScoredItem(
+                        item=episode,
+                        memory_type=memory_type,
+                        score=scores[episode.id],
+                        provenance=[episode.id],
+                    )
+                )
         else:
-            for data in self.doc.get_items(ids, memory_type):
+            for data in self.doc_store.get_items(ids, memory_type):
                 if data.get("deleted"):
                     continue  # tombstone (round-5 X1: legacy ghost guard)
                 item_id = data.get("id", "?")
-                out.append(ScoredItem(
-                    item=_DictItem(data), memory_type=memory_type,
-                    score=scores.get(item_id, 0.0),
-                    provenance=data.get("source_episode_ids", []),
-                ))
+                out.append(
+                    ScoredItem(
+                        item=_DictItem(data),
+                        memory_type=memory_type,
+                        score=scores.get(item_id, 0.0),
+                        provenance=data.get("source_episode_ids", []),
+                    )
+                )
         return out
 
     def _expand_links(self, hits: list[ScoredItem]) -> list[ScoredItem]:
@@ -161,12 +187,15 @@ class RetrievalPipeline:
             return []
         by_id = dict(wanted)
         out: list[ScoredItem] = []
-        for data in self.doc.get_items(list(by_id), "notes"):
-            out.append(ScoredItem(
-                item=_DictItem(data), memory_type="notes",
-                score=by_id.get(data.get("id"), 0.0),
-                provenance=data.get("source_episode_ids", []),
-            ))
+        for data in self.doc_store.get_items(list(by_id), "notes"):
+            out.append(
+                ScoredItem(
+                    item=_DictItem(data),
+                    memory_type="notes",
+                    score=by_id.get(data.get("id"), 0.0),
+                    provenance=data.get("source_episode_ids", []),
+                )
+            )
         return out
 
     def _expand_experiences(self, hits: list[ScoredItem]) -> list[ScoredItem]:
@@ -177,25 +206,28 @@ class RetrievalPipeline:
         out: list[ScoredItem] = []
         for s in hits:
             ids = s.item.data.get("item_ids", [])
-            for data in self.doc.get_items(ids, "strategies"):
+            for data in self.doc_store.get_items(ids, "strategies"):
                 if data.get("deleted"):
                     continue
-                out.append(ScoredItem(
-                    item=_DictItem(data), memory_type="strategies",
-                    score=s.score,
-                    provenance=data.get("source_episode_ids", [])))
+                out.append(
+                    ScoredItem(
+                        item=_DictItem(data),
+                        memory_type="strategies",
+                        score=s.score,
+                        provenance=data.get("source_episode_ids", []),
+                    )
+                )
         return out
 
     def _attach_sources(self, hits: list[ScoredItem]) -> None:
         """Nemori r=2: top-r episodes carry their raw source messages,
         rendered as ``role: content`` lines as upstream search.py does."""
-        for s in sorted(hits, key=lambda s: s.score,
-                        reverse=True)[: self.attach_sources_top_r]:
-            src_ids = s.item.data.get("source_episode_ids", [])
-            if src_ids:
-                episodes = self.doc.get_episodes(src_ids)
+        for s in sorted(hits, key=lambda s: s.score, reverse=True)[: self.attach_sources_top_r]:
+            source_ids = s.item.data.get("source_episode_ids", [])
+            if source_ids:
+                episodes = self.doc_store.get_episodes(source_ids)
                 s.item.data["_source_messages"] = [
-                    f"{ep.role}: {ep.content}" for ep in episodes
+                    f"{episode.role}: {episode.content}" for episode in episodes
                 ]
 
 
@@ -217,8 +249,10 @@ class _DictItem:
         # template: "FACT (Date range: from - to)") so invalidated facts
         # are visibly historical instead of passing as current (round-5 X2).
         if self.data.get("valid_at") or self.data.get("invalid_at"):
-            stamp = (f" (Date range: {self.data.get('valid_at') or 'unknown'}"
-                     f" - {self.data.get('invalid_at') or 'present'})")
+            stamp = (
+                f" (Date range: {self.data.get('valid_at') or 'unknown'}"
+                f" - {self.data.get('invalid_at') or 'present'})"
+            )
         else:
             ts = self.data.get("timestamp")
             stamp = f" ({ts})" if ts else ""

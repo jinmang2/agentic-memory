@@ -93,7 +93,8 @@ class ChromaVectorStore:
             return {}
         res = self._col.get(ids=ids, include=["embeddings"])
         return {
-            item_id: [float(x) for x in emb] for item_id, emb in zip(res["ids"], res["embeddings"])
+            item_id: [float(x) for x in embedding]
+            for item_id, embedding in zip(res["ids"], res["embeddings"])
         }
 
     def delete(self, ids: list[str]) -> None:

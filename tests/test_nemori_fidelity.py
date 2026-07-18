@@ -468,7 +468,7 @@ def test_semantic_offline_consolidate_cursor_respects_scan_limit():
                 AppendIntegrator().integrate(f, f"ep{i}", [f"m{i}"], mem._ctx),
                 actor="nemori",
             )
-        sem = mem.doc.ops_since(0, target_type="semantic")
+        sem = mem.doc_store.ops_since(0, target_type="semantic")
         seq0, seq1 = sem[0][0], sem[1][0]
 
         mem.consolidate()  # scan_limit=1 -> truncated after fact 0

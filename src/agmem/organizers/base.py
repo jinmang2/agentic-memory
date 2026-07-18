@@ -40,12 +40,12 @@ class MemoryEvent:
 
 @dataclass
 class OrganizerContext:
-    doc: DocStore
-    vec: VectorStore
+    doc_store: DocStore
+    vector_store: VectorStore
     embedder: Embedder
     namespace: str
     llm: Any | None = None  # role-routing LLM client; None when no endpoint
-    graph: Any | None = None  # shared graph store (Zep/G-Memory), data_dir-persistent
+    graph_store: Any | None = None  # shared graph store (Zep/G-Memory), data_dir-persistent
 
 
 class Organizer:
@@ -54,7 +54,7 @@ class Organizer:
     name = "base"
     consumes: tuple[str, ...] = ()
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         return []
 
     def on_task_end(
@@ -92,7 +92,7 @@ class Organizer:
         cursor; and ``get_items`` is not namespace-filtered, so a doc store
         shared across namespaces could collide too. Both are harmless in the
         current configs (one instance per class; per-namespace db files)."""
-        items = ctx.doc.get_items([f"consolidate:{self.name}"], "state")
+        items = ctx.doc_store.get_items([f"consolidate:{self.name}"], "state")
         return int(items[0].get("seq", 0)) if items else 0
 
     def cursor_op(self, seq: int) -> MemoryOp:
@@ -108,6 +108,6 @@ class Organizer:
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
         """Default warm start: replay the corpus through on_message."""
         ops: list[MemoryOp] = []
-        for ep in corpus:
-            ops.extend(self.on_message(ep, ctx))
+        for episode in corpus:
+            ops.extend(self.on_message(episode, ctx))
         return ops

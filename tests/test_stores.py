@@ -28,11 +28,11 @@ def doc():
 
 
 def test_episode_roundtrip(doc):
-    ep = Episode(content="파리 여행 계획을 세우고 있어요", role="user", namespace="t")
-    doc.add_episode(ep)
-    got = doc.get_episodes([ep.id])[0]
-    assert got.content == ep.content
-    assert got.timestamp == ep.timestamp
+    episode = Episode(content="파리 여행 계획을 세우고 있어요", role="user", namespace="t")
+    doc.add_episode(episode)
+    got = doc.get_episodes([episode.id])[0]
+    assert got.content == episode.content
+    assert got.timestamp == episode.timestamp
     assert doc.count_episodes("t") == 1
 
 
@@ -99,7 +99,7 @@ VEC_CLASSES = [
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_similarity_ordering(vec_cls):
-    emb = FakeEmbedder(dim=64)
+    embedder = FakeEmbedder(dim=64)
     store = vec_cls(None, dim=64)
     texts = {
         "e1": "hiking mountains trail backpack",
@@ -107,8 +107,8 @@ def test_vector_similarity_ordering(vec_cls):
         "e3": "mountains hiking gear boots",
     }
     for item_id, text in texts.items():
-        store.add(item_id, emb.embed([text])[0], namespace="t")
-    q = emb.embed(["hiking in the mountains"])[0]
+        store.add(item_id, embedder.embed([text])[0], namespace="t")
+    q = embedder.embed(["hiking in the mountains"])[0]
     hits = store.search(q, k=2, namespace="t")
     assert {h[0] for h in hits} == {"e1", "e3"}
     assert hits[0][1] >= hits[1][1]
@@ -117,9 +117,9 @@ def test_vector_similarity_ordering(vec_cls):
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_namespace_and_type_filter(vec_cls):
-    emb = FakeEmbedder(dim=64)
+    embedder = FakeEmbedder(dim=64)
     store = vec_cls(None, dim=64)
-    v = emb.embed(["same text"])[0]
+    v = embedder.embed(["same text"])[0]
     store.add("a", v, memory_type="episodic", namespace="ns1")
     store.add("b", v, memory_type="strategies", namespace="ns1")
     store.add("c", v, memory_type="episodic", namespace="ns2")
@@ -138,10 +138,10 @@ def test_vector_dim_mismatch_raises(vec_cls):
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_upsert_replaces(vec_cls):
-    emb = FakeEmbedder(dim=32)
+    embedder = FakeEmbedder(dim=32)
     store = vec_cls(None, dim=32)
-    store.add("a", emb.embed(["old text"])[0], namespace="t")
-    new_vec = emb.embed(["completely different"])[0]
+    store.add("a", embedder.embed(["old text"])[0], namespace="t")
+    new_vec = embedder.embed(["completely different"])[0]
     store.add("a", new_vec, namespace="t")
     assert store.count() == 1
     hits = store.search(new_vec, k=1, namespace="t")
@@ -151,11 +151,11 @@ def test_vector_upsert_replaces(vec_cls):
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_delete_removes_from_search(vec_cls):
-    emb = FakeEmbedder(dim=32)
+    embedder = FakeEmbedder(dim=32)
     store = vec_cls(None, dim=32)
-    v = emb.embed(["hello world"])[0]
+    v = embedder.embed(["hello world"])[0]
     store.add("a", v, namespace="t")
-    store.add("b", emb.embed(["something else"])[0], namespace="t")
+    store.add("b", embedder.embed(["something else"])[0], namespace="t")
     store.delete(["a"])
     assert store.count() == 1
     assert [h[0] for h in store.search(v, k=5, namespace="t")] == ["b"]
@@ -180,10 +180,10 @@ ENGINE_CLASSES = [
 
 @pytest.mark.parametrize("vec_cls", ENGINE_CLASSES)
 def test_engine_disk_persistence_and_dim_guard(tmp_path, vec_cls):
-    emb = FakeEmbedder(dim=32)
+    embedder = FakeEmbedder(dim=32)
     path = tmp_path / ("v.db" if vec_cls is SqliteVecStore else "store")
     store = vec_cls(path, dim=32)
-    store.add("a", emb.embed(["hello world"])[0])
+    store.add("a", embedder.embed(["hello world"])[0])
     store.persist()
     store.close()
     reloaded = vec_cls(path, dim=32)
@@ -195,10 +195,10 @@ def test_engine_disk_persistence_and_dim_guard(tmp_path, vec_cls):
 
 
 def test_numpy_store_persistence(tmp_path):
-    emb = FakeEmbedder(dim=32)
+    embedder = FakeEmbedder(dim=32)
     path = tmp_path / "v.npz"
     store = NumpyVectorStore(path, dim=32)
-    store.add("a", emb.embed(["hello world"])[0])
+    store.add("a", embedder.embed(["hello world"])[0])
     store.persist()
     reloaded = NumpyVectorStore(path, dim=32)
     assert reloaded.count() == 1
@@ -215,10 +215,10 @@ def test_postgres_doc_store_roundtrip():
 
     s = PostgresDocStore(None)
     try:
-        ep = Episode(content="hiking in the mountains", namespace="t")
-        s.add_episode(ep)
+        episode = Episode(content="hiking in the mountains", namespace="t")
+        s.add_episode(episode)
         assert s.count_episodes("t") == 1
-        assert s.search_lexical("hiking", namespace="t")[0][0] == ep.id
+        assert s.search_lexical("hiking", namespace="t")[0][0] == episode.id
         s.put_item("i1", "facts", "t", {"id": "i1", "content": "Alice lives in Paris"})
         assert s.search_lexical_items("Paris", "facts", namespace="t")[0][0] == "i1"
         s.append([MemoryOp(op=OpType.ADD, target_type="facts", target_id="i1",

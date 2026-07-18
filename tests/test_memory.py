@@ -128,7 +128,7 @@ def test_delete_op_leaves_no_ghost_hit(mem):
                              target_id="s1")], actor="test")
     bundle = mem.search("verify filters", memory_types=["strategies"])
     assert bundle.items == []
-    assert mem.vec.get(["s1"]) == {}
+    assert mem.vector_store.get(["s1"]) == {}
 
 
 def test_strategy_description_rendered(mem):

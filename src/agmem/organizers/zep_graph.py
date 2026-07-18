@@ -13,7 +13,7 @@ stay untouched (verbatim-loss defense).
 
 Entity embeddings use the NAME only (upstream semantic candidate search);
 the render layer shows "name: summary". The graph store comes from
-ctx.graph (persistent under data_dir — audit X4) unless injected.
+ctx.graph_store (persistent under data_dir — audit X4) unless injected.
 Community detection (label propagation) remains TODO (round-5 ①);
 GraphRecall lives in retrieval/pipeline.py.
 """
@@ -161,8 +161,8 @@ New fact: "{statement}" (valid from {valid_at})
 Return JSON: {{"duplicate_of": null, "contradicts": ["<edge id>", ...]}}"""
 
 
-def _fmt(ep: Episode) -> str:
-    return f"[{ep.timestamp.isoformat()}] {ep.role}: {ep.content}"
+def _fmt(episode: Episode) -> str:
+    return f"[{episode.timestamp.isoformat()}] {episode.role}: {episode.content}"
 
 
 class ZepGraphOrganizer(Organizer):
@@ -180,7 +180,7 @@ class ZepGraphOrganizer(Organizer):
         self._recent: list[Episode] = []
 
     def _graph(self, ctx: OrganizerContext) -> SqliteGraphStore:
-        g = self._own_graph or getattr(ctx, "graph", None)
+        g = self._own_graph or getattr(ctx, "graph_store", None)
         if g is None:  # standalone use without AgenticMemory wiring
             g = self._own_graph = SqliteGraphStore(":memory:")
         self._resolved_graph = g
@@ -194,7 +194,7 @@ class ZepGraphOrganizer(Organizer):
     # -- entity resolution ----------------------------------------------------
 
     def _resolve_entity(
-        self, ent: dict, ep: Episode, ctx: OrganizerContext, ops: list[MemoryOp]
+        self, ent: dict, episode: Episode, ctx: OrganizerContext, ops: list[MemoryOp]
     ) -> str:
         """Three-stage resolution (Graphiti): embedding candidates ->
         exact normalized name -> LLM judgment. Returns the node id."""
@@ -203,37 +203,39 @@ class ZepGraphOrganizer(Organizer):
         summary = str(ent.get("summary", ""))
         etype = str(ent.get("type", "Entity"))
 
-        emb = ctx.embedder.embed([name])[0]  # name only, as upstream
+        query_embedding = ctx.embedder.embed([name])[0]  # name only, as upstream
         hits = [
             (i, s)
-            for i, s in ctx.vec.search(emb, k=5, memory_type="entities", namespace=ctx.namespace)
+            for i, s in ctx.vector_store.search(
+                query_embedding, k=5, memory_type="entities", namespace=ctx.namespace
+            )
             if s >= self.candidate_threshold
         ]
-        cands = ctx.doc.get_items([i for i, _ in hits], "entities")
+        candidates = ctx.doc_store.get_items([i for i, _ in hits], "entities")
 
         norm = name.casefold()
-        for c in cands:  # deterministic exact-name match
+        for c in candidates:  # deterministic exact-name match
             if str(c.get("name", "")).casefold() == norm:
                 return c["id"]
 
-        if cands and ctx.llm is not None:  # LLM dedup judgment
+        if candidates and ctx.llm is not None:  # LLM dedup judgment
             verdict = ctx.llm.call(
                 "extract",
                 RESOLVE_PROMPT.format(
                     name=name,
                     summary=summary,
-                    content=ep.content,
+                    content=episode.content,
                     candidates="\n".join(
                         f'- id={c["id"]} name="{c.get("name", "")}" '
                         f'summary="{c.get("summary", "")}"'
-                        for c in cands
+                        for c in candidates
                     ),
                 ),
                 RESOLVE_SCHEMA,
                 required_keys=("duplicate_id",),
             )
             dup = (verdict or {}).get("duplicate_id")
-            by_id = {c["id"]: c for c in cands}
+            by_id = {c["id"]: c for c in candidates}
             if dup in by_id:
                 # merge: refresh canonical name/summary (paper: "generates
                 # an updated name and summary" — round-5 ⑦)
@@ -266,7 +268,7 @@ class ZepGraphOrganizer(Organizer):
                     "name": name,
                     "summary": summary,
                     "entity_type": etype,
-                    "source_episode_ids": [ep.id],
+                    "source_episode_ids": [episode.id],
                     "embedding_text": name,
                 },
             )
@@ -275,9 +277,9 @@ class ZepGraphOrganizer(Organizer):
 
     # -- hook -----------------------------------------------------------------
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         previous = "\n".join(_fmt(e) for e in self._recent) or "(none)"
-        self._recent = (self._recent + [ep])[-self.context_window :]
+        self._recent = (self._recent + [episode])[-self.context_window :]
 
         if ctx.llm is None:
             logger.warning("zep_graph: no LLM — skipping graph construction (explicit skip)")
@@ -286,7 +288,7 @@ class ZepGraphOrganizer(Organizer):
 
         extracted = ctx.llm.call(
             "extract",
-            ENTITY_PROMPT.format(previous=previous, content=ep.content),
+            ENTITY_PROMPT.format(previous=previous, content=episode.content),
             ENTITY_SCHEMA,
             required_keys=("entities",),
         )
@@ -297,19 +299,21 @@ class ZepGraphOrganizer(Organizer):
         name_to_id: dict[str, str] = {}
         for ent in extracted["entities"][:10]:
             if str(ent.get("name", "")).strip():
-                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(ent, ep, ctx, ops)
+                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(
+                    ent, episode, ctx, ops
+                )
 
         if len(name_to_id) < 2:
             return ops
 
-        ref_time = ep.timestamp.isoformat()
+        ref_time = episode.timestamp.isoformat()
         facts = ctx.llm.call(
             "extract",
             FACT_PROMPT.format(
                 names=list(name_to_id),
                 ref_time=ref_time,
                 previous=previous,
-                content=ep.content,
+                content=episode.content,
             ),
             FACT_SCHEMA,
             required_keys=("facts",),
@@ -351,20 +355,20 @@ class ZepGraphOrganizer(Organizer):
                 if dup in by_id:
                     # duplicate: reuse the edge, append provenance (upstream
                     # episodes.append) — no new edge (round-5 ⑤)
-                    items = ctx.doc.get_items([dup], "facts")
+                    items = ctx.doc_store.get_items([dup], "facts")
                     prov = list((items[0] if items else {}).get("source_episode_ids", []))
                     ops.append(
                         MemoryOp(
                             op=OpType.UPDATE,
                             target_type="facts",
                             target_id=dup,
-                            payload={"source_episode_ids": prov + [ep.id]},
+                            payload={"source_episode_ids": prov + [episode.id]},
                         )
                     )
                     continue
 
-                for eid in verdict.get("contradicts", []):
-                    e = by_id.get(eid)
+                for contradicted_id in verdict.get("contradicts", []):
+                    e = by_id.get(contradicted_id)
                     if e is None:
                         continue
                     # temporal-overlap guard (upstream
@@ -375,12 +379,12 @@ class ZepGraphOrganizer(Organizer):
                         continue
                     if invalid_at and e.get("valid_at") and str(invalid_at) <= str(e["valid_at"]):
                         continue
-                    graph.invalidate_edge(eid, valid_at)
+                    graph.invalidate_edge(contradicted_id, valid_at)
                     ops.append(
                         MemoryOp(
                             op=OpType.INVALIDATE,
                             target_type="facts",
-                            target_id=eid,
+                            target_id=contradicted_id,
                             payload={"t_invalid": valid_at},
                         )
                     )
@@ -402,7 +406,7 @@ class ZepGraphOrganizer(Organizer):
                 "predicate": f.get("predicate"),
                 "object": f.get("object"),
                 "valid_at": valid_at,
-                "source_episode_ids": [ep.id],
+                "source_episode_ids": [episode.id],
                 "embedding_text": statement,
             }
             if invalid_at:

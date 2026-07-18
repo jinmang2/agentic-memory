@@ -110,8 +110,8 @@ class MemoryOSOrganizer(Organizer):
 
     # -- heat ------------------------------------------------------------------
 
-    def _segment_heat(self, seg_id: str) -> float:
-        h = self._heat.get(seg_id)
+    def _segment_heat(self, segment_id: str) -> float:
+        h = self._heat.get(segment_id)
         if not h:
             return 0.0
         hours = (datetime.now(timezone.utc) - h["last_access"]).total_seconds() / 3600
@@ -133,10 +133,10 @@ class MemoryOSOrganizer(Organizer):
                 h["last_access"] = now
         return []
 
-    def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         if self.input_mode == "episodes":
             return []  # input is fed via on_memory_event only (spec §3)
-        self._stm.append(ep)
+        self._stm.append(episode)
         if len(self._stm) < self.stm_capacity:
             return []
         batch, self._stm = self._stm, []
@@ -173,13 +173,13 @@ class MemoryOSOrganizer(Organizer):
         thing). Without this, evicted/invalidated pages leak index
         entries and a later supersedes can make _retire re-emit a stale
         INVALIDATE for a page that's already gone (review finding)."""
-        for uid in self._page_sources.pop(page_id, ()):
-            pages = self._unit_pages.get(uid)
+        for unit_id in self._page_sources.pop(page_id, ()):
+            pages = self._unit_pages.get(unit_id)
             if pages is None:
                 continue
             pages.discard(page_id)
             if not pages:
-                self._unit_pages.pop(uid, None)
+                self._unit_pages.pop(unit_id, None)
 
     def _retire(self, superseded: set[str]) -> list[MemoryOp]:
         """Clean up derived state for absorbed units: drop them from STM;
@@ -187,20 +187,20 @@ class MemoryOSOrganizer(Organizer):
         (partial absorption leaves the page intact, spec §3)."""
         ops: list[MemoryOp] = []
         self._stm = [e for e in self._stm if e.id not in superseded]
-        for uid in superseded:
-            for pid in self._unit_pages.pop(uid, set()):
-                srcs = self._page_sources.get(pid)
-                if srcs is None:
+        for unit_id in superseded:
+            for page_id in self._unit_pages.pop(unit_id, set()):
+                source_ids = self._page_sources.get(page_id)
+                if source_ids is None:
                     continue
-                srcs.discard(uid)
-                if not srcs:
-                    self._drop_page_index(pid)
-                    self._heat.pop(pid, None)
+                source_ids.discard(unit_id)
+                if not source_ids:
+                    self._drop_page_index(page_id)
+                    self._heat.pop(page_id, None)
                     ops.append(
                         MemoryOp(
                             op=OpType.INVALIDATE,
                             target_type="pages",
-                            target_id=pid,
+                            target_id=page_id,
                             payload={"reason": "sources_superseded"},
                         )
                     )
@@ -222,14 +222,14 @@ class MemoryOSOrganizer(Organizer):
     def _evict_to_mtm(self, batch: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
         if ctx.llm is None:
             logger.warning("memoryos: no LLM — storing mechanical segment (explicit degradation)")
-            seg_id = new_id()
+            segment_id = new_id()
             content = "\n".join(e.content for e in batch)
-            self._heat[seg_id] = {
+            self._heat[segment_id] = {
                 "n_visit": 0,
                 "length": len(batch),
                 "last_access": datetime.now(timezone.utc),
             }
-            return [self._segment_add(seg_id, "batch", content, batch, ctx)]
+            return [self._segment_add(segment_id, "batch", content, batch, ctx)]
 
         indexed = "\n".join(f"[{i}] {e.content}" for i, e in enumerate(batch))
         result = ctx.llm.call(
@@ -248,48 +248,50 @@ class MemoryOSOrganizer(Organizer):
 
         ops: list[MemoryOp] = []
         for g in groups:
-            idxs = [
+            indexes = [
                 i
                 for i in g.get("message_indexes", [])
                 if isinstance(i, int) and 0 <= i < len(batch)
             ] or list(range(len(batch)))
-            members = [batch[i] for i in idxs]
+            members = [batch[i] for i in indexes]
             summary = str(g.get("summary", ""))
             keywords = [str(k).lower() for k in g.get("keywords") or []]
-            emb = ctx.embedder.embed([summary])[0]
+            embedding = ctx.embedder.embed([summary])[0]
             # F_score = cos + Jaccard(keywords), threshold 0.6 — paper eq.(3);
             # round-5 P0 restored the Jaccard term (cosine-only was stricter
             # and fragmented segments). Consider top-3 candidates.
-            hits = ctx.vec.search(emb, k=3, memory_type="pages", namespace=ctx.namespace)
+            hits = ctx.vector_store.search(
+                embedding, k=3, memory_type="pages", namespace=ctx.namespace
+            )
             best_id, best_f = None, 0.0
-            for hid, cos in hits:
-                if hid not in self._heat:
+            for hit_id, cos in hits:
+                if hit_id not in self._heat:
                     continue
-                cand = ctx.doc.get_items([hid], "pages")
-                cand_kw = set((cand[0] if cand else {}).get("keywords", []))
-                union = cand_kw | set(keywords)
-                jac = (len(cand_kw & set(keywords)) / len(union)) if union else 0.0
+                candidate = ctx.doc_store.get_items([hit_id], "pages")
+                candidate_keywords = set((candidate[0] if candidate else {}).get("keywords", []))
+                union = candidate_keywords | set(keywords)
+                jac = (len(candidate_keywords & set(keywords)) / len(union)) if union else 0.0
                 f = cos + jac
                 if f > best_f:
-                    best_id, best_f = hid, f
+                    best_id, best_f = hit_id, f
 
             if best_id is not None and best_f >= self.similarity_threshold:
-                seg_id = best_id  # merge into existing segment (F_score >= θ)
-                existing = ctx.doc.get_items([seg_id], "pages")
+                segment_id = best_id  # merge into existing segment (F_score >= θ)
+                existing = ctx.doc_store.get_items([segment_id], "pages")
                 old = existing[0] if existing else {}
                 content = (old.get("content", "") + "\n" + summary).strip()
                 merged_kw = sorted(set(old.get("keywords", [])) | set(keywords))
-                h = self._heat[seg_id]
+                h = self._heat[segment_id]
                 h["length"] += len(members)
                 h["last_access"] = datetime.now(timezone.utc)
                 for e in members:
-                    self._unit_pages.setdefault(e.id, set()).add(seg_id)
-                self._page_sources.setdefault(seg_id, set()).update(e.id for e in members)
+                    self._unit_pages.setdefault(e.id, set()).add(segment_id)
+                self._page_sources.setdefault(segment_id, set()).update(e.id for e in members)
                 ops.append(
                     MemoryOp(
                         op=OpType.UPDATE,
                         target_type="pages",
-                        target_id=seg_id,
+                        target_id=segment_id,
                         payload={
                             "content": content,
                             "keywords": merged_kw,
@@ -300,8 +302,8 @@ class MemoryOSOrganizer(Organizer):
                     )
                 )
             else:
-                seg_id = new_id()
-                self._heat[seg_id] = {
+                segment_id = new_id()
+                self._heat[segment_id] = {
                     "n_visit": 0,
                     "length": len(members),
                     "last_access": datetime.now(timezone.utc),
@@ -309,7 +311,7 @@ class MemoryOSOrganizer(Organizer):
                 content = summary
                 ops.append(
                     self._segment_add(
-                        seg_id,
+                        segment_id,
                         str(g.get("topic", "?")),
                         content,
                         members,
@@ -319,8 +321,8 @@ class MemoryOSOrganizer(Organizer):
                 )
 
             # heat >= τ -> promote to LPM (profile/knowledge), then reset
-            if self._segment_heat(seg_id) >= self.heat_threshold:
-                ops.extend(self._promote_to_lpm(seg_id, content, members, ctx))
+            if self._segment_heat(segment_id) >= self.heat_threshold:
+                ops.extend(self._promote_to_lpm(segment_id, content, members, ctx))
 
         # Lowest-heat eviction when MTM over capacity (paper-faithful; the
         # code's access-count LFU needs read-path visit feedback we lack —
@@ -341,7 +343,7 @@ class MemoryOSOrganizer(Organizer):
 
     def _segment_add(
         self,
-        seg_id: str,
+        segment_id: str,
         topic: str,
         content: str,
         members: list[Episode],
@@ -349,14 +351,14 @@ class MemoryOSOrganizer(Organizer):
         keywords: list[str] | None = None,
     ) -> MemoryOp:
         for e in members:
-            self._unit_pages.setdefault(e.id, set()).add(seg_id)
-        self._page_sources.setdefault(seg_id, set()).update(e.id for e in members)
+            self._unit_pages.setdefault(e.id, set()).add(segment_id)
+        self._page_sources.setdefault(segment_id, set()).update(e.id for e in members)
         return MemoryOp(
             op=OpType.ADD,
             target_type="pages",
-            target_id=seg_id,
+            target_id=segment_id,
             payload={
-                "id": seg_id,
+                "id": segment_id,
                 "topic": topic,
                 "content": content,
                 "keywords": sorted(set(keywords or [])),
@@ -366,7 +368,7 @@ class MemoryOSOrganizer(Organizer):
         )
 
     def _promote_to_lpm(
-        self, seg_id: str, content: str, members: list[Episode], ctx: OrganizerContext
+        self, segment_id: str, content: str, members: list[Episode], ctx: OrganizerContext
     ) -> list[MemoryOp]:
         result = ctx.llm.call(
             "distill",
@@ -378,21 +380,21 @@ class MemoryOSOrganizer(Organizer):
             # upstream keeps heat intact on failure so the segment gets
             # another promotion attempt (round-5 N5: we used to reset first)
             return []
-        h = self._heat[seg_id]
+        h = self._heat[segment_id]
         h["n_visit"], h["length"] = 0, 0  # paper: reset after analysis
         ops = []
         for fact in result["profile_facts"]:
             fact = str(fact).strip()
             if not fact or fact.lower() in ("none", "n/a"):
                 continue  # upstream long_term.py rejects empty/none knowledge
-            fid = new_id()
+            fact_id = new_id()
             ops.append(
                 MemoryOp(
                     op=OpType.ADD,
                     target_type="semantic",
-                    target_id=fid,
+                    target_id=fact_id,
                     payload={
-                        "id": fid,
+                        "id": fact_id,
                         "content": fact,
                         "kind": "profile",
                         "source_episode_ids": [e.id for e in members],

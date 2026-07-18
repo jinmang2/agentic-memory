@@ -65,7 +65,7 @@ class BenchRun:
                     stamps = {
                         "profile": mem.config.profile,
                         "embedder": mem.embedder.name,
-                        "vector_store": type(mem.vec).__name__,
+                        "vector_store": type(mem.vector_store).__name__,
                         "organizers": [o.name for o in mem.organizers],
                         "structured_drops": (dict(mem.structured.drops) if mem.structured else {}),
                     }

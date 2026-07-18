@@ -11,8 +11,8 @@ def make_mem():
 
 
 def put_indexed(mem, item_id, memory_type, data, text=None):
-    mem.doc.put_item(item_id, memory_type, "t", {"id": item_id, **data})
-    mem.vec.add(item_id, mem.embedder.embed([text or data.get("content", "")])[0],
+    mem.doc_store.put_item(item_id, memory_type, "t", {"id": item_id, **data})
+    mem.vector_store.add(item_id, mem.embedder.embed([text or data.get("content", "")])[0],
                 memory_type=memory_type, namespace="t")
 
 
@@ -52,7 +52,7 @@ def test_nemori_top_r_source_attachment():
     try:
         raw = Episode(content="I paid exactly 2,340,000 won for flights",
                       namespace="t")
-        mem.doc.add_episode(raw)
+        mem.doc_store.add_episode(raw)
         put_indexed(mem, "ep1", "episodes",
                     {"title": "Flight booking",
                      "content": "The user booked flights to Paris.",

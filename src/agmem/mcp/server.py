@@ -42,8 +42,8 @@ def add_memory(content: str, role: str = "user", timestamp: str | None = None) -
     from datetime import datetime
 
     ts = datetime.fromisoformat(timestamp) if timestamp else None
-    ep = get_mem().add_message(content, role=role, timestamp=ts)
-    return json.dumps({"stored": True, "episode_id": ep.id})
+    episode = get_mem().add_message(content, role=role, timestamp=ts)
+    return json.dumps({"stored": True, "episode_id": episode.id})
 
 
 @mcp.tool()
