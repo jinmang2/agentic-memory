@@ -10,19 +10,24 @@ the new episode's content, and only the prediction gap — checked against
 the RAW segment, not the narrative — is distilled into atomic semantic
 facts (the free-energy "surprise" principle).
 
+Fidelity presets (``fidelity="v1"|"v4"|"upstream"``, see ``NEMORI_PRESETS``)
+pick a segmenter (per-message vs batch), an episode-merge stance
+(``EpisodeMerger`` on/off, and if on, whose thresholds — the paper's or
+upstream's), and a semantic-integration strategy (plain append,
+``DedupIdReuseIntegrator``, or ``ThreeWayIntegrator``). Any explicit kwarg
+overrides the preset's value for that field; the no-arg default is "v1".
+
 Deviations from the reference system (github.com/nemori-ai/nemori):
-- boundary detection is per-message (the paper v1 formalism, f_theta over
-  the buffer) rather than the batched BATCH_SEGMENTATION_PROMPT the
-  rewritten repo uses for backfill throughput
+- boundary detection defaults to per-message (the paper v1 formalism,
+  f_theta over the buffer) rather than the batched
+  BATCH_SEGMENTATION_PROMPT the rewritten repo uses for backfill
+  throughput — ``fidelity="v4"``/``"upstream"`` switch to the batch
+  segmenter
 - episode merging (paper-v4 §3.2.3 module, ON by default in the repo's
-  eval) is implemented as ``EpisodeMerger`` but wired in OFF by default
-  (``episode_merge="off"``) — a minimal kwarg surface pending Task 10's
-  preset resolution; LoCoMo's multi-day session gaps mean upstream's
-  >1h-gap merge ban would block most merges anyway
+  eval) is implemented as ``EpisodeMerger``; LoCoMo's multi-day session
+  gaps mean upstream's >1h-gap merge ban would block most merges anyway
 - v4 semantic new/merge/conflict integration (§3.3.3) is implemented as
-  ``ThreeWayIntegrator`` (plus ``DedupIdReuseIntegrator`` for PR#19) but
-  wired in OFF by default (``semantic_integration="append"``) — same
-  minimal-kwarg posture as ``episode_merge``, pending Task 10
+  ``ThreeWayIntegrator`` (plus ``DedupIdReuseIntegrator`` for PR#19)
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
 - if episode generation fails we emit a mechanical episode instead of
   losing the segment (title = first words, narrative = raw messages);
@@ -46,6 +51,7 @@ from agmem.organizers.nemori_stages import (
     AppendIntegrator,
     BOUNDARY_PROMPT,
     BOUNDARY_SCHEMA,
+    BatchPartitioner,
     DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
@@ -54,6 +60,49 @@ from agmem.organizers.nemori_stages import (
 )
 
 logger = logging.getLogger("agmem.organizers.nemori")
+
+# Preset-value provenance is per-source, never mixed within a preset
+# (docs/research/write-path-lifecycle-survey.md §5):
+# - v1: paper v1 formalism (per-message boundary, no merge, plain append)
+# - v4: paper values (window=20, K_e=5, K_m=5, tau=0.70, no time-gap ban)
+# - upstream: github.com/nemori-ai/nemori code values (batch 20/2/25,
+#   chunk 80, similarity 0.85, top-5, >1h gap ban)
+NEMORI_PRESETS: dict[str, dict] = {
+    "v1": dict(
+        segmenter="per_message",
+        episode_merge="off",
+        semantic_integration="append",
+        consolidation="off",
+        boundary_confidence=0.7,
+        buffer_min=2,
+        buffer_max=25,
+    ),
+    "v4": dict(
+        segmenter="batch",
+        window=20,
+        episode_merge="llm",
+        merge_top_k=5,
+        merge_similarity=None,
+        merge_time_gap_hours=None,
+        semantic_integration="llm3way",
+        integrate_top_k=5,
+        integrate_tau=0.70,
+        consolidation="off",
+    ),
+    "upstream": dict(
+        segmenter="batch",
+        window=20,
+        buffer_min=2,
+        buffer_max=25,
+        chunk_max=80,
+        episode_merge="llm",
+        merge_top_k=5,
+        merge_similarity=0.85,
+        merge_time_gap_hours=1.0,
+        semantic_integration="append",
+        consolidation="off",
+    ),
+}
 
 EPISODE_SCHEMA = {
     "type": "object",
@@ -184,38 +233,92 @@ class NemoriOrganizer(Organizer):
 
     def __init__(
         self,
-        buffer_min: int = 2,
-        buffer_max: int = 25,
-        boundary_confidence: float = 0.7,
-        semantic_top_k: int = 10,
-        episode_merge: str = "off",
-        merge_top_k: int = 5,
+        fidelity: str | None = None,
+        segmenter: str | None = None,
+        episode_merge: str | None = None,
+        semantic_integration: str | None = None,
+        consolidation: str | None = None,
+        # Kept as named kwargs (rather than folded into **kw) for backward
+        # compatibility with the pre-Task-10 positional/keyword surface.
+        buffer_min: int | None = None,
+        buffer_max: int | None = None,
+        boundary_confidence: float | None = None,
+        semantic_top_k: int | None = None,
+        window: int | None = None,
+        chunk_max: int | None = None,
+        merge_top_k: int | None = None,
         merge_similarity: float | None = None,
         merge_time_gap_hours: float | None = None,
-        semantic_integration: str = "append",
-        dedup_threshold: float = 0.85,
-        integrate_top_k: int = 5,
-        integrate_tau: float = 0.70,
+        dedup_threshold: float | None = None,
+        integrate_top_k: int | None = None,
+        integrate_tau: float | None = None,
     ) -> None:
-        self.buffer_min = buffer_min  # repo config buffer_size_min=2 (not in paper v1)
-        self.buffer_max = buffer_max  # paper beta_max=25
-        self.boundary_confidence = boundary_confidence  # paper sigma_boundary=0.7
-        self.semantic_top_k = semantic_top_k  # repo config search_top_k_semantic=10
+        # Preset resolution: an explicit (non-None) kwarg always wins over
+        # the preset's value for that field. fidelity=None (or unknown) ==
+        # "v1" so the no-arg constructor stays config/test compatible.
+        params = dict(NEMORI_PRESETS.get(fidelity, NEMORI_PRESETS["v1"]))
+        overrides = dict(
+            segmenter=segmenter,
+            episode_merge=episode_merge,
+            semantic_integration=semantic_integration,
+            consolidation=consolidation,
+            buffer_min=buffer_min,
+            buffer_max=buffer_max,
+            boundary_confidence=boundary_confidence,
+            semantic_top_k=semantic_top_k,
+            window=window,
+            chunk_max=chunk_max,
+            merge_top_k=merge_top_k,
+            merge_similarity=merge_similarity,
+            merge_time_gap_hours=merge_time_gap_hours,
+            dedup_threshold=dedup_threshold,
+            integrate_top_k=integrate_top_k,
+            integrate_tau=integrate_tau,
+        )
+        params.update({k: v for k, v in overrides.items() if v is not None})
+
         self.buffer: list[Episode] = []
-        self._segmenter = PerMessageBoundary(boundary_confidence, buffer_min, buffer_max)
-        # Minimal kwarg surface — Task 10 replaces this with preset resolution.
+        if params["segmenter"] == "batch":
+            self._segmenter = BatchPartitioner(
+                window=params.get("window", 20),
+                buffer_min=params.get("buffer_min", 2),
+                chunk_max=params.get("chunk_max", 80),
+            )
+        else:
+            self._segmenter = PerMessageBoundary(
+                confidence=params.get("boundary_confidence", 0.7),
+                buffer_min=params.get("buffer_min", 2),
+                buffer_max=params.get("buffer_max", 25),
+            )
         self._merger = (
-            EpisodeMerger(merge_top_k, merge_similarity, merge_time_gap_hours)
-            if episode_merge == "llm"
+            EpisodeMerger(
+                top_k=params.get("merge_top_k", 5),
+                similarity=params.get("merge_similarity"),
+                time_gap_hours=params.get("merge_time_gap_hours"),
+            )
+            if params["episode_merge"] == "llm"
             else None
         )
-        # Minimal kwarg surface — Task 10 replaces this with preset resolution.
-        if semantic_integration == "dedup":
-            self._integrator = DedupIdReuseIntegrator(dedup_threshold)
-        elif semantic_integration == "three_way":
-            self._integrator = ThreeWayIntegrator(integrate_top_k, integrate_tau)
-        else:
-            self._integrator = AppendIntegrator()
+        self._integrator = {
+            "append": AppendIntegrator,
+            "dedup": lambda: DedupIdReuseIntegrator(threshold=params.get("dedup_threshold", 0.85)),
+            "llm3way": lambda: ThreeWayIntegrator(
+                top_k=params.get("integrate_top_k", 5),
+                tau=params.get("integrate_tau", 0.70),
+            ),
+        }[params["semantic_integration"]]()
+        # consolidation kwarg is recorded in params (default "off") but the
+        # branch itself is Task 11's scope — SemanticOfflineConsolidator
+        # doesn't exist yet, so this stays hard-pinned to None. The mix
+        # test's `_consolidator is not None` assertion activates in Task 11.
+        self._consolidator = None
+        self.fidelity = fidelity
+        self.params = params  # stats/stamping surface
+
+        self.buffer_min = params.get("buffer_min", 2)  # repo config buffer_size_min=2
+        self.buffer_max = params.get("buffer_max", 25)  # paper beta_max=25
+        self.boundary_confidence = params.get("boundary_confidence", 0.7)  # paper sigma=0.7
+        self.semantic_top_k = params.get("semantic_top_k", 10)  # repo search_top_k_semantic=10
         self._warned_no_llm = False
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:

@@ -6,10 +6,48 @@ from agmem.core.types import Episode, new_id
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.nemori_stages import (
+    AppendIntegrator,
     BatchPartitioner,
     DedupIdReuseIntegrator,
+    EpisodeMerger,
+    PerMessageBoundary,
     ThreeWayIntegrator,
 )
+
+
+def test_presets_resolve_to_stages():
+    v1 = NemoriOrganizer(fidelity="v1")
+    assert isinstance(v1._segmenter, PerMessageBoundary)
+    assert v1._merger is None and isinstance(v1._integrator, AppendIntegrator)
+
+    v4 = NemoriOrganizer(fidelity="v4")
+    assert isinstance(v4._segmenter, BatchPartitioner) and v4._segmenter.window == 20
+    assert (
+        v4._merger.top_k == 5
+        and v4._merger.similarity is None
+        and v4._merger.time_gap_hours is None
+    )
+    assert (
+        isinstance(v4._integrator, ThreeWayIntegrator)
+        and v4._integrator.tau == 0.70
+        and v4._integrator.top_k == 5
+    )
+
+    up = NemoriOrganizer(fidelity="upstream")
+    assert isinstance(up._segmenter, BatchPartitioner)
+    assert up._merger.similarity == 0.85 and up._merger.time_gap_hours == 1.0
+    assert isinstance(up._integrator, AppendIntegrator)
+
+    # 명시 인자가 프리셋을 이긴다 (mixing)
+    mix = NemoriOrganizer(
+        fidelity="v4", semantic_integration="append", consolidation="semantic_offline"
+    )
+    assert isinstance(mix._integrator, AppendIntegrator)
+    # _consolidator 활성화(SemanticOfflineConsolidator)는 Task 11 스코프.
+    # assert mix._consolidator is not None
+
+    # 무인자 = v1 동치 (기존 config 호환)
+    assert isinstance(NemoriOrganizer()._segmenter, PerMessageBoundary)
 
 
 def make_mem(organizer, llm):
