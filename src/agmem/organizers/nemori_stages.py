@@ -570,24 +570,39 @@ class SemanticOfflineConsolidator:
         if end <= cursor:
             return []
         ops: list[MemoryOp] = []
+        # Ops accumulated so far in *this* run() are only applied to doc/vec
+        # after run() returns (facade appends the whole batch atomically), so
+        # a fact merged-away earlier in this same pass still looks perfectly
+        # live to ctx.doc/ctx.vec for every later iteration of this loop.
+        # Without tracking that here, two mutually-similar facts queued since
+        # the cursor would each independently earn their own merge head
+        # against the not-yet-updated store — both survive live, and since
+        # MERGE-typed outputs are never re-judged (op.op is not OpType.ADD
+        # above), the duplication becomes permanent (review Critical-1).
+        superseded_this_pass: set[str] = set()
         for _seq, op in ctx.doc.ops_since(cursor, target_type="semantic"):
             if op.op is not OpType.ADD or op.payload.get("consolidated"):
                 continue
             if op.actor != organizer.name:
                 continue  # only re-judge this organizer's own semantic ADDs
+            if op.target_id in superseded_this_pass:
+                continue  # already absorbed by another merge earlier in this pass
             current = ctx.doc.get_items([op.target_id], "semantic")
             if not current or current[0].get("invalid_at"):
                 continue  # already superseded by this pass or inline
             fact = str(current[0].get("content", ""))
-            # exclude_ids drops the fact's own item from ThreeWay's candidate
-            # search — otherwise vec.search reliably returns it as its own
-            # top-1 neighbor (Task 9 signature change, spec §2.3 note).
+            # exclude_ids drops the fact's own item, plus everything already
+            # superseded earlier in this pass, from ThreeWay's candidate
+            # search — otherwise vec.search reliably returns the fact's own
+            # top-1 neighbor (Task 9 signature change, spec §2.3 note), and
+            # would also happily re-offer an already-absorbed duplicate as a
+            # fresh merge candidate.
             out = self._inner.integrate(
                 fact,
                 current[0].get("episode_id", ""),
                 current[0].get("source_episode_ids", []),
                 ctx,
-                exclude_ids={op.target_id},
+                exclude_ids={op.target_id} | superseded_this_pass,
             )
             if not any(o.op is OpType.INVALIDATE for o in out):
                 continue  # decision=new / no candidates -> keep the stored original
@@ -603,6 +618,9 @@ class SemanticOfflineConsolidator:
                     target_id=op.target_id,
                     payload={"reason": "consolidated", "superseded_by": head_id},
                 )
+            )
+            superseded_this_pass.update(
+                o.target_id for o in out if o.op is OpType.INVALIDATE
             )
             ops.extend(out)
         ops.append(organizer.cursor_op(end))

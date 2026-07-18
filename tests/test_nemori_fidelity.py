@@ -326,3 +326,54 @@ def test_semantic_offline_consolidate_merges_and_advances_cursor():
         assert len(llm.calls) == calls_before
     finally:
         mem.close()
+
+
+def test_semantic_offline_consolidate_dedupes_mutual_duplicates_within_one_pass():
+    """Review task-11-review.md Critical-1: within a single run() pass, two
+    facts queued since the cursor that are mutual near-duplicates of each
+    other must not each independently earn their own merge head. Because
+    ops accumulated during the pass are only applied to doc/vec *after*
+    run() returns, judging fact B against the still-live (not-yet-
+    invalidated) store lets B "merge" against A a second time, producing
+    two live consolidated heads instead of one. A second "merge" LLM
+    response is queued specifically so a regression (no within-pass
+    tracking) would consume it and produce a 2nd merge head; the fix must
+    skip fact B once fact A's merge has already superseded it, without
+    even reaching the LLM for B."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "decision": "merge",
+                    "target_indexes": [0],
+                    "statement": "User's dog is named Max",
+                },
+                # Would be consumed by fact B's independent merge judgment if
+                # the within-pass "already superseded" guard is missing.
+                {
+                    "decision": "merge",
+                    "target_indexes": [0],
+                    "statement": "User's dog is named Max (duplicate head)",
+                },
+            ]
+        }
+    )
+    org = NemoriOrganizer(fidelity="v1", consolidation="semantic_offline")
+    mem = make_mem(org, llm)
+    try:
+        for i, f in enumerate(["The user's dog is named Max", "The user's dog is called Max"]):
+            mem._apply_ops(
+                AppendIntegrator().integrate(f, f"ep{i}", [f"m{i}"], mem._ctx),
+                actor="nemori",
+            )
+        n = mem.consolidate()
+        assert n > 0
+        ops = mem.log.tail(20)
+        merges = [o for o in ops if o.op == OpType.MERGE and o.target_type == "semantic"]
+        # Exactly one merge head must survive -- fact B is absorbed by fact A's
+        # merge within this same pass, not independently re-merged.
+        assert len(merges) == 1
+        # Fact B must be skipped before ever reaching the LLM.
+        assert len(llm.calls) == 1
+    finally:
+        mem.close()
