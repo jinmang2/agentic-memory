@@ -68,6 +68,10 @@ class Organizer:
   INVALIDATE]를 같은 배치로 반환하고, 퍼사드는 MERGE op에서 같은 배치의 동일-타입
   INVALIDATE 대상 id들을 `supersedes`로 채운다. consumer는 이벤트 하나로 "새 단위 +
   무엇이 사라졌는지"를 함께 안다 (옛 page 미정리 문제의 해결).
+  **구현 확정(2026-07-18)**: 퍼사드가 배치를 스캔해 INVALIDATE 대상을 역추론하는 것이
+  아니라, `supersedes`는 **발생 organizer가 MERGE op의 `payload["supersedes"]`에 명시
+  전달**하고 `_propagate_events`는 그 값을 그대로 읽기만 한다
+  (`EpisodeMerger`/`ThreeWayIntegrator`가 실제로 이렇게 채워 반환) — 배치 추론이 아니다.
 - 전달 순서: 배치 내 op 순서 → organizer 리스트 순서. **chained 구성은 distiller를
   manager보다 앞에 배치**해야 warm_start/flush에서도 이벤트가 인과 순서로 흐른다
   (flush()의 flush_buffer 순회도 리스트 순서).
@@ -141,9 +145,11 @@ NemoriOrganizer(
 | 통합 | append | llm3way: τ=0.70 필터 → top-K_m=5 → δ∈{new,merge,conflict} (P_con) | append (참고: PR#19 dedup = top-1, 0.85, ID 재사용 — 병합 전이므로 프리셋 밖 옵션) |
 | 유예 | off | off | off |
 
-- 잔여 미해결: **>1h 갭 병합 금지의 소재** (논문/코드 부재 주장이 모두 기각됨) — 구현 첫
-  단계에서 upstream `llm/prompts.py`를 직접 확인해 `llm` 병합 프롬프트에 반영하고 이 표를
-  갱신한다.
+- **>1h 갭 병합 금지의 소재 확정**(2026-07-18, 구현 1단계 완료): upstream 코드
+  `llm/prompts.py`의 `MERGE_DECISION` 프롬프트에만 존재한다 — v4 논문 §3.2.3에는 갭
+  제약이 없다. 따라서 `upstream` 프리셋만 이 규칙을 주입하고(`merge_time_gap_hours=1.0`),
+  `v4` 프리셋은 갭 제약 없이 병합한다(`merge_time_gap_hours=None`, 위 표와 일치).
+  `nemori.py::NEMORI_PRESETS`, `nemori_stages.py::TIME_GAP_RULE`에 반영됨.
 - 현행 구현 = `v1` 프리셋과 동치가 되도록 마이그레이션 (기존 실험 config `nemori` 불변).
 
 ### 2.3 내부 구조
@@ -229,7 +235,8 @@ NemoriOrganizer(
 
 ## 6. 열린 질문 / 후속
 
-1. >1h 갭 병합 금지 소재 확정 (구현 1단계에서 upstream prompts.py 확인 후 §2.2 갱신).
+1. ~~>1h 갭 병합 금지 소재 확정~~ — **해소** (2026-07-18, §2.2: upstream `prompts.py`의
+   `MERGE_DECISION`에만 존재, `upstream` 프리셋에서만 적용).
 2. consolidate 자동 트리거(유휴 디바운스/스케줄러) — 효과 검증 후.
 3. 나머지 6개 organizer의 새 훅 활용 (예: ACE lazy refine→consolidate, Zep community
    refresh→consolidate) — 점진 이관.

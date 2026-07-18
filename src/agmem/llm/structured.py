@@ -80,8 +80,15 @@ class StructuredCaller:
         required_keys: tuple[str, ...] = (),
         max_retries: int = 1,
         system: str = "You must respond with a single JSON object and nothing else.",
+        phase: str | None = None,
     ) -> dict[str, Any] | None:
-        """Return the validated dict, or None after an explicit drop."""
+        """Return the validated dict, or None after an explicit drop.
+
+        ``phase`` tags the budget entry as ``f"{role}/{phase}"`` (docs/04
+        lifecycle phases — segment/narrate/merge/integrate/consolidate) so
+        methodology cost comparisons can break down spend by write-path
+        stage instead of just by role.
+        """
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},
@@ -89,11 +96,12 @@ class StructuredCaller:
         overrides: dict[str, Any] = {}
         if self.use_guided_json:
             overrides["extra_body"] = {"guided_json": schema}
+        budget_key = f"{role}/{phase}" if phase else None
 
         last_output = ""
         for attempt in range(max_retries + 1):
             try:
-                last_output = self.client.chat(role, messages, **overrides)
+                last_output = self.client.chat(role, messages, budget_key=budget_key, **overrides)
             except Exception as exc:  # endpoint/transport error
                 logger.warning("LLM call failed (role=%s, attempt=%s): %s", role, attempt, exc)
                 if self.use_guided_json and attempt == 0:

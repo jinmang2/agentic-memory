@@ -43,7 +43,13 @@ class LLMClient:
     def has_role(self, role: str) -> bool:
         return role in self.roles
 
-    def chat(self, role: str, messages: list[dict[str, str]], **overrides: Any) -> str:
+    def chat(
+        self,
+        role: str,
+        messages: list[dict[str, str]],
+        budget_key: str | None = None,
+        **overrides: Any,
+    ) -> str:
         if role not in self.roles:
             raise KeyError(
                 f"no LLM configured for role '{role}' " f"(configured: {sorted(self.roles)})"
@@ -59,17 +65,21 @@ class LLMClient:
         if cfg.extra_body:
             kwargs["extra_body"] = cfg.extra_body
         kwargs.update(overrides)
+        # budget_key is a named param, not part of **overrides, so it never
+        # reaches the OpenAI API payload above.
 
         start = time.perf_counter()
         try:
             resp = client.chat.completions.create(**kwargs)
         except Exception:
-            self.budget.record(role, 0, 0, (time.perf_counter() - start) * 1000, error=True)
+            self.budget.record(
+                budget_key or role, 0, 0, (time.perf_counter() - start) * 1000, error=True
+            )
             raise
         latency_ms = (time.perf_counter() - start) * 1000
         usage = getattr(resp, "usage", None)
         self.budget.record(
-            role,
+            budget_key or role,
             getattr(usage, "prompt_tokens", 0) or 0,
             getattr(usage, "completion_tokens", 0) or 0,
             latency_ms,

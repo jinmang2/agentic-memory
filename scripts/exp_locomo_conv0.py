@@ -22,6 +22,9 @@ from agmem.bench import locomo
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
+from agmem.organizers.amem import AMemOrganizer
+from agmem.organizers.memoryos import MemoryOSOrganizer
+from agmem.organizers.nemori import NemoriOrganizer
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
 OUT = Path(__file__).resolve().parent.parent / "results"
@@ -68,6 +71,11 @@ def run(
     slot_overrides: dict[str, str] | None = None,
     lexical_types: tuple[str, ...] = ("episodic",),
 ) -> dict:
+    # 0-arg factory callables (lambdas in ``known``) build a fresh organizer
+    # instance per run() call — reusing one instance across configs/runs
+    # would leak Nemori's message buffer and MemoryOS/A-Mem's episode-id
+    # reverse-index state between them.
+    organizers = [o() if callable(o) and not isinstance(o, str) else o for o in organizers]
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}",
         organizers=organizers,
@@ -81,7 +89,13 @@ def run(
     )
     try:
         t0 = time.perf_counter()
-        n_turns = locomo.ingest(mem, sample, max_sessions=max_sessions)
+        n_turns = locomo.ingest(mem, sample, max_sessions=max_sessions)  # ingest() flushes
+        # Deferred management pass (spec §1.4): any organizer wired for
+        # semantic_offline consolidation (nemori_mix) gets its explicit
+        # post-ingest consolidate() call, right after the flush inside
+        # ingest() settles the tail buffer.
+        if any(getattr(o, "_consolidator", None) for o in mem.organizers):
+            mem.consolidate()
         ingest_s = time.perf_counter() - t0
 
         questions = locomo.select_questions(sample, max_sessions=max_sessions, limit=limit)
@@ -100,7 +114,9 @@ def run(
 
         result = {
             "config": config_name,
-            "organizers": organizers,
+            # organizers is now resolved to instances (factory callables are
+            # consumed above) — record names for JSON-safety, not objects.
+            "organizers": [getattr(o, "name", type(o).__name__) for o in organizers],
             "memory_types": list(memory_types),
             "n_turns": n_turns,
             "ingest_seconds": round(ingest_s, 1),
@@ -120,6 +136,14 @@ def run(
                 "vector_store": type(mem.vec).__name__,
                 "max_sessions": max_sessions,
                 "n_questions": len(questions),
+                "organizer_detail": [
+                    {
+                        "name": getattr(o, "name", type(o).__name__),
+                        "fidelity": getattr(o, "fidelity", None),
+                        "params": getattr(o, "params", None),
+                    }
+                    for o in mem.organizers
+                ],
             },
             "records": res["records"],
         }
@@ -180,6 +204,61 @@ def main() -> None:
             False,
             NEMORI_TEMPS,
             NEMORI_STORE,
+        ),
+        # Lifecycle-redesign fidelity/chained configs (spec §5 validation
+        # table) — organizers are 0-arg factory callables so run() gets a
+        # fresh instance per invocation (buffer/reverse-index isolation).
+        "nemori_v4": (
+            [lambda: NemoriOrganizer(fidelity="v4")],
+            ("episodes", "semantic"),
+            {"episodes": 10, "semantic": 20},
+            False,
+            NEMORI_TEMPS,
+            NEMORI_STORE,
+        ),
+        "nemori_upstream": (
+            [lambda: NemoriOrganizer(fidelity="upstream")],
+            ("episodes", "semantic"),
+            {"episodes": 10, "semantic": 20},
+            False,
+            NEMORI_TEMPS,
+            NEMORI_STORE,
+        ),
+        # batch+merge use v4, integration stays inline-append but deferred
+        # semantic_offline consolidation runs after ingest — inline vs
+        # deferred integration ablation axis (spec §2.3 note).
+        "nemori_mix": (
+            [
+                lambda: NemoriOrganizer(
+                    fidelity="v4",
+                    semantic_integration="append",
+                    consolidation="semantic_offline",
+                )
+            ],
+            ("episodes", "semantic"),
+            {"episodes": 10, "semantic": 20},
+            False,
+            NEMORI_TEMPS,
+            NEMORI_STORE,
+        ),
+        "nemori_memoryos": (
+            [
+                lambda: NemoriOrganizer(fidelity="v1"),
+                lambda: MemoryOSOrganizer(input="episodes"),
+            ],
+            ("episodes", "semantic", "pages"),
+            {"episodes": 10, "semantic": 20, "pages": 10},
+            False,
+            NEMORI_TEMPS,
+            None,
+        ),
+        "nemori_amem": (
+            [lambda: NemoriOrganizer(fidelity="v1"), lambda: AMemOrganizer(input="episodes")],
+            ("episodes", "semantic", "notes"),
+            {"episodes": 10, "semantic": 20, "notes": 10},
+            False,
+            NEMORI_TEMPS,
+            None,
         ),
         "amem_mixed": (
             ["amem"],

@@ -376,6 +376,7 @@ class NemoriOrganizer(Organizer):
             EPISODE_PROMPT.format(segment=seg_text),
             EPISODE_SCHEMA,
             required_keys=("title", "narrative"),
+            phase="narrate",
         )
         fallback_title = " ".join(segment[0].content.split()[:8])
         fallback_ts = segment[0].meta.get("date") or segment[0].timestamp.isoformat()

@@ -40,6 +40,11 @@ Nemori의 대답이 **두 원리**:
 | 검색 | episodic k=10 + semantic m=2k=20, r=2 원문 첨부 | 동일 (Table 6에 r=2 명문화) |
 | LoCoMo 결과 | 0.744 (gpt-4o-mini) | **80.8** vs Full-Context 80.6 (gpt-4.1-mini), temporal +15.9% over A-MEM |
 
+**>1h 갭 병합 금지의 소재 확정(2026-07-18)**: v4 논문 §3.2.3에는 갭 제약이 없다 —
+`>1h` 텍스트는 upstream `llm/prompts.py`의 `MERGE_DECISION` 프롬프트에서만 나온다.
+따라서 우리 `EpisodeMerger`는 이 규칙을 `fidelity="upstream"` 프리셋에서만 주입하고
+(`fidelity="v4"`는 갭 제약 없음), 이 편차는 §5에서 제거됐다(스위치로 해소).
+
 **어블레이션 반전 (논문 최대 약점)**: v1은 semantic 제거 시 -3.9점(episodic 제거가
 더 아픔) ↔ v4는 semantic 제거 시 **-25.1%**(semantic이 더 중요). 같은 방법·같은
 데이터셋인데 버전 간 핵심 결론이 뒤집힘. v4의 semantic 기여 주장은 §3.3.3 통합
@@ -152,12 +157,19 @@ buffer에 추가
 
 ## 5. upstream과의 잔여 편차 (전부 의도적·문서화됨)
 
+**2026-07-18 라이프사이클 재설계(Task 10-14)로 배치분할/에피소드 병합/semantic 3-way
+통합 세 편차는 해소됐다** — `NemoriOrganizer(fidelity="v4"|"upstream", ...)` 스위치가
+`BatchPartitioner`(배치 분할) + `EpisodeMerger`(v4 §3.2.3 / upstream 0.85·1h-gap) +
+`ThreeWayIntegrator`(v4 §3.3.3 new/merge/conflict)를 각각 선택한다(`docs/superpowers/
+specs/2026-07-18-nemori-lifecycle-redesign-design.md` §2). 실험 config `nemori_v4` /
+`nemori_upstream` / `nemori_mix`(인라인 append + 유예 `semantic_offline` consolidate
+ablation)가 이 세 조합을 각각 재현한다. 기본 실험 config `nemori`는 fidelity 미지정
+= `v1` 프리셋으로 여전히 이전 동작과 동치(회귀 없음) — 아래 표는 `v1` 기준의 잔여
+편차만 남긴다.
+
 | 편차 | 이유 | 영향 |
 |---|---|---|
-| **per-message 경계 (v1) vs 배치 분할 (현행 리포/v4)** | 우리는 스트리밍 조직화가 설계 목표(온라인 에이전트 메모리). v1 형식화가 이에 부합 | LLM 콜 ~N배 비용. v4의 "w 민감도 ±1%" 근거상 품질 차이는 작을 것 |
-| **에피소드 병합 없음** | LoCoMo는 세션 간격이 수일~수개월 → upstream의 >1h 금지 게이트가 세션 간 병합을 대부분 차단. LongMemEval 단계에서 구현 예정 | 동일 세션 내 쪼개진 사건 미통합 → 에피소드 수 증가(비용), 점수 영향 제한적 |
-| **semantic 통합(v4 §3.3.3) 없음 — append-only** | 현행 리포 main도 append-only(dedup PR #19 미병합). v4 재현 시 최우선 구현 대상 | 장기 인제스트에서 중복 fact 누적 → v4의 semantic 기여 재현 불가 |
-| confidence 0.7 게이트 | v1 σ_boundary. 현행 리포에 대응물 없음(배치라서) | v1 재현 관점에선 정확 |
+| confidence 0.7 게이트 (v1 기본 config 한정) | v1 σ_boundary. `fidelity="v4"/"upstream"`로 전환하면 배치 분할이라 무관 | v1 재현 관점에선 정확 |
 | 저장소: MemoryOp 로그 + SQLite/FTS5 (vs PostgreSQL+Qdrant) | 프로젝트 공통 인프라 | 없음 (검색은 동일하게 dense) |
 | 평가: token-F1/BLEU (vs LLM judge) | judge LLM 비용 회피 + 결정론 (docs/06) | 논문 절대치와 비교 불가, 방법 간 상대 비교 유효 |
 | 임베더/LLM: e5-small / Qwen3-0.6B (vs text-embedding-3-small 또는 gemini / gpt-4.1-mini) | 로컬 재현 (docs/07) | §6 캐비앗 참조 |

@@ -92,6 +92,7 @@ class PerMessageBoundary:
             ),
             BOUNDARY_SCHEMA,
             required_keys=("boundary", "confidence"),
+            phase="segment",
         )
         if verdict is None:
             return [], buffer  # drop counted upstream; treat as no boundary
@@ -179,6 +180,7 @@ class BatchPartitioner:
                 BATCH_SEGMENT_PROMPT.format(messages=indexed),
                 BATCH_SEGMENT_SCHEMA,
                 required_keys=("episodes",),
+                phase="segment",
             )
             groups = (result or {}).get("episodes") or []
             covered: set[int] = set()
@@ -324,6 +326,7 @@ class EpisodeMerger:
             ),
             MERGE_DECISION_SCHEMA,
             required_keys=("decision",),
+            phase="merge",
         )
         if not verdict or verdict.get("decision") != "merge":
             return None
@@ -343,6 +346,7 @@ class EpisodeMerger:
             ),
             MERGE_CONTENT_SCHEMA,
             required_keys=("title", "narrative"),
+            phase="merge",
         )
         if merged is None:
             return None  # 병합 실패 → 호출측이 일반 ADD로 저장 (세그먼트 불손실)
@@ -480,7 +484,11 @@ class ThreeWayIntegrator:
         source_ids: list[str],
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
+        phase: str = "integrate",
     ) -> list[MemoryOp]:
+        # ``phase`` distinguishes the same integration code running inline
+        # (llm3way, phase="integrate") from SemanticOfflineConsolidator's
+        # deferred pass over the shared implementation (phase="consolidate").
         emb = ctx.embedder.embed([fact])[0]
         hits = [
             (hid, s)
@@ -503,6 +511,7 @@ class ThreeWayIntegrator:
             INTEGRATE_PROMPT.format(fact=fact, existing=existing),
             INTEGRATE_SCHEMA,
             required_keys=("decision",),
+            phase=phase,
         )
         if verdict is None or verdict.get("decision") == "new":
             return add
@@ -603,6 +612,7 @@ class SemanticOfflineConsolidator:
                 current[0].get("source_episode_ids", []),
                 ctx,
                 exclude_ids={op.target_id} | superseded_this_pass,
+                phase="consolidate",
             )
             if not any(o.op is OpType.INVALIDATE for o in out):
                 continue  # decision=new / no candidates -> keep the stored original
