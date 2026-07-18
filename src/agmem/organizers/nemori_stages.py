@@ -12,7 +12,8 @@ organizer becomes a thin composition of independently testable stages.
 
 from __future__ import annotations
 
-from agmem.core.types import Episode
+from agmem.core.ops import MemoryOp, OpType
+from agmem.core.types import Episode, new_id
 from agmem.organizers.base import OrganizerContext
 
 BOUNDARY_SCHEMA = {
@@ -194,3 +195,183 @@ class BatchPartitioner:
             if leftover:  # LLM 실패/누락 인덱스 — 세그먼트를 잃지 않는다 (프로젝트 원칙)
                 segments.append(leftover)
         return segments
+
+
+MERGE_DECISION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["merge", "new"]},
+        "target_index": {"type": "integer"},
+    },
+    "required": ["decision"],
+}
+# EPISODE_SCHEMA look-alike, defined here instead of nemori.py to avoid a
+# circular import (EpisodeMerger needs it, nemori.py imports EpisodeMerger).
+MERGE_CONTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "narrative": {"type": "string"},
+        "timestamp": {"type": "string"},
+    },
+    "required": ["title", "narrative"],
+}
+
+# Condensed from upstream MERGE_DECISION; the >1h ban line is injected only
+# when time_gap_hours is set (upstream preset) — the v4 paper has no time
+# constraint (verified 2026-07-18, docs/research/write-path-lifecycle-survey.md §1.2).
+MERGE_DECISION_PROMPT = """A new episodic memory arrived. Decide whether it
+describes the SAME event as one of the candidate episodes and should be
+merged into it, or is a distinct episode.
+Merge only when they cover the same underlying event or activity thread.
+{time_gap_rule}
+New episode:
+title: {title}
+narrative: {narrative}
+timestamp: {timestamp}
+
+Candidates (indexed):
+{candidates}
+
+Return JSON: {{"decision": "merge" or "new", "target_index": <candidate index, only when merging>}}"""
+
+TIME_GAP_RULE = (
+    "Do NOT merge if they are separated by significant time gaps "
+    "(>{hours} hour(s)) between their timestamps."
+)
+
+# Condensed from upstream MERGE_CONTENT: synthesize without duplication,
+# chronological flow, keep participants/decisions/emotions/outcomes,
+# earliest timestamp wins.
+MERGE_CONTENT_PROMPT = """Merge these two episodic memories about the same event
+into ONE. Synthesize without duplication, preserve chronological event flow,
+retain all critical details (participants, decisions, emotions, outcomes).
+Use the EARLIEST timestamp.
+
+Episode A:
+title: {title_a}
+narrative: {narrative_a}
+timestamp: {ts_a}
+
+Episode B:
+title: {title_b}
+narrative: {narrative_b}
+timestamp: {ts_b}
+
+Return JSON: {{"title": "...", "narrative": "...", "timestamp": "ISO"}}"""
+
+
+class EpisodeMerger:
+    """v4 §3.2.3 Episode-level merging / upstream merger.py.
+
+    Called right after episode narration (v4 Alg.1 order — narrate, then
+    merge-or-new, then predict-calibrate). Looks up nearby episodes in the
+    vector index, asks the LLM whether the new episode is the same event as
+    one of them, and if so asks a second LLM call to synthesize the merged
+    title/narrative. Any failure along the way (no candidates, LLM declines,
+    LLM call fails) returns ``None`` so the caller falls back to a plain ADD
+    — a segment is never lost to a merge attempt.
+    """
+
+    def __init__(
+        self,
+        top_k: int = 5,
+        similarity: float | None = None,
+        time_gap_hours: float | None = None,
+    ) -> None:
+        self.top_k = top_k
+        self.similarity = similarity  # upstream 0.85; v4 paper doesn't specify one (None)
+        self.time_gap_hours = time_gap_hours  # upstream 1.0; v4 paper has no gap ban (None)
+
+    def merge_or_none(
+        self,
+        title: str,
+        narrative: str,
+        ep_ts: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+    ) -> tuple[list[MemoryOp], str, str, str] | None:
+        emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
+        hits = ctx.vec.search(
+            emb, k=self.top_k, memory_type="episodes", namespace=ctx.namespace
+        )
+        if self.similarity is not None:
+            hits = [(hid, s) for hid, s in hits if s >= self.similarity]
+        cands = [
+            c
+            for c in ctx.doc.get_items([h[0] for h in hits], "episodes")
+            if not c.get("invalid_at")
+        ]
+        if not cands:
+            return None
+        gap_rule = (
+            TIME_GAP_RULE.format(hours=self.time_gap_hours) if self.time_gap_hours else ""
+        )
+        cand_text = "\n".join(
+            f"[{i}] title: {c.get('title', '')} | timestamp: {c.get('timestamp', '')}\n"
+            f"    narrative: {c.get('content', '')}"
+            for i, c in enumerate(cands)
+        )
+        verdict = ctx.llm.call(
+            "distill",
+            MERGE_DECISION_PROMPT.format(
+                time_gap_rule=gap_rule,
+                title=title,
+                narrative=narrative,
+                timestamp=ep_ts,
+                candidates=cand_text,
+            ),
+            MERGE_DECISION_SCHEMA,
+            required_keys=("decision",),
+        )
+        if not verdict or verdict.get("decision") != "merge":
+            return None
+        idx = verdict.get("target_index")
+        if not isinstance(idx, int) or not 0 <= idx < len(cands):
+            return None
+        old = cands[idx]
+        merged = ctx.llm.call(
+            "distill",
+            MERGE_CONTENT_PROMPT.format(
+                title_a=old.get("title", ""),
+                narrative_a=old.get("content", ""),
+                ts_a=old.get("timestamp", ""),
+                title_b=title,
+                narrative_b=narrative,
+                ts_b=ep_ts,
+            ),
+            MERGE_CONTENT_SCHEMA,
+            required_keys=("title", "narrative"),
+        )
+        if merged is None:
+            return None  # 병합 실패 → 호출측이 일반 ADD로 저장 (세그먼트 불손실)
+        merged_id = new_id()
+        m_title = str(merged.get("title", "")).strip() or title
+        m_narr = str(merged.get("narrative", "")).strip() or narrative
+        m_ts = str(merged.get("timestamp", "")).strip() or min(
+            str(old.get("timestamp", "")), str(ep_ts)
+        )
+        ops = [
+            MemoryOp(
+                op=OpType.MERGE,
+                target_type="episodes",
+                target_id=merged_id,
+                payload={
+                    "id": merged_id,
+                    "title": m_title,
+                    "content": m_narr,
+                    "timestamp": m_ts,
+                    "supersedes": [old["id"]],
+                    "source_episode_ids": list(old.get("source_episode_ids", []))
+                    + list(source_ids),
+                    "embedding_text": f"{m_title}\n{m_narr}",
+                },
+            ),
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="episodes",
+                target_id=old["id"],
+                payload={"reason": "merged", "superseded_by": merged_id},
+            ),
+        ]
+        return ops, merged_id, m_title, m_narr

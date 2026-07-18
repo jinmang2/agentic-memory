@@ -14,9 +14,11 @@ Deviations from the reference system (github.com/nemori-ai/nemori):
 - boundary detection is per-message (the paper v1 formalism, f_theta over
   the buffer) rather than the batched BATCH_SEGMENTATION_PROMPT the
   rewritten repo uses for backfill throughput
-- no episode merging (paper-v4 §3.2.3 module, ON by default in the repo's
-  eval; deferred to the LongMemEval stage — LoCoMo's multi-day session
-  gaps mean upstream's >1h-gap merge ban blocks most merges anyway)
+- episode merging (paper-v4 §3.2.3 module, ON by default in the repo's
+  eval) is implemented as ``EpisodeMerger`` but wired in OFF by default
+  (``episode_merge="off"``) — a minimal kwarg surface pending Task 10's
+  preset resolution; LoCoMo's multi-day session gaps mean upstream's
+  >1h-gap merge ban would block most merges anyway
 - no v4 semantic new/merge/conflict integration (§3.3.3): semantic store
   is append-only, as in the repo's pre-v4 main path
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
@@ -41,6 +43,7 @@ from agmem.organizers.base import Organizer, OrganizerContext
 from agmem.organizers.nemori_stages import (
     BOUNDARY_PROMPT,
     BOUNDARY_SCHEMA,
+    EpisodeMerger,
     PerMessageBoundary,
     _fmt,
 )
@@ -180,6 +183,10 @@ class NemoriOrganizer(Organizer):
         buffer_max: int = 25,
         boundary_confidence: float = 0.7,
         semantic_top_k: int = 10,
+        episode_merge: str = "off",
+        merge_top_k: int = 5,
+        merge_similarity: float | None = None,
+        merge_time_gap_hours: float | None = None,
     ) -> None:
         self.buffer_min = buffer_min  # repo config buffer_size_min=2 (not in paper v1)
         self.buffer_max = buffer_max  # paper beta_max=25
@@ -187,6 +194,12 @@ class NemoriOrganizer(Organizer):
         self.semantic_top_k = semantic_top_k  # repo config search_top_k_semantic=10
         self.buffer: list[Episode] = []
         self._segmenter = PerMessageBoundary(boundary_confidence, buffer_min, buffer_max)
+        # Minimal kwarg surface — Task 10 replaces this with preset resolution.
+        self._merger = (
+            EpisodeMerger(merge_top_k, merge_similarity, merge_time_gap_hours)
+            if episode_merge == "llm"
+            else None
+        )
         self._warned_no_llm = False
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -244,23 +257,38 @@ class NemoriOrganizer(Organizer):
             narrative = str(gen.get("narrative", "")).strip() or seg_text
             ep_ts = str(gen.get("timestamp", "")).strip() or fallback_ts
 
-        episode_id = new_id()
         source_ids = [e.id for e in segment]
-        ops = [
-            MemoryOp(
-                op=OpType.ADD,
-                target_type="episodes",
-                target_id=episode_id,
-                payload={
-                    "id": episode_id,
-                    "title": title,
-                    "content": narrative,
-                    "timestamp": ep_ts,
-                    "source_episode_ids": source_ids,
-                    "embedding_text": f"{title}\n{narrative}",
-                },
-            )
-        ]
+        episode_id = new_id()
+
+        # 2. v4 §3.2.3 / upstream merger: is this the same event as a nearby
+        # episode? Runs right after narration and before predict-calibrate
+        # (v4 Alg.1 order). None (no merger, no candidates, LLM decline/fail)
+        # keeps the plain ADD path so a segment is never lost to a merge
+        # attempt.
+        merged = (
+            self._merger.merge_or_none(title, narrative, ep_ts, source_ids, ctx)
+            if self._merger
+            else None
+        )
+        if merged is not None:
+            merge_ops, episode_id, title, narrative = merged
+            ops = list(merge_ops)  # ADD 대신 MERGE+INVALIDATE
+        else:
+            ops = [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodes",
+                    target_id=episode_id,
+                    payload={
+                        "id": episode_id,
+                        "title": title,
+                        "content": narrative,
+                        "timestamp": ep_ts,
+                        "source_episode_ids": source_ids,
+                        "embedding_text": f"{title}\n{narrative}",
+                    },
+                )
+            ]
         # upstream original_messages format for calibration: role: text,
         # no timestamps (time/date is banned from semantic statements anyway)
         plain_text = "\n".join(f"{e.role}: {e.content}" for e in segment)
