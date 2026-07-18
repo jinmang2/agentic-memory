@@ -38,17 +38,14 @@ import logging
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.nemori_stages import (
+    BOUNDARY_PROMPT,
+    BOUNDARY_SCHEMA,
+    PerMessageBoundary,
+    _fmt,
+)
 
 logger = logging.getLogger("agmem.organizers.nemori")
-
-BOUNDARY_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "boundary": {"type": "boolean"},
-        "confidence": {"type": "number"},
-    },
-    "required": ["boundary", "confidence"],
-}
 
 EPISODE_SCHEMA = {
     "type": "object",
@@ -71,30 +68,6 @@ CALIBRATE_SCHEMA = {
     "properties": {"facts": {"type": "array", "items": {"type": "string"}}},
     "required": ["facts"],
 }
-
-# Condensed from Nemori's segmentation criteria (BATCH_SEGMENTATION_PROMPT),
-# recast for our online per-message mode (the paper v1 formalism).
-BOUNDARY_PROMPT = """Decide whether the NEWEST message starts a new episode
-(a different topic, intent, or time context) relative to the buffered
-conversation. Be strict — high sensitivity to shifts. Signals:
-- topic change (a different subject or activity)
-- intent transition (e.g. information request to decision, discussion to
-  casual chat)
-- temporal markers ("earlier", "before", "by the way", "oh right", "also",
-  or a gap of 30+ minutes between message timestamps)
-- structural signals (explicit transition phrases like "changing topics",
-  "speaking of which", "quick question", or a concluding statement
-  indicating the current topic is finished)
-- content relatedness below ~30%
-Episodes work best with 2-15 messages. When in doubt, split.
-
-Buffered conversation:
-{buffer}
-
-Newest message:
-{message}
-
-Return JSON: {{"boundary": true/false, "confidence": 0.0-1.0}}"""
 
 # Condensed from EPISODE_GENERATION_PROMPT; temporal anchoring is mandatory,
 # including upstream's parenthetical conversion style and its example.
@@ -198,11 +171,6 @@ Return JSON: {{"facts": ["...", ...]}}"""
 )
 
 
-def _fmt(ep: Episode) -> str:
-    ts = ep.meta.get("date") or ep.timestamp.isoformat()
-    return f"[{ts}] {ep.role}: {ep.content}"
-
-
 class NemoriOrganizer(Organizer):
     name = "nemori"
 
@@ -218,6 +186,7 @@ class NemoriOrganizer(Organizer):
         self.boundary_confidence = boundary_confidence  # paper sigma_boundary=0.7
         self.semantic_top_k = semantic_top_k  # repo config search_top_k_semantic=10
         self.buffer: list[Episode] = []
+        self._segmenter = PerMessageBoundary(boundary_confidence, buffer_min, buffer_max)
         self._warned_no_llm = False
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -232,31 +201,11 @@ class NemoriOrganizer(Organizer):
             return []
 
         self.buffer.append(ep)
-        if len(self.buffer) < self.buffer_min:
-            return []
-        if len(self.buffer) >= self.buffer_max:
-            segment, self.buffer = self.buffer, []
-            return self._flush_segment(segment, ctx)
-
-        verdict = ctx.llm.call(
-            "extract",
-            BOUNDARY_PROMPT.format(
-                buffer="\n".join(_fmt(e) for e in self.buffer[:-1]),
-                message=_fmt(self.buffer[-1]),
-            ),
-            BOUNDARY_SCHEMA,
-            required_keys=("boundary", "confidence"),
-        )
-        if verdict is None:
-            return []  # drop counted upstream; treat as no boundary
-        if (
-            verdict.get("boundary")
-            and float(verdict.get("confidence", 0.0)) >= self.boundary_confidence
-        ):
-            # The newest message opened the next topic: it stays buffered.
-            segment, self.buffer = self.buffer[:-1], [self.buffer[-1]]
-            return self._flush_segment(segment, ctx)
-        return []
+        segments, self.buffer = self._segmenter.push(self.buffer, ctx)
+        ops: list[MemoryOp] = []
+        for seg in segments:
+            ops.extend(self._flush_segment(seg, ctx))
+        return ops
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
         ops = super().warm_start(corpus, ctx)
@@ -267,8 +216,11 @@ class NemoriOrganizer(Organizer):
         """Flush whatever remains in the buffer (end-of-ingestion hook)."""
         if not self.buffer or ctx.llm is None:
             return []
-        segment, self.buffer = self.buffer, []
-        return self._flush_segment(segment, ctx)
+        segments, self.buffer = self._segmenter.flush(self.buffer, ctx), []
+        ops: list[MemoryOp] = []
+        for seg in segments:
+            ops.extend(self._flush_segment(seg, ctx))
+        return ops
 
     # ---- internals ----------------------------------------------------------
 
