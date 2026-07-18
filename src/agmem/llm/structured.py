@@ -67,7 +67,9 @@ class StructuredCaller:
             self.drops[role] = self.drops.get(role, 0) + 1
         logger.warning(
             "structured output dropped (role=%s, total_drops=%s): %.120s ...",
-            role, self.drops.get(role), last_output,
+            role,
+            self.drops.get(role),
+            last_output,
         )
 
     def call(
@@ -80,8 +82,10 @@ class StructuredCaller:
         system: str = "You must respond with a single JSON object and nothing else.",
     ) -> dict[str, Any] | None:
         """Return the validated dict, or None after an explicit drop."""
-        messages = [{"role": "system", "content": system},
-                    {"role": "user", "content": prompt}]
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
         overrides: dict[str, Any] = {}
         if self.use_guided_json:
             overrides["extra_body"] = {"guided_json": schema}
@@ -100,10 +104,14 @@ class StructuredCaller:
             if parsed is not None and all(k in parsed for k in required_keys):
                 return parsed
             messages.append({"role": "assistant", "content": last_output})
-            messages.append({
-                "role": "user",
-                "content": ("Your previous reply was not valid JSON with keys "
-                            f"{list(required_keys)}. Respond again with ONLY the JSON object."),
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Your previous reply was not valid JSON with keys "
+                        f"{list(required_keys)}. Respond again with ONLY the JSON object."
+                    ),
+                }
+            )
         self._drop(role, prompt, last_output)
         return None

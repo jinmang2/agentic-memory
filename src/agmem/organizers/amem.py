@@ -51,9 +51,10 @@ EVOLVE_SCHEMA = {
     "type": "object",
     "properties": {
         "should_evolve": {"type": "boolean"},
-        "actions": {"type": "array",
-                    "items": {"type": "string",
-                              "enum": ["strengthen", "update_neighbor"]}},
+        "actions": {
+            "type": "array",
+            "items": {"type": "string", "enum": ["strengthen", "update_neighbor"]},
+        },
         "connections": {"type": "array", "items": {"type": "string"}},
         "new_note_tags": {"type": "array", "items": {"type": "string"}},
         "neighbor_updates": {
@@ -128,26 +129,35 @@ class AMemOrganizer(Organizer):
         talk_time = ep.meta.get("date") or ep.timestamp.isoformat()
         if ctx.llm is None:
             logger.warning("amem: no LLM configured — storing bare note (explicit degradation)")
-            note = Note(content=ep.content, namespace=ctx.namespace,
-                        source_episode_ids=[ep.id], timestamp=ep.timestamp)
+            note = Note(
+                content=ep.content,
+                namespace=ctx.namespace,
+                source_episode_ids=[ep.id],
+                timestamp=ep.timestamp,
+            )
             return [self._add_op(note, talk_time)]
 
         # 1. note construction (Ps1) — one LLM call
-        meta = ctx.llm.call("extract", NOTE_PROMPT.format(content=ep.content),
-                            NOTE_SCHEMA, required_keys=("keywords", "context", "tags"))
+        meta = ctx.llm.call(
+            "extract",
+            NOTE_PROMPT.format(content=ep.content),
+            NOTE_SCHEMA,
+            required_keys=("keywords", "context", "tags"),
+        )
         note = Note(
-            content=ep.content, namespace=ctx.namespace,
+            content=ep.content,
+            namespace=ctx.namespace,
             keywords=[str(x) for x in (meta or {}).get("keywords", [])],
             tags=[str(x) for x in (meta or {}).get("tags", [])],
             context=str((meta or {}).get("context", "")),
-            source_episode_ids=[ep.id], timestamp=ep.timestamp,
+            source_episode_ids=[ep.id],
+            timestamp=ep.timestamp,
         )
         ops = [self._add_op(note, talk_time)]
 
         # 2. neighbor retrieval — embedding includes metadata (A-Mem finding)
         note_emb = ctx.embedder.embed([note.embedding_text()])[0]
-        hits = ctx.vec.search(note_emb, k=self.top_k,
-                              memory_type="notes", namespace=ctx.namespace)
+        hits = ctx.vec.search(note_emb, k=self.top_k, memory_type="notes", namespace=ctx.namespace)
         neighbor_ids = [h[0] for h in hits]
         neighbors = ctx.doc.get_items(neighbor_ids, "notes")
         if not neighbors:
@@ -162,10 +172,15 @@ class AMemOrganizer(Organizer):
         )
         evo = ctx.llm.call(
             "distill",
-            EVOLVE_PROMPT.format(content=note.content, context=note.context,
-                                 keywords=note.keywords, tags=note.tags,
-                                 neighbors=neighbor_text),
-            EVOLVE_SCHEMA, required_keys=("should_evolve", "connections"),
+            EVOLVE_PROMPT.format(
+                content=note.content,
+                context=note.context,
+                keywords=note.keywords,
+                tags=note.tags,
+                neighbors=neighbor_text,
+            ),
+            EVOLVE_SCHEMA,
+            required_keys=("should_evolve", "connections"),
         )
         if evo is None:
             return ops  # drop counted; note itself is still stored
@@ -184,21 +199,36 @@ class AMemOrganizer(Organizer):
             connections = [c for c in evo.get("connections", []) if c in valid_ids]
             if connections:
                 # unidirectional, as upstream: only the new note gains links
-                ops.append(MemoryOp(op=OpType.LINK, target_type="notes",
-                                    target_id=note.id,
-                                    payload={"links": connections}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.LINK,
+                        target_type="notes",
+                        target_id=note.id,
+                        payload={"links": connections},
+                    )
+                )
             # the evolution call may refine the NEW note's tags
             # (upstream tags_to_update — audit P1-5)
             new_tags = [str(t) for t in evo.get("new_note_tags") or []]
             if new_tags and new_tags != note.tags:
-                refreshed_self = Note(content=note.content, id=note.id,
-                                      keywords=note.keywords, tags=new_tags,
-                                      context=note.context)
-                ops.append(MemoryOp(
-                    op=OpType.UPDATE, target_type="notes", target_id=note.id,
-                    payload={"tags": new_tags,
-                             "embedding_text": refreshed_self.embedding_text()},
-                ))
+                refreshed_self = Note(
+                    content=note.content,
+                    id=note.id,
+                    keywords=note.keywords,
+                    tags=new_tags,
+                    context=note.context,
+                )
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="notes",
+                        target_id=note.id,
+                        payload={
+                            "tags": new_tags,
+                            "embedding_text": refreshed_self.embedding_text(),
+                        },
+                    )
+                )
 
         if "update_neighbor" in actions:
             by_id = {n["id"]: n for n in neighbors}
@@ -210,22 +240,38 @@ class AMemOrganizer(Organizer):
                 new_context = str(upd.get("new_context") or old.get("context", ""))
                 new_tags = [str(t) for t in (upd.get("new_tags") or old.get("tags", []))]
                 refreshed = Note(
-                    content=old.get("content", ""), id=nid, context=new_context,
-                    tags=new_tags, keywords=old.get("keywords", []),
+                    content=old.get("content", ""),
+                    id=nid,
+                    context=new_context,
+                    tags=new_tags,
+                    keywords=old.get("keywords", []),
                 )
-                ops.append(MemoryOp(
-                    op=OpType.UPDATE, target_type="notes", target_id=nid,
-                    payload={"context": new_context, "tags": new_tags,
-                             "embedding_text": refreshed.embedding_text()},
-                ))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="notes",
+                        target_id=nid,
+                        payload={
+                            "context": new_context,
+                            "tags": new_tags,
+                            "embedding_text": refreshed.embedding_text(),
+                        },
+                    )
+                )
         return ops
 
     def _add_op(self, note: Note, talk_time: str) -> MemoryOp:
         return MemoryOp(
-            op=OpType.ADD, target_type="notes", target_id=note.id,
+            op=OpType.ADD,
+            target_type="notes",
+            target_id=note.id,
             payload={
-                "id": note.id, "content": note.content, "keywords": note.keywords,
-                "tags": note.tags, "context": note.context, "links": note.links,
+                "id": note.id,
+                "content": note.content,
+                "keywords": note.keywords,
+                "tags": note.tags,
+                "context": note.context,
+                "links": note.links,
                 "source_episode_ids": note.source_episode_ids,
                 "timestamp": talk_time,
                 "embedding_text": note.embedding_text(),

@@ -25,15 +25,15 @@ def utcnow() -> datetime:
 
 # Memory type tags used for namespacing collections and filtering search.
 MEMORY_TYPES = (
-    "episodic",   # raw episodes (always present)
-    "episodes",   # Nemori derived narrative episodes
-    "notes",      # A-Mem zettelkasten notes
-    "pages",      # MemoryOS dialogue pages / segments
-    "semantic",   # Nemori distilled facts, MemoryOS knowledge
-    "entities",   # Zep-graph entity nodes
-    "facts",      # Zep-graph bi-temporal edges
-    "strategies", # ReasoningBank items, G-Memory insights
-    "playbook",   # ACE bullets
+    "episodic",  # raw episodes (always present)
+    "episodes",  # Nemori derived narrative episodes
+    "notes",  # A-Mem zettelkasten notes
+    "pages",  # MemoryOS dialogue pages / segments
+    "semantic",  # Nemori distilled facts, MemoryOS knowledge
+    "entities",  # Zep-graph entity nodes
+    "facts",  # Zep-graph bi-temporal edges
+    "strategies",  # ReasoningBank items, G-Memory insights
+    "playbook",  # ACE bullets
 )
 
 
@@ -68,7 +68,12 @@ class Note:
 
     def embedding_text(self) -> str:
         # A-Mem finding: embed content concatenated with metadata.
-        parts = [self.content, " ".join(self.keywords), " ".join(self.tags), self.context]
+        parts = [
+            self.content,
+            " ".join(self.keywords),
+            " ".join(self.tags),
+            self.context,
+        ]
         return " \n".join(p for p in parts if p)
 
 
@@ -137,7 +142,7 @@ class StrategyItem:
     id: str = field(default_factory=new_id)
     namespace: str = "main"
     outcome: str = "success"  # success | failure
-    score: float = 0.0        # G-Memory reward shaping
+    score: float = 0.0  # G-Memory reward shaping
     source_episode_ids: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=utcnow)
 
@@ -221,7 +226,11 @@ class MemoryBundle:
             lines = []
             for scored in sorted(picked, key=lambda s: s.score, reverse=True):
                 item = scored.item
-                text = item.render() if hasattr(item, "render") else getattr(item, "content", str(item))
+                text = (
+                    item.render()
+                    if hasattr(item, "render")
+                    else getattr(item, "content", str(item))
+                )
                 lines.append(f"- {text}")
             sections.append(f"{title}:\n" + "\n".join(lines))
         return "\n\n".join(sections)

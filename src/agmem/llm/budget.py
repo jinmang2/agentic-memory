@@ -30,8 +30,14 @@ class BudgetTracker:
     _stats: dict[str, RoleStats] = field(default_factory=lambda: defaultdict(RoleStats))
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def record(self, role: str, tokens_in: int, tokens_out: int,
-               latency_ms: float, error: bool = False) -> None:
+    def record(
+        self,
+        role: str,
+        tokens_in: int,
+        tokens_out: int,
+        latency_ms: float,
+        error: bool = False,
+    ) -> None:
         with self._lock:
             s = self._stats[role]
             s.calls += 1

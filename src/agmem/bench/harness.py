@@ -1,9 +1,9 @@
-"""Benchmark harness skeleton (Phase 1).
+"""Benchmark harness: multi-run execution with reproducibility stamping.
 
 Reproducibility discipline (docs/02 §4, the Zep-LoCoMo lesson): every run
 is stamped with the full experiment condition, cost is recorded next to
-accuracy, and multi-run mean±std is the reporting unit. Dataset loaders
-(LoCoMo, LongMemEval) plug in during Phase 2.
+accuracy, and multi-run mean±std is the reporting unit. Loaders: LoCoMo
+(bench/locomo.py); LongMemEval not yet implemented.
 """
 
 from __future__ import annotations
@@ -23,8 +23,12 @@ from agmem.memory import AgenticMemory
 
 def _git_commit() -> str:
     try:
-        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                             capture_output=True, text=True, timeout=5)
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
         return out.stdout.strip() or "unknown"
     except OSError:
         return "unknown"
@@ -35,12 +39,15 @@ class BenchRun:
     """One benchmark configuration, executed ``runs`` times."""
 
     name: str
-    make_memory: Callable[[], AgenticMemory]   # fresh memory per run
+    make_memory: Callable[[], AgenticMemory]  # fresh memory per run
     runs: int = 3
     meta: dict[str, Any] = field(default_factory=dict)
 
-    def execute(self, run_fn: Callable[[AgenticMemory], dict[str, float]],
-                out_dir: str | Path | None = None) -> dict[str, Any]:
+    def execute(
+        self,
+        run_fn: Callable[[AgenticMemory], dict[str, float]],
+        out_dir: str | Path | None = None,
+    ) -> dict[str, Any]:
         """``run_fn`` ingests + evaluates on a fresh memory, returns metrics."""
         per_run: list[dict[str, float]] = []
         stamps: dict[str, Any] = {}
@@ -60,8 +67,7 @@ class BenchRun:
                         "embedder": mem.embedder.name,
                         "vector_store": type(mem.vec).__name__,
                         "organizers": [o.name for o in mem.organizers],
-                        "structured_drops": dict(mem.structured.drops)
-                        if mem.structured else {},
+                        "structured_drops": (dict(mem.structured.drops) if mem.structured else {}),
                     }
             finally:
                 mem.close()
@@ -92,6 +98,5 @@ class BenchRun:
         if out_dir:
             out = Path(out_dir)
             out.mkdir(parents=True, exist_ok=True)
-            (out / f"{self.name}.json").write_text(
-                json.dumps(result, indent=2, ensure_ascii=False))
+            (out / f"{self.name}.json").write_text(json.dumps(result, indent=2, ensure_ascii=False))
         return result

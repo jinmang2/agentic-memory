@@ -32,9 +32,9 @@ SERVICE_PORTS = {
 
 # candidate OpenAI-compatible endpoints to health-check
 DEFAULT_LLM_ENDPOINTS = [
-    "http://localhost:8000/v1",   # vLLM / llama.cpp server convention
+    "http://localhost:8000/v1",  # vLLM / llama.cpp server convention
     "http://localhost:11434/v1",  # ollama
-    "http://localhost:1234/v1",   # LM Studio
+    "http://localhost:1234/v1",  # LM Studio
 ]
 
 
@@ -81,8 +81,14 @@ def _gpu() -> tuple[float | None, str | None]:
         return None, None
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.total", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if out.returncode == 0 and out.stdout.strip():
             name, mem_mib = out.stdout.strip().splitlines()[0].rsplit(",", 1)
@@ -111,12 +117,23 @@ def _probe_endpoint(base_url: str, timeout: float = 1.0) -> EndpointInfo:
 
 
 # packages whose presence gates optional adapters
-PROBE_PKGS = ["sqlite_vec", "sentence_transformers", "lancedb", "qdrant_client",
-              "kuzu", "neo4j", "chromadb", "torch"]
+PROBE_PKGS = [
+    "sqlite_vec",
+    "sentence_transformers",
+    "lancedb",
+    "qdrant_client",
+    "kuzu",
+    "neo4j",
+    "chromadb",
+    "torch",
+]
 
 
-def detect(cache_dir: Path | None = None, force: bool = False,
-           extra_endpoints: list[str] | None = None) -> HostCapabilities:
+def detect(
+    cache_dir: Path | None = None,
+    force: bool = False,
+    extra_endpoints: list[str] | None = None,
+) -> HostCapabilities:
     cache_dir = cache_dir or Path.home() / ".agmem"
     cache_file = cache_dir / "capabilities.json"
 

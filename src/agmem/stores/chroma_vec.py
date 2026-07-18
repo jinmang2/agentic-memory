@@ -39,7 +39,8 @@ class ChromaVectorStore:
         # hnsw:space=cosine is the upstream-#24 fix; dim rides in metadata
         # because Chroma only discovers dimensionality on first insert.
         self._col = self._client.get_or_create_collection(
-            name, metadata={"hnsw:space": "cosine", "agmem_dim": str(dim)})
+            name, metadata={"hnsw:space": "cosine", "agmem_dim": str(dim)}
+        )
         stored = (self._col.metadata or {}).get("agmem_dim")
         if stored and int(stored) != dim:
             raise ValueError(
@@ -47,27 +48,41 @@ class ChromaVectorStore:
                 "changing embedders requires rebuilding the collection (docs/03 §1.2)"
             )
 
-    def add(self, item_id: str, embedding: list[float],
-            memory_type: str = "episodic", namespace: str = "main") -> None:
+    def add(
+        self,
+        item_id: str,
+        embedding: list[float],
+        memory_type: str = "episodic",
+        namespace: str = "main",
+    ) -> None:
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
-        self._col.upsert(ids=[item_id], embeddings=[embedding],
-                         metadatas=[{"namespace": namespace,
-                                     "memory_type": memory_type}])
+        self._col.upsert(
+            ids=[item_id],
+            embeddings=[embedding],
+            metadatas=[{"namespace": namespace, "memory_type": memory_type}],
+        )
 
-    def search(self, embedding: list[float], k: int = 10,
-               memory_type: str | None = None,
-               namespace: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        memory_type: str | None = None,
+        namespace: str | None = None,
+    ) -> list[tuple[str, float]]:
         clauses = []
         if namespace:
             clauses.append({"namespace": namespace})
         if memory_type:
             clauses.append({"memory_type": memory_type})
-        where = clauses[0] if len(clauses) == 1 else (
-            {"$and": clauses} if clauses else None)
+        where = clauses[0] if len(clauses) == 1 else ({"$and": clauses} if clauses else None)
         n = min(k, max(self._col.count(), 1))
-        res = self._col.query(query_embeddings=[embedding], n_results=n,
-                              where=where, include=["distances"])
+        res = self._col.query(
+            query_embeddings=[embedding],
+            n_results=n,
+            where=where,
+            include=["distances"],
+        )
         return [
             (item_id, 1.0 - float(dist))  # cosine distance -> similarity
             for item_id, dist in zip(res["ids"][0], res["distances"][0])
@@ -78,8 +93,7 @@ class ChromaVectorStore:
             return {}
         res = self._col.get(ids=ids, include=["embeddings"])
         return {
-            item_id: [float(x) for x in emb]
-            for item_id, emb in zip(res["ids"], res["embeddings"])
+            item_id: [float(x) for x in emb] for item_id, emb in zip(res["ids"], res["embeddings"])
         }
 
     def delete(self, ids: list[str]) -> None:

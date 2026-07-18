@@ -110,17 +110,22 @@ def _format_trajectory(trajectory: list[dict], max_chars: int = 60000) -> str:
 class ReasoningBankOrganizer(Organizer):
     name = "reasoning_bank"
 
-    def __init__(self, max_items: int = 3, self_judge: bool = True,
-                 persona: str | None = None) -> None:
+    def __init__(
+        self, max_items: int = 3, self_judge: bool = True, persona: str | None = None
+    ) -> None:
         self.max_items = max_items
         self.self_judge = self_judge
         self.persona = persona  # e.g. "You are an expert in web navigation."
 
-    def on_task_end(self, trajectory: list[dict], outcome: str,
-                    task: str, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_task_end(
+        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
         if ctx.llm is None:
-            logger.warning("reasoning_bank: no LLM configured — skipping distillation "
-                           "(explicit skip, task=%.60s)", task)
+            logger.warning(
+                "reasoning_bank: no LLM configured — skipping distillation "
+                "(explicit skip, task=%.60s)",
+                task,
+            )
             return []
 
         traj_text = _format_trajectory(trajectory)
@@ -128,8 +133,10 @@ class ReasoningBankOrganizer(Organizer):
 
         if outcome not in ("success", "failure") and self.self_judge:
             verdict = ctx.llm.call(
-                "judge", JUDGE_PROMPT.format(task=task, trajectory=traj_text),
-                JUDGE_SCHEMA, required_keys=("success",),
+                "judge",
+                JUDGE_PROMPT.format(task=task, trajectory=traj_text),
+                JUDGE_SCHEMA,
+                required_keys=("success",),
             )
             if verdict is None:
                 return []  # drop already counted by StructuredCaller
@@ -148,7 +155,9 @@ class ReasoningBankOrganizer(Organizer):
         result = ctx.llm.call(
             "distill",
             EXTRACT_USER_TEMPLATE.format(task=task, trajectory=traj_text),
-            EXTRACT_SCHEMA, required_keys=("items",), system=si,
+            EXTRACT_SCHEMA,
+            required_keys=("items",),
+            system=si,
         )
         if result is None or not isinstance(result.get("items"), list):
             return []
@@ -156,30 +165,51 @@ class ReasoningBankOrganizer(Organizer):
         ops: list[MemoryOp] = []
         item_ids: list[str] = []
         for raw in result["items"][: self.max_items]:
-            if not all(isinstance(raw.get(f), str) and raw.get(f)
-                       for f in ("title", "description", "content")):
+            if not all(
+                isinstance(raw.get(f), str) and raw.get(f)
+                for f in ("title", "description", "content")
+            ):
                 continue  # field-level fallback: keep valid items, skip broken ones
             item = StrategyItem(
-                title=raw["title"], description=raw["description"],
-                content=raw["content"], outcome=outcome, namespace=ctx.namespace,
+                title=raw["title"],
+                description=raw["description"],
+                content=raw["content"],
+                outcome=outcome,
+                namespace=ctx.namespace,
             )
-            ops.append(MemoryOp(
-                op=OpType.ADD, target_type="strategies", target_id=item.id,
-                payload={
-                    "id": item.id, "title": item.title, "description": item.description,
-                    "content": item.content, "outcome": outcome,
-                    "embedding_text": item.embedding_text(),
-                },
-            ))
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="strategies",
+                    target_id=item.id,
+                    payload={
+                        "id": item.id,
+                        "title": item.title,
+                        "description": item.description,
+                        "content": item.content,
+                        "outcome": outcome,
+                        "embedding_text": item.embedding_text(),
+                    },
+                )
+            )
             item_ids.append(item.id)
 
         if item_ids:
             # experience record: the retrieval unit upstream actually uses —
             # task-query embedding, expanded to its member items at read time
             exp_id = new_id()
-            ops.append(MemoryOp(
-                op=OpType.ADD, target_type="experiences", target_id=exp_id,
-                payload={"id": exp_id, "task": task, "outcome": outcome,
-                         "item_ids": item_ids, "embedding_text": task},
-            ))
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="experiences",
+                    target_id=exp_id,
+                    payload={
+                        "id": exp_id,
+                        "task": task,
+                        "outcome": outcome,
+                        "item_ids": item_ids,
+                        "embedding_text": task,
+                    },
+                )
+            )
         return ops

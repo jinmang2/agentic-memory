@@ -52,29 +52,49 @@ class QdrantVectorStore:
                 vectors_config=qm.VectorParams(size=dim, distance=qm.Distance.COSINE),
             )
 
-    def add(self, item_id: str, embedding: list[float],
-            memory_type: str = "episodic", namespace: str = "main") -> None:
+    def add(
+        self,
+        item_id: str,
+        embedding: list[float],
+        memory_type: str = "episodic",
+        namespace: str = "main",
+    ) -> None:
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
-        self._client.upsert(_COLLECTION, points=[self._qm.PointStruct(
-            id=_point_id(item_id), vector=embedding,
-            payload={"item_id": item_id, "namespace": namespace,
-                     "memory_type": memory_type},
-        )])
+        self._client.upsert(
+            _COLLECTION,
+            points=[
+                self._qm.PointStruct(
+                    id=_point_id(item_id),
+                    vector=embedding,
+                    payload={
+                        "item_id": item_id,
+                        "namespace": namespace,
+                        "memory_type": memory_type,
+                    },
+                )
+            ],
+        )
 
-    def search(self, embedding: list[float], k: int = 10,
-               memory_type: str | None = None,
-               namespace: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        memory_type: str | None = None,
+        namespace: str | None = None,
+    ) -> list[tuple[str, float]]:
         qm = self._qm
         must = []
         if namespace:
-            must.append(qm.FieldCondition(key="namespace",
-                                          match=qm.MatchValue(value=namespace)))
+            must.append(qm.FieldCondition(key="namespace", match=qm.MatchValue(value=namespace)))
         if memory_type:
-            must.append(qm.FieldCondition(key="memory_type",
-                                          match=qm.MatchValue(value=memory_type)))
+            must.append(
+                qm.FieldCondition(key="memory_type", match=qm.MatchValue(value=memory_type))
+            )
         hits = self._client.query_points(
-            _COLLECTION, query=embedding, limit=k,
+            _COLLECTION,
+            query=embedding,
+            limit=k,
             query_filter=qm.Filter(must=must) if must else None,
         ).points
         return [(h.payload["item_id"], float(h.score)) for h in hits]
@@ -83,14 +103,17 @@ class QdrantVectorStore:
         if not ids:
             return {}
         points = self._client.retrieve(
-            _COLLECTION, ids=[_point_id(i) for i in ids], with_vectors=True)
+            _COLLECTION, ids=[_point_id(i) for i in ids], with_vectors=True
+        )
         return {p.payload["item_id"]: list(p.vector) for p in points}
 
     def delete(self, ids: list[str]) -> None:
         if not ids:
             return
-        self._client.delete(_COLLECTION, points_selector=self._qm.PointIdsList(
-            points=[_point_id(i) for i in ids]))
+        self._client.delete(
+            _COLLECTION,
+            points_selector=self._qm.PointIdsList(points=[_point_id(i) for i in ids]),
+        )
 
     def count(self) -> int:
         return int(self._client.count(_COLLECTION).count)

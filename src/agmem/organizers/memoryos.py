@@ -31,16 +31,21 @@ logger = logging.getLogger("agmem.organizers.memoryos")
 
 TOPIC_SCHEMA = {
     "type": "object",
-    "properties": {"groups": {
-        "type": "array",
-        "items": {"type": "object",
-                  "properties": {"topic": {"type": "string"},
-                                 "summary": {"type": "string"},
-                                 "keywords": {"type": "array",
-                                              "items": {"type": "string"}},
-                                 "message_indexes": {"type": "array",
-                                                     "items": {"type": "integer"}}},
-                  "required": ["topic", "summary"]}}},
+    "properties": {
+        "groups": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "topic": {"type": "string"},
+                    "summary": {"type": "string"},
+                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    "message_indexes": {"type": "array", "items": {"type": "integer"}},
+                },
+                "required": ["topic", "summary"],
+            },
+        }
+    },
     "required": ["groups"],
 }
 
@@ -71,9 +76,14 @@ Return JSON: {{"profile_facts": ["self-contained fact", ...]}}"""
 class MemoryOSOrganizer(Organizer):
     name = "memoryos"
 
-    def __init__(self, stm_capacity: int = 10, mtm_capacity: int = 2000,
-                 heat_threshold: float = 5.0, similarity_threshold: float = 0.6,
-                 recency_tau_hours: float = 24.0) -> None:
+    def __init__(
+        self,
+        stm_capacity: int = 10,
+        mtm_capacity: int = 2000,
+        heat_threshold: float = 5.0,
+        similarity_threshold: float = 0.6,
+        recency_tau_hours: float = 24.0,
+    ) -> None:
         # mtm_capacity 2000 = upstream default (round-5 N6 fixed 200->2000)
         self.stm_capacity = stm_capacity
         self.mtm_capacity = mtm_capacity
@@ -89,14 +99,14 @@ class MemoryOSOrganizer(Organizer):
         h = self._heat.get(seg_id)
         if not h:
             return 0.0
-        hours = (datetime.now(timezone.utc)
-                 - h["last_access"]).total_seconds() / 3600
+        hours = (datetime.now(timezone.utc) - h["last_access"]).total_seconds() / 3600
         return h["n_visit"] + h["length"] + math.exp(-hours / self.recency_tau_hours)
 
     # -- hooks -------------------------------------------------------------------
 
-    def on_retrieval(self, hits: list[tuple[str, str, float]],
-                     ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_retrieval(
+        self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
         # upstream mid_term.py updates N_visit/last_visit_time on every
         # retrieval hit (paper §3.4) — the heat feedback loop round-5 N1
         # found missing. No ops needed: heat lives in organizer state.
@@ -133,21 +143,35 @@ class MemoryOSOrganizer(Organizer):
             logger.warning("memoryos: no LLM — storing mechanical segment (explicit degradation)")
             seg_id = new_id()
             content = "\n".join(e.content for e in batch)
-            self._heat[seg_id] = {"n_visit": 0, "length": len(batch),
-                                  "last_access": datetime.now(timezone.utc)}
+            self._heat[seg_id] = {
+                "n_visit": 0,
+                "length": len(batch),
+                "last_access": datetime.now(timezone.utc),
+            }
             return [self._segment_add(seg_id, "batch", content, batch, ctx)]
 
         indexed = "\n".join(f"[{i}] {e.content}" for i, e in enumerate(batch))
-        result = ctx.llm.call("distill", TOPIC_PROMPT.format(messages=indexed),
-                              TOPIC_SCHEMA, required_keys=("groups",))
+        result = ctx.llm.call(
+            "distill",
+            TOPIC_PROMPT.format(messages=indexed),
+            TOPIC_SCHEMA,
+            required_keys=("groups",),
+        )
         groups = (result or {}).get("groups") or [
-            {"topic": "batch", "summary": "\n".join(e.content for e in batch),
-             "message_indexes": list(range(len(batch)))}]
+            {
+                "topic": "batch",
+                "summary": "\n".join(e.content for e in batch),
+                "message_indexes": list(range(len(batch))),
+            }
+        ]
 
         ops: list[MemoryOp] = []
         for g in groups:
-            idxs = [i for i in g.get("message_indexes", [])
-                    if isinstance(i, int) and 0 <= i < len(batch)] or list(range(len(batch)))
+            idxs = [
+                i
+                for i in g.get("message_indexes", [])
+                if isinstance(i, int) and 0 <= i < len(batch)
+            ] or list(range(len(batch)))
             members = [batch[i] for i in idxs]
             summary = str(g.get("summary", ""))
             keywords = [str(k).lower() for k in g.get("keywords") or []]
@@ -177,20 +201,38 @@ class MemoryOSOrganizer(Organizer):
                 h = self._heat[seg_id]
                 h["length"] += len(members)
                 h["last_access"] = datetime.now(timezone.utc)
-                ops.append(MemoryOp(
-                    op=OpType.UPDATE, target_type="pages", target_id=seg_id,
-                    payload={"content": content, "keywords": merged_kw,
-                             "source_episode_ids": list(old.get("source_episode_ids", []))
-                             + [e.id for e in members],
-                             "embedding_text": content[-2000:]},
-                ))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="pages",
+                        target_id=seg_id,
+                        payload={
+                            "content": content,
+                            "keywords": merged_kw,
+                            "source_episode_ids": list(old.get("source_episode_ids", []))
+                            + [e.id for e in members],
+                            "embedding_text": content[-2000:],
+                        },
+                    )
+                )
             else:
                 seg_id = new_id()
-                self._heat[seg_id] = {"n_visit": 0, "length": len(members),
-                                      "last_access": datetime.now(timezone.utc)}
+                self._heat[seg_id] = {
+                    "n_visit": 0,
+                    "length": len(members),
+                    "last_access": datetime.now(timezone.utc),
+                }
                 content = summary
-                ops.append(self._segment_add(seg_id, str(g.get("topic", "?")),
-                                             content, members, ctx, keywords))
+                ops.append(
+                    self._segment_add(
+                        seg_id,
+                        str(g.get("topic", "?")),
+                        content,
+                        members,
+                        ctx,
+                        keywords,
+                    )
+                )
 
             # heat >= τ -> promote to LPM (profile/knowledge), then reset
             if self._segment_heat(seg_id) >= self.heat_threshold:
@@ -202,26 +244,48 @@ class MemoryOSOrganizer(Organizer):
         while len(self._heat) > self.mtm_capacity:
             coldest = min(self._heat, key=self._segment_heat)
             self._heat.pop(coldest)
-            ops.append(MemoryOp(op=OpType.DELETE, target_type="pages",
-                                target_id=coldest,
-                                payload={"reason": "lowest_heat_eviction"}))
+            ops.append(
+                MemoryOp(
+                    op=OpType.DELETE,
+                    target_type="pages",
+                    target_id=coldest,
+                    payload={"reason": "lowest_heat_eviction"},
+                )
+            )
         return ops
 
-    def _segment_add(self, seg_id: str, topic: str, content: str,
-                     members: list[Episode], ctx: OrganizerContext,
-                     keywords: list[str] | None = None) -> MemoryOp:
+    def _segment_add(
+        self,
+        seg_id: str,
+        topic: str,
+        content: str,
+        members: list[Episode],
+        ctx: OrganizerContext,
+        keywords: list[str] | None = None,
+    ) -> MemoryOp:
         return MemoryOp(
-            op=OpType.ADD, target_type="pages", target_id=seg_id,
-            payload={"id": seg_id, "topic": topic, "content": content,
-                     "keywords": sorted(set(keywords or [])),
-                     "source_episode_ids": [e.id for e in members],
-                     "embedding_text": content[:2000]},
+            op=OpType.ADD,
+            target_type="pages",
+            target_id=seg_id,
+            payload={
+                "id": seg_id,
+                "topic": topic,
+                "content": content,
+                "keywords": sorted(set(keywords or [])),
+                "source_episode_ids": [e.id for e in members],
+                "embedding_text": content[:2000],
+            },
         )
 
-    def _promote_to_lpm(self, seg_id: str, content: str, members: list[Episode],
-                        ctx: OrganizerContext) -> list[MemoryOp]:
-        result = ctx.llm.call("distill", PROFILE_PROMPT.format(content=content[:4000]),
-                              PROFILE_SCHEMA, required_keys=("profile_facts",))
+    def _promote_to_lpm(
+        self, seg_id: str, content: str, members: list[Episode], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        result = ctx.llm.call(
+            "distill",
+            PROFILE_PROMPT.format(content=content[:4000]),
+            PROFILE_SCHEMA,
+            required_keys=("profile_facts",),
+        )
         if result is None:
             # upstream keeps heat intact on failure so the segment gets
             # another promotion attempt (round-5 N5: we used to reset first)
@@ -234,10 +298,18 @@ class MemoryOSOrganizer(Organizer):
             if not fact or fact.lower() in ("none", "n/a"):
                 continue  # upstream long_term.py rejects empty/none knowledge
             fid = new_id()
-            ops.append(MemoryOp(
-                op=OpType.ADD, target_type="semantic", target_id=fid,
-                payload={"id": fid, "content": fact, "kind": "profile",
-                         "source_episode_ids": [e.id for e in members],
-                         "embedding_text": fact},
-            ))
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id=fid,
+                    payload={
+                        "id": fid,
+                        "content": fact,
+                        "kind": "profile",
+                        "source_episode_ids": [e.id for e in members],
+                        "embedding_text": fact,
+                    },
+                )
+            )
         return ops

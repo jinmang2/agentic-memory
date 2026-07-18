@@ -89,8 +89,15 @@ class PostgresDocStore:
                 " namespace=EXCLUDED.namespace, role=EXCLUDED.role,"
                 " content=EXCLUDED.content, timestamp=EXCLUDED.timestamp,"
                 " meta=EXCLUDED.meta",
-                (ep.id, ep.namespace, ep.role, ep.content, ep.timestamp.isoformat(),
-                 json.dumps(ep.meta, ensure_ascii=False, default=str)))
+                (
+                    ep.id,
+                    ep.namespace,
+                    ep.role,
+                    ep.content,
+                    ep.timestamp.isoformat(),
+                    json.dumps(ep.meta, ensure_ascii=False, default=str),
+                ),
+            )
 
     def get_episodes(self, ids: list[str]) -> list[Episode]:
         if not ids:
@@ -98,12 +105,19 @@ class PostgresDocStore:
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "SELECT id, namespace, role, content, timestamp, meta"
-                " FROM episodes WHERE id = ANY(%s)", (ids,))
+                " FROM episodes WHERE id = ANY(%s)",
+                (ids,),
+            )
             rows = cur.fetchall()
         by_id = {
-            r[0]: Episode(id=r[0], namespace=r[1], role=r[2], content=r[3],
-                          timestamp=datetime.fromisoformat(r[4]),
-                          meta=json.loads(r[5]))
+            r[0]: Episode(
+                id=r[0],
+                namespace=r[1],
+                role=r[2],
+                content=r[3],
+                timestamp=datetime.fromisoformat(r[4]),
+                meta=json.loads(r[5]),
+            )
             for r in rows
         }
         return [by_id[i] for i in ids if i in by_id]  # preserve caller order
@@ -118,11 +132,14 @@ class PostgresDocStore:
             cur.execute(sql, args)
             return int(cur.fetchone()[0])
 
-    def search_lexical(self, query: str, k: int = 10,
-                       namespace: str | None = None) -> list[tuple[str, float]]:
+    def search_lexical(
+        self, query: str, k: int = 10, namespace: str | None = None
+    ) -> list[tuple[str, float]]:
         """tsvector search; returns (episode_id, score), higher = better."""
-        sql = ("SELECT id, ts_rank(content_tsv, q) AS rank FROM episodes,"
-               " websearch_to_tsquery('simple', %s) q WHERE content_tsv @@ q")
+        sql = (
+            "SELECT id, ts_rank(content_tsv, q) AS rank FROM episodes,"
+            " websearch_to_tsquery('simple', %s) q WHERE content_tsv @@ q"
+        )
         args: list[Any] = [query]
         if namespace:
             sql += " AND namespace = %s"
@@ -135,8 +152,9 @@ class PostgresDocStore:
 
     # -- generic derived items ------------------------------------------------
 
-    def put_item(self, item_id: str, memory_type: str, namespace: str,
-                 data: dict[str, Any]) -> None:
+    def put_item(
+        self, item_id: str, memory_type: str, namespace: str, data: dict[str, Any]
+    ) -> None:
         content = "" if data.get("deleted") else str(data.get("content") or "")
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
@@ -145,21 +163,28 @@ class PostgresDocStore:
                 " ON CONFLICT (id, memory_type) DO UPDATE SET"
                 " namespace=EXCLUDED.namespace, data=EXCLUDED.data,"
                 " content=EXCLUDED.content, updated_at=now()",
-                (item_id, memory_type, namespace,
-                 json.dumps(data, ensure_ascii=False, default=str), content))
+                (
+                    item_id,
+                    memory_type,
+                    namespace,
+                    json.dumps(data, ensure_ascii=False, default=str),
+                    content,
+                ),
+            )
 
     def get_items(self, ids: list[str], memory_type: str) -> list[dict[str, Any]]:
         if not ids:
             return []
         with self._lock, self._conn.cursor() as cur:
-            cur.execute("SELECT id, data FROM items WHERE memory_type = %s"
-                        " AND id = ANY(%s)", (memory_type, ids))
+            cur.execute(
+                "SELECT id, data FROM items WHERE memory_type = %s" " AND id = ANY(%s)",
+                (memory_type, ids),
+            )
             rows = cur.fetchall()
         by_id = {r[0]: json.loads(r[1]) for r in rows}
         return [by_id[i] for i in ids if i in by_id]
 
-    def list_items(self, memory_type: str,
-                   namespace: str | None = None) -> list[dict[str, Any]]:
+    def list_items(self, memory_type: str, namespace: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT data FROM items WHERE memory_type = %s"
         args: list[Any] = [memory_type]
         if namespace:
@@ -171,11 +196,14 @@ class PostgresDocStore:
         out = [json.loads(r[0]) for r in rows]
         return [d for d in out if not d.get("deleted")]
 
-    def search_lexical_items(self, query: str, memory_type: str, k: int = 10,
-                             namespace: str | None = None) -> list[tuple[str, float]]:
-        sql = ("SELECT id, ts_rank(content_tsv, q) AS rank FROM items,"
-               " websearch_to_tsquery('simple', %s) q"
-               " WHERE content_tsv @@ q AND memory_type = %s AND content <> ''")
+    def search_lexical_items(
+        self, query: str, memory_type: str, k: int = 10, namespace: str | None = None
+    ) -> list[tuple[str, float]]:
+        sql = (
+            "SELECT id, ts_rank(content_tsv, q) AS rank FROM items,"
+            " websearch_to_tsquery('simple', %s) q"
+            " WHERE content_tsv @@ q AND memory_type = %s AND content <> ''"
+        )
         args: list[Any] = [query, memory_type]
         if namespace:
             sql += " AND namespace = %s"
@@ -195,15 +223,26 @@ class PostgresDocStore:
             cur.executemany(
                 "INSERT INTO evolution_log (op, target_type, target_id, payload,"
                 " actor, t_transaction) VALUES (%s,%s,%s,%s,%s,%s)",
-                [(o.op.value, o.target_type, o.target_id,
-                  json.dumps(o.payload, ensure_ascii=False, default=str),
-                  o.actor, o.t_transaction.isoformat()) for o in ops])
+                [
+                    (
+                        o.op.value,
+                        o.target_type,
+                        o.target_id,
+                        json.dumps(o.payload, ensure_ascii=False, default=str),
+                        o.actor,
+                        o.t_transaction.isoformat(),
+                    )
+                    for o in ops
+                ],
+            )
 
     def tail(self, n: int = 20) -> list[MemoryOp]:
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "SELECT op, target_type, target_id, payload, actor, t_transaction"
-                " FROM evolution_log ORDER BY seq DESC LIMIT %s", (n,))
+                " FROM evolution_log ORDER BY seq DESC LIMIT %s",
+                (n,),
+            )
             rows = cur.fetchall()
         return [MemoryOp.from_row(*r) for r in reversed(rows)]
 

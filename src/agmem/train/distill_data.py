@@ -30,12 +30,13 @@ from agmem.llm.structured import StructuredCaller
 from agmem.organizers import amem, nemori
 
 TASKS = {
-    "note": (amem.NOTE_PROMPT, amem.NOTE_SCHEMA,
-             ("keywords", "context", "tags")),
-    "boundary": (nemori.BOUNDARY_PROMPT, nemori.BOUNDARY_SCHEMA,
-                 ("boundary", "confidence")),
-    "episode": (nemori.EPISODE_PROMPT, nemori.EPISODE_SCHEMA,
-                ("title", "narrative")),
+    "note": (amem.NOTE_PROMPT, amem.NOTE_SCHEMA, ("keywords", "context", "tags")),
+    "boundary": (
+        nemori.BOUNDARY_PROMPT,
+        nemori.BOUNDARY_SCHEMA,
+        ("boundary", "confidence"),
+    ),
+    "episode": (nemori.EPISODE_PROMPT, nemori.EPISODE_SCHEMA, ("title", "narrative")),
 }
 
 
@@ -50,14 +51,13 @@ def build_prompts(task: str, data_path: Path, limit: int, seed: int = 7) -> list
                 prompts.append(amem.NOTE_PROMPT.format(content=f"({date}) {speaker}: {text}"))
         elif task == "boundary":
             for i in range(2, len(turns)):
-                window = turns[max(0, i - 6):i]
+                window = turns[max(0, i - 6) : i]
                 buf = "\n".join(f"[{d}] {s}: {t}" for _, d, s, t in window)
                 _, d, s, t = turns[i]
-                prompts.append(nemori.BOUNDARY_PROMPT.format(
-                    buffer=buf, message=f"[{d}] {s}: {t}"))
+                prompts.append(nemori.BOUNDARY_PROMPT.format(buffer=buf, message=f"[{d}] {s}: {t}"))
         elif task == "episode":
             for start in range(0, len(turns) - 6, 6):
-                seg = "\n".join(f"[{d}] {s}: {t}" for _, d, s, t in turns[start:start + 6])
+                seg = "\n".join(f"[{d}] {s}: {t}" for _, d, s, t in turns[start : start + 6])
                 prompts.append(nemori.EPISODE_PROMPT.format(segment=seg))
     rng.shuffle(prompts)
     return prompts[:limit]
@@ -75,11 +75,18 @@ def main() -> None:
     args = ap.parse_args()
 
     _, schema, required = TASKS[args.task]
-    client = LLMClient({"distill": RoleConfig(endpoint=args.teacher_endpoint,
-                                              model=args.teacher_model,
-                                              api_key=args.api_key,
-                                              temperature=0.3, max_tokens=800)},
-                       budget=BudgetTracker())
+    client = LLMClient(
+        {
+            "distill": RoleConfig(
+                endpoint=args.teacher_endpoint,
+                model=args.teacher_model,
+                api_key=args.api_key,
+                temperature=0.3,
+                max_tokens=800,
+            )
+        },
+        budget=BudgetTracker(),
+    )
     caller = StructuredCaller(client, use_guided_json=False)
 
     prompts = build_prompts(args.task, Path(args.data), args.limit)
@@ -91,9 +98,17 @@ def main() -> None:
             result = caller.call("distill", prompt, schema, required_keys=required)
             if result is None:
                 continue  # teacher drop — excluded from training data
-            f.write(json.dumps({"task": args.task, "prompt": prompt,
-                                "completion": json.dumps(result, ensure_ascii=False)},
-                               ensure_ascii=False) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "task": args.task,
+                        "prompt": prompt,
+                        "completion": json.dumps(result, ensure_ascii=False),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
             kept += 1
             if (i + 1) % 25 == 0:
                 print(f"{i + 1}/{len(prompts)} (kept {kept})", flush=True)

@@ -20,15 +20,14 @@ ROLES = ("extract", "distill", "judge", "rerank", "generate")
 class RoleConfig:
     endpoint: str
     model: str
-    api_key: str = "not-needed"       # local servers ignore it
+    api_key: str = "not-needed"  # local servers ignore it
     temperature: float = 0.1
     max_tokens: int = 1024
     extra_body: dict[str, Any] = field(default_factory=dict)
 
 
 class LLMClient:
-    def __init__(self, roles: dict[str, RoleConfig],
-                 budget: BudgetTracker | None = None) -> None:
+    def __init__(self, roles: dict[str, RoleConfig], budget: BudgetTracker | None = None) -> None:
         self.roles = roles
         self.budget = budget or BudgetTracker()
         self._clients: dict[str, Any] = {}
@@ -44,11 +43,11 @@ class LLMClient:
     def has_role(self, role: str) -> bool:
         return role in self.roles
 
-    def chat(self, role: str, messages: list[dict[str, str]],
-             **overrides: Any) -> str:
+    def chat(self, role: str, messages: list[dict[str, str]], **overrides: Any) -> str:
         if role not in self.roles:
-            raise KeyError(f"no LLM configured for role '{role}' "
-                           f"(configured: {sorted(self.roles)})")
+            raise KeyError(
+                f"no LLM configured for role '{role}' " f"(configured: {sorted(self.roles)})"
+            )
         cfg = self.roles[role]
         client = self._client_for(cfg)
         kwargs: dict[str, Any] = {

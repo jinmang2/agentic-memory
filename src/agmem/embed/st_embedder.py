@@ -29,14 +29,19 @@ PREFIXES: dict[str, dict[EmbedKind, str]] = {
 class SentenceTransformerEmbedder:
     requires = Requires(python_pkgs=("sentence_transformers",))
 
-    def __init__(self, model_name: str = "intfloat/multilingual-e5-small",
-                 device: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = "intfloat/multilingual-e5-small",
+        device: str | None = None,
+    ) -> None:
         from sentence_transformers import SentenceTransformer  # gated by requires
 
         self.name = model_name
         self._model = SentenceTransformer(model_name, device=device)
-        get_dim = getattr(self._model, "get_embedding_dimension", None) \
+        get_dim = (
+            getattr(self._model, "get_embedding_dimension", None)
             or self._model.get_sentence_embedding_dimension
+        )
         self.dim = get_dim() or KNOWN_MODELS.get(model_name, 384)
         self._prefixes = PREFIXES.get(model_name, {})
 

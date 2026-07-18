@@ -48,3 +48,6 @@ train = [
     "bitsandbytes>=0.45",
     "accelerate>=1.0",
 ]
+
+[tool.black]
+line-length = 100

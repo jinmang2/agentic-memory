@@ -1,4 +1,4 @@
-"""Rerankers. Phase 1: Noop + MMR. LLM/cross-encoder land in Phase 3.
+"""Rerankers: Noop, MMR, LLM (listwise), cross-encoder.
 
 Interface: rerank(query_emb, candidates, vectors, k) -> reordered candidates.
 ``candidates`` are (id, score) from fusion; ``vectors`` maps id -> embedding.
@@ -16,10 +16,15 @@ class NoopReranker:
     name = "noop"
     needs_text = False
 
-    def rerank(self, query_emb: list[float], candidates: list[tuple[str, float]],
-               vectors: dict[str, list[float]], k: int,
-               texts: dict[str, str] | None = None,
-               query: str = "") -> list[tuple[str, float]]:
+    def rerank(
+        self,
+        query_emb: list[float],
+        candidates: list[tuple[str, float]],
+        vectors: dict[str, list[float]],
+        k: int,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+    ) -> list[tuple[str, float]]:
         return candidates[:k]
 
 
@@ -37,10 +42,15 @@ class MMRReranker:
     def __init__(self, lambda_: float = 0.5) -> None:
         self.lambda_ = lambda_
 
-    def rerank(self, query_emb: list[float], candidates: list[tuple[str, float]],
-               vectors: dict[str, list[float]], k: int,
-               texts: dict[str, str] | None = None,
-               query: str = "") -> list[tuple[str, float]]:
+    def rerank(
+        self,
+        query_emb: list[float],
+        candidates: list[tuple[str, float]],
+        vectors: dict[str, list[float]],
+        k: int,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+    ) -> list[tuple[str, float]]:
         pool = [(cid, score) for cid, score in candidates if cid in vectors]
         missing = [(cid, score) for cid, score in candidates if cid not in vectors]
         if not pool:
@@ -58,8 +68,7 @@ class MMRReranker:
             best_id, best_val = None, -np.inf
             for cid in remaining:
                 redundancy = max(
-                    (float(mat[cid] @ mat[sid]) / (norms[cid] * norms[sid])
-                     for sid, _ in selected),
+                    (float(mat[cid] @ mat[sid]) / (norms[cid] * norms[sid]) for sid, _ in selected),
                     default=0.0,
                 )
                 val = self.lambda_ * rel[cid] - (1 - self.lambda_) * redundancy
@@ -84,9 +93,11 @@ class LLMReranker:
     name = "llm"
     needs_text = True
 
-    SCHEMA = {"type": "object",
-              "properties": {"ranking": {"type": "array", "items": {"type": "integer"}}},
-              "required": ["ranking"]}
+    SCHEMA = {
+        "type": "object",
+        "properties": {"ranking": {"type": "array", "items": {"type": "integer"}}},
+        "required": ["ranking"],
+    }
     PROMPT = """Rank these memory snippets by relevance to the query, best first.
 
 Query: {query}
@@ -99,16 +110,25 @@ Return JSON: {{"ranking": [most relevant index numbers, e.g. 2, 0, 1, ...]}}"""
     def __init__(self, structured_caller=None) -> None:
         self.llm = structured_caller  # StructuredCaller; injected by the facade
 
-    def rerank(self, query_emb, candidates, vectors, k,
-               texts: dict[str, str] | None = None, query: str = ""):
+    def rerank(
+        self,
+        query_emb,
+        candidates,
+        vectors,
+        k,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+    ):
         if self.llm is None or not texts:
             return candidates[:k]
         pool = candidates[: max(k * 2, 10)]
-        snippets = "\n".join(f"[{i}] {texts.get(cid, '')[:200]}"
-                             for i, (cid, _) in enumerate(pool))
-        result = self.llm.call("rerank",
-                               self.PROMPT.format(query=query, snippets=snippets),
-                               self.SCHEMA, required_keys=("ranking",))
+        snippets = "\n".join(f"[{i}] {texts.get(cid, '')[:200]}" for i, (cid, _) in enumerate(pool))
+        result = self.llm.call(
+            "rerank",
+            self.PROMPT.format(query=query, snippets=snippets),
+            self.SCHEMA,
+            required_keys=("ranking",),
+        )
         if result is None:
             return candidates[:k]
         seen: list[int] = []
@@ -126,14 +146,24 @@ class CrossEncoderReranker:
     name = "cross-encoder"
     needs_text = True
 
-    def __init__(self, model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
-                 device: str | None = None) -> None:
+    def __init__(
+        self,
+        model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        device: str | None = None,
+    ) -> None:
         from sentence_transformers import CrossEncoder  # gated by requires
 
         self._model = CrossEncoder(model_name, device=device)
 
-    def rerank(self, query_emb, candidates, vectors, k,
-               texts: dict[str, str] | None = None, query: str = ""):
+    def rerank(
+        self,
+        query_emb,
+        candidates,
+        vectors,
+        k,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+    ):
         if not texts:
             return candidates[:k]
         pool = [(cid, s) for cid, s in candidates if cid in texts]
@@ -141,10 +171,17 @@ class CrossEncoderReranker:
         if not pool:
             return candidates[:k]
         scores = self._model.predict([(query, texts[cid][:512]) for cid, _ in pool])
-        ranked = sorted(zip((cid for cid, _ in pool), map(float, scores)),
-                        key=lambda x: x[1], reverse=True)
+        ranked = sorted(
+            zip((cid for cid, _ in pool), map(float, scores)),
+            key=lambda x: x[1],
+            reverse=True,
+        )
         return (ranked + missing)[:k]
 
 
-RERANKER_CANDIDATES: list[type] = [CrossEncoderReranker, LLMReranker,
-                                   MMRReranker, NoopReranker]
+RERANKER_CANDIDATES: list[type] = [
+    CrossEncoderReranker,
+    LLMReranker,
+    MMRReranker,
+    NoopReranker,
+]

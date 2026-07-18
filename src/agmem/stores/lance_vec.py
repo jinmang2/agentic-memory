@@ -39,26 +39,45 @@ class LanceDBVectorStore:
                     "changing embedders requires rebuilding the collection (docs/03 §1.2)"
                 )
         else:
-            schema = pa.schema([
-                pa.field("id", pa.string()),
-                pa.field("namespace", pa.string()),
-                pa.field("memory_type", pa.string()),
-                pa.field("vector", pa.list_(pa.float32(), dim)),
-            ])
+            schema = pa.schema(
+                [
+                    pa.field("id", pa.string()),
+                    pa.field("namespace", pa.string()),
+                    pa.field("memory_type", pa.string()),
+                    pa.field("vector", pa.list_(pa.float32(), dim)),
+                ]
+            )
             self._tbl = self._db.create_table(_TABLE, schema=schema)
 
-    def add(self, item_id: str, embedding: list[float],
-            memory_type: str = "episodic", namespace: str = "main") -> None:
+    def add(
+        self,
+        item_id: str,
+        embedding: list[float],
+        memory_type: str = "episodic",
+        namespace: str = "main",
+    ) -> None:
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         # upsert = delete + add (ids are uuid hex, safe to inline)
         self._tbl.delete(f"id = '{item_id}'")
-        self._tbl.add([{"id": item_id, "namespace": namespace,
-                        "memory_type": memory_type, "vector": embedding}])
+        self._tbl.add(
+            [
+                {
+                    "id": item_id,
+                    "namespace": namespace,
+                    "memory_type": memory_type,
+                    "vector": embedding,
+                }
+            ]
+        )
 
-    def search(self, embedding: list[float], k: int = 10,
-               memory_type: str | None = None,
-               namespace: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        memory_type: str | None = None,
+        namespace: str | None = None,
+    ) -> list[tuple[str, float]]:
         q = self._tbl.search(embedding).metric("cosine")
         preds = []
         if namespace:
@@ -74,8 +93,7 @@ class LanceDBVectorStore:
         if not ids:
             return {}
         id_list = ", ".join(f"'{i}'" for i in ids)  # uuid hex, safe to inline
-        rows = (self._tbl.search().where(f"id IN ({id_list})")
-                .select(["id", "vector"]).to_list())
+        rows = self._tbl.search().where(f"id IN ({id_list})").select(["id", "vector"]).to_list()
         return {r["id"]: [float(x) for x in r["vector"]] for r in rows}
 
     def delete(self, ids: list[str]) -> None:

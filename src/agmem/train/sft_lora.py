@@ -30,8 +30,13 @@ def main() -> None:
         import torch
         from datasets import Dataset
         from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
-        from transformers import (AutoModelForCausalLM, AutoTokenizer,
-                                  BitsAndBytesConfig, Trainer, TrainingArguments)
+        from transformers import (
+            AutoModelForCausalLM,
+            AutoTokenizer,
+            BitsAndBytesConfig,
+            Trainer,
+            TrainingArguments,
+        )
     except ImportError as exc:  # capability principle: explicit, actionable
         raise SystemExit(
             f"missing training deps ({exc.name}) — install with: uv sync --extra train"
@@ -42,8 +47,10 @@ def main() -> None:
 
     def to_text(r: dict) -> dict:
         messages = [
-            {"role": "system",
-             "content": "You must respond with a single JSON object and nothing else."},
+            {
+                "role": "system",
+                "content": "You must respond with a single JSON object and nothing else.",
+            },
             {"role": "user", "content": r["prompt"]},
             {"role": "assistant", "content": r["completion"]},
         ]
@@ -60,23 +67,38 @@ def main() -> None:
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        quantization_config=BitsAndBytesConfig(load_in_4bit=True,
-                                               bnb_4bit_compute_dtype=torch.float16),
+        quantization_config=BitsAndBytesConfig(
+            load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16
+        ),
         device_map="auto",
     )
     model = prepare_model_for_kbit_training(model)
-    model = get_peft_model(model, LoraConfig(
-        r=args.lora_r, lora_alpha=32, lora_dropout=0.05, task_type="CAUSAL_LM",
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"]))
+    model = get_peft_model(
+        model,
+        LoraConfig(
+            r=args.lora_r,
+            lora_alpha=32,
+            lora_dropout=0.05,
+            task_type="CAUSAL_LM",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+        ),
+    )
     model.print_trainable_parameters()
 
     trainer = Trainer(
-        model=model, train_dataset=ds,
+        model=model,
+        train_dataset=ds,
         args=TrainingArguments(
-            output_dir=args.out, num_train_epochs=args.epochs,
-            per_device_train_batch_size=1, gradient_accumulation_steps=8,
-            learning_rate=args.lr, fp16=True, logging_steps=10,
-            save_strategy="epoch", report_to=[]),
+            output_dir=args.out,
+            num_train_epochs=args.epochs,
+            per_device_train_batch_size=1,
+            gradient_accumulation_steps=8,
+            learning_rate=args.lr,
+            fp16=True,
+            logging_steps=10,
+            save_strategy="epoch",
+            report_to=[],
+        ),
     )
     trainer.train()
     trainer.save_model(args.out)

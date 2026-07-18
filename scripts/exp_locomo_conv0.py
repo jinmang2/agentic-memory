@@ -34,43 +34,67 @@ def make_roles(overrides: dict[str, dict] | None = None) -> dict[str, RoleConfig
     # t=0.0, ReasoningBank judges at t=0.0). max_tokens 1000 per audit A6:
     # 300 could truncate multi-neighbor evolution JSON -> parse failure ->
     # drop. Per-methodology upstream temps come in via ``overrides``.
-    base = {"extract": {"temperature": 0.1}, "distill": {"temperature": 0.1},
-            "judge": {"temperature": 0.0}, "generate": {"temperature": 0.0}}
+    base = {
+        "extract": {"temperature": 0.1},
+        "distill": {"temperature": 0.1},
+        "judge": {"temperature": 0.0},
+        "generate": {"temperature": 0.0},
+    }
     for role, kw in (overrides or {}).items():
         base[role] = {**base[role], **kw}
-    return {r: RoleConfig(endpoint="http://localhost:8080/v1", model="qwen3-0.6b",
-                          max_tokens=kw.pop("max_tokens", 1000),
-                          extra_body=NOTHINK, **kw)
-            for r, kw in base.items()}
+    return {
+        r: RoleConfig(
+            endpoint="http://localhost:8080/v1",
+            model="qwen3-0.6b",
+            max_tokens=kw.pop("max_tokens", 1000),
+            extra_body=NOTHINK,
+            **kw,
+        )
+        for r, kw in base.items()
+    }
 
 
-def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
-        sample, max_sessions, limit, embedder, k: int | dict = 10,
-        keyword_queries: bool = False,
-        role_overrides: dict[str, dict] | None = None,
-        slot_overrides: dict[str, str] | None = None,
-        lexical_types: tuple[str, ...] = ("episodic",)) -> dict:
+def run(
+    config_name: str,
+    organizers: list[str],
+    memory_types: tuple[str, ...],
+    sample,
+    max_sessions,
+    limit,
+    embedder,
+    k: int | dict = 10,
+    keyword_queries: bool = False,
+    role_overrides: dict[str, dict] | None = None,
+    slot_overrides: dict[str, str] | None = None,
+    lexical_types: tuple[str, ...] = ("episodic",),
+) -> dict:
     mem = AgenticMemory(
-        namespace=f"locomo-c0-{config_name}", organizers=organizers,
+        namespace=f"locomo-c0-{config_name}",
+        organizers=organizers,
         embedder=embedder,
-        config=AgmemConfig(llm_roles=make_roles(role_overrides),
-                           use_guided_json=False,
-                           overrides=slot_overrides or {},
-                           lexical_types=lexical_types),
+        config=AgmemConfig(
+            llm_roles=make_roles(role_overrides),
+            use_guided_json=False,
+            overrides=slot_overrides or {},
+            lexical_types=lexical_types,
+        ),
     )
     try:
         t0 = time.perf_counter()
         n_turns = locomo.ingest(mem, sample, max_sessions=max_sessions)
         ingest_s = time.perf_counter() - t0
 
-        questions = locomo.select_questions(sample, max_sessions=max_sessions,
-                                            limit=limit)
+        questions = locomo.select_questions(sample, max_sessions=max_sessions, limit=limit)
         t0 = time.perf_counter()
         res = locomo.evaluate(
-            mem, questions, k=k, memory_types=memory_types,
+            mem,
+            questions,
+            k=k,
+            memory_types=memory_types,
             keyword_queries=keyword_queries,
-            progress=lambda i, n: print(f"[{config_name}] {i}/{n}", flush=True)
-            if i % 20 == 0 else None,
+            progress=lambda i, n: (
+                print(f"[{config_name}] {i}/{n}", flush=True) if i % 20 == 0 else None
+            ),
         )
         eval_s = time.perf_counter() - t0
 
@@ -85,19 +109,29 @@ def run(config_name: str, organizers: list[str], memory_types: tuple[str, ...],
             "by_category": res["by_category"],
             "llm_budget": mem.budget.summary(),
             "structured_drops": dict(mem.structured.drops) if mem.structured else {},
-            "stamp": {"embedder": mem.embedder.name, "model": "qwen3-0.6b",
-                      "k": k, "budget_tokens": 6000, "dataset": "locomo10 conv0",
-                      "keyword_queries": keyword_queries,
-                      "role_overrides": role_overrides,
-                      "vector_store": type(mem.vec).__name__,
-                      "max_sessions": max_sessions, "n_questions": len(questions)},
+            "stamp": {
+                "embedder": mem.embedder.name,
+                "model": "qwen3-0.6b",
+                "k": k,
+                "budget_tokens": 6000,
+                "dataset": "locomo10 conv0",
+                "keyword_queries": keyword_queries,
+                "role_overrides": role_overrides,
+                "vector_store": type(mem.vec).__name__,
+                "max_sessions": max_sessions,
+                "n_questions": len(questions),
+            },
             "records": res["records"],
         }
         OUT.mkdir(exist_ok=True)
         (OUT / f"locomo-conv0-{config_name}.json").write_text(
-            json.dumps(result, indent=2, ensure_ascii=False))
-        print(f"[{config_name}] overall={res['overall']} "
-              f"ingest={ingest_s:.0f}s eval={eval_s:.0f}s", flush=True)
+            json.dumps(result, indent=2, ensure_ascii=False)
+        )
+        print(
+            f"[{config_name}] overall={res['overall']} "
+            f"ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
+            flush=True,
+        )
         return result
     finally:
         mem.close()
@@ -111,8 +145,7 @@ def main() -> None:
     args = ap.parse_args()
 
     sample = locomo.load_locomo(DATA)[0]
-    embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small",
-                                           device="cuda")
+    embedder = SentenceTransformerEmbedder("intfloat/multilingual-e5-small", device="cuda")
     # config = (organizers, memory_types, k, keyword_queries, role_overrides,
     #           slot_overrides).
     # amem/nemori are methodology-pure per the 2nd fidelity re-audit: upstream
@@ -123,44 +156,92 @@ def main() -> None:
     # role_overrides = upstream write-path temps (round-4): A-Mem 0.7/0.7,
     # Nemori segmentation 0.2 + distill 0.7 (max_tokens 2000, upstream default).
     AMEM_TEMPS = {"extract": {"temperature": 0.7}, "distill": {"temperature": 0.7}}
-    NEMORI_TEMPS = {"extract": {"temperature": 0.2},
-                    "distill": {"temperature": 0.7, "max_tokens": 2000}}
+    NEMORI_TEMPS = {
+        "extract": {"temperature": 0.2},
+        "distill": {"temperature": 0.7, "max_tokens": 2000},
+    }
     # Lineage-faithful engines (docs/03 §5): A-Mem ran on ChromaDB -> our
     # cosine-fixed ChromaVectorStore; Nemori ran on Qdrant -> local-mode
     # QdrantVectorStore. Others use the profile default (sqlite-vec).
     AMEM_STORE = {"vector_store": "ChromaVectorStore"}
     # Nemori upstream = PostgreSQL(tsvector) + Qdrant dual — both real via
     # embedded builds (pgserver / qdrant local mode)
-    NEMORI_STORE = {"vector_store": "QdrantVectorStore",
-                    "doc_store": "PostgresDocStore"}
+    NEMORI_STORE = {
+        "vector_store": "QdrantVectorStore",
+        "doc_store": "PostgresDocStore",
+    }
     known = {
         "passthrough": (["passthrough"], ("episodic",), 10, False, None, None),
         "amem": (["amem"], ("notes",), 10, True, AMEM_TEMPS, AMEM_STORE),
-        "nemori": (["nemori"], ("episodes", "semantic"),
-                   {"episodes": 10, "semantic": 20}, False, NEMORI_TEMPS,
-                   NEMORI_STORE),
-        "amem_mixed": (["amem"], ("episodic", "notes"), 10, False, AMEM_TEMPS,
-                       AMEM_STORE),
-        "nemori_mixed": (["nemori"], ("episodic", "episodes", "semantic"),
-                         {"episodic": 10, "episodes": 10, "semantic": 20},
-                         False, NEMORI_TEMPS, NEMORI_STORE),
-        "memoryos": (["memoryos"], ("episodic", "pages", "semantic"), 10,
-                     False, None, None),
+        "nemori": (
+            ["nemori"],
+            ("episodes", "semantic"),
+            {"episodes": 10, "semantic": 20},
+            False,
+            NEMORI_TEMPS,
+            NEMORI_STORE,
+        ),
+        "amem_mixed": (
+            ["amem"],
+            ("episodic", "notes"),
+            10,
+            False,
+            AMEM_TEMPS,
+            AMEM_STORE,
+        ),
+        "nemori_mixed": (
+            ["nemori"],
+            ("episodic", "episodes", "semantic"),
+            {"episodic": 10, "episodes": 10, "semantic": 20},
+            False,
+            NEMORI_TEMPS,
+            NEMORI_STORE,
+        ),
+        "memoryos": (
+            ["memoryos"],
+            ("episodic", "pages", "semantic"),
+            10,
+            False,
+            None,
+            None,
+        ),
         # Zep hybrid read-path (round-5 ④): facts/entities get BM25+dense
         # fusion, plus GraphRecall edge expansion wired in the pipeline.
-        "zep_graph": (["zep_graph"], ("episodic", "facts", "entities"), 10,
-                      False, None, None,
-                      ("episodic", "facts", "entities")),
+        "zep_graph": (
+            ["zep_graph"],
+            ("episodic", "facts", "entities"),
+            10,
+            False,
+            None,
+            None,
+            ("episodic", "facts", "entities"),
+        ),
     }
     for cfg in args.configs:
         entry = known[cfg]
-        (organizers, memory_types, k, keyword_queries,
-         role_overrides, slot_overrides) = entry[:6]
+        (
+            organizers,
+            memory_types,
+            k,
+            keyword_queries,
+            role_overrides,
+            slot_overrides,
+        ) = entry[:6]
         lexical_types = entry[6] if len(entry) > 6 else ("episodic",)
-        run(cfg, organizers, memory_types,
-            sample, args.max_sessions, args.limit, embedder, k=k,
-            keyword_queries=keyword_queries, role_overrides=role_overrides,
-            slot_overrides=slot_overrides, lexical_types=lexical_types)
+        run(
+            cfg,
+            organizers,
+            memory_types,
+            sample,
+            args.max_sessions,
+            args.limit,
+            embedder,
+            k=k,
+            keyword_queries=keyword_queries,
+            role_overrides=role_overrides,
+            slot_overrides=slot_overrides,
+            lexical_types=lexical_types,
+        )
 
 
 if __name__ == "__main__":

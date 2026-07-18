@@ -49,17 +49,20 @@ class AgenticMemory:
         # --- stores -------------------------------------------------------
         data_dir = self.config.data_dir
         doc_cls, notes = resolve(
-            "doc_store", DOC_STORE_CANDIDATES, self.caps,
+            "doc_store",
+            DOC_STORE_CANDIDATES,
+            self.caps,
             override=self.config.overrides.get("doc_store"),
             profile_default=self.config.slot_default("doc_store"),
             strict=self.config.strict,
         )
         self._degradations.extend(notes)
-        doc_filenames = {"SqliteDocStore": "memory.db",
-                         "PostgresDocStore": "pgdata"}
+        doc_filenames = {"SqliteDocStore": "memory.db", "PostgresDocStore": "pgdata"}
         doc_path = (
-            data_dir / namespace / doc_filenames.get(doc_cls.__name__, "memory.db")
-        ) if data_dir else None
+            (data_dir / namespace / doc_filenames.get(doc_cls.__name__, "memory.db"))
+            if data_dir
+            else None
+        )
         self.doc = doc_cls(doc_path)
 
         # --- embedder -----------------------------------------------------
@@ -67,7 +70,9 @@ class AgenticMemory:
             self.embedder = embedder
         else:
             cls, notes = resolve(
-                "embedder", EMBEDDER_CANDIDATES, self.caps,
+                "embedder",
+                EMBEDDER_CANDIDATES,
+                self.caps,
                 profile_default=self.config.slot_default("embedder"),
                 strict=self.config.strict,
             )
@@ -79,7 +84,9 @@ class AgenticMemory:
 
         # --- vector store -------------------------------------------------
         vec_cls, notes = resolve(
-            "vector_store", VECTOR_STORE_CANDIDATES, self.caps,
+            "vector_store",
+            VECTOR_STORE_CANDIDATES,
+            self.caps,
             override=self.config.overrides.get("vector_store"),
             profile_default=self.config.slot_default("vector_store"),
             strict=self.config.strict,
@@ -87,16 +94,20 @@ class AgenticMemory:
         self._degradations.extend(notes)
         # Uniform adapter contract: __init__(path | None, dim). None -> the
         # engine's in-memory/ephemeral mode.
-        vec_filenames = {"SqliteVecStore": "vectors.db",
-                         "LanceDBVectorStore": "vectors.lance",
-                         "QdrantVectorStore": "vectors.qdrant",
-                         "ChromaVectorStore": "vectors.chroma"}
+        vec_filenames = {
+            "SqliteVecStore": "vectors.db",
+            "LanceDBVectorStore": "vectors.lance",
+            "QdrantVectorStore": "vectors.qdrant",
+            "ChromaVectorStore": "vectors.chroma",
+        }
         vec_path = (
-            data_dir / namespace / vec_filenames.get(vec_cls.__name__, "vectors")
-        ) if data_dir else None
+            (data_dir / namespace / vec_filenames.get(vec_cls.__name__, "vectors"))
+            if data_dir
+            else None
+        )
         self.vec = vec_cls(vec_path, dim=self.embedder.dim)
 
-        # --- llm (optional in Phase 0: passthrough needs none) -------------
+        # --- llm (optional: built only when llm_roles configured) ----------
         self.budget = BudgetTracker()
         self.llm: LLMClient | None = None
         self.structured: StructuredCaller | None = None
@@ -116,28 +127,41 @@ class AgenticMemory:
 
         # --- graph store (Zep temporal KG; persistent under data_dir — X4) --
         from agmem.stores import GRAPH_STORE_CANDIDATES
+
         graph_cls, notes = resolve(
-            "graph_store", GRAPH_STORE_CANDIDATES, self.caps,
+            "graph_store",
+            GRAPH_STORE_CANDIDATES,
+            self.caps,
             override=self.config.overrides.get("graph_store"),
             profile_default=self.config.slot_default("graph_store"),
             strict=self.config.strict,
         )
         self._degradations.extend(notes)
-        graph_filenames = {"SqliteGraphStore": "graph.db",
-                           "KuzuGraphStore": "graph.kuzu"}
+        graph_filenames = {
+            "SqliteGraphStore": "graph.db",
+            "KuzuGraphStore": "graph.kuzu",
+        }
         graph_path = (
-            data_dir / namespace / graph_filenames.get(graph_cls.__name__, "graph")
-        ) if data_dir else None
+            (data_dir / namespace / graph_filenames.get(graph_cls.__name__, "graph"))
+            if data_dir
+            else None
+        )
         self.graph = graph_cls(graph_path)
 
         self._ctx = OrganizerContext(
-            doc=self.doc, vec=self.vec, embedder=self.embedder,
-            namespace=self.namespace, llm=self.structured, graph=self.graph,
+            doc=self.doc,
+            vec=self.vec,
+            embedder=self.embedder,
+            namespace=self.namespace,
+            llm=self.structured,
+            graph=self.graph,
         )
 
         # --- reranker (Noop keeps fusion order; MMR adds diversity) ---------
         reranker_cls, notes = resolve(
-            "reranker", RERANKER_CANDIDATES, self.caps,
+            "reranker",
+            RERANKER_CANDIDATES,
+            self.caps,
             override=self.config.overrides.get("reranker"),
             profile_default=self.config.slot_default("reranker"),
             strict=self.config.strict,
@@ -147,64 +171,112 @@ class AgenticMemory:
             self.reranker = reranker_cls(self.structured)
         else:
             self.reranker = reranker_cls()
-        self.pipeline = RetrievalPipeline(self.doc, self.vec, self.embedder,
-                                          reranker=self.reranker,
-                                          graph=self.graph,
-                                          lexical_types=self.config.lexical_types)
+        self.pipeline = RetrievalPipeline(
+            self.doc,
+            self.vec,
+            self.embedder,
+            reranker=self.reranker,
+            graph=self.graph,
+            lexical_types=self.config.lexical_types,
+        )
 
         # --- async write worker (docs/03 §3.2) ------------------------------
         self._queue: queue.Queue[Callable[[], None]] | None = None
         self._worker: threading.Thread | None = None
         if not self.config.sync_write:
             self._queue = queue.Queue()
-            self._worker = threading.Thread(target=self._drain, daemon=True,
-                                            name="agmem-worker")
+            self._worker = threading.Thread(target=self._drain, daemon=True, name="agmem-worker")
             self._worker.start()
 
     # ---- write ------------------------------------------------------------
 
-    def add_message(self, content: str, role: str = "user",
-                    timestamp: Any = None, meta: dict | None = None) -> Episode:
+    def add_message(
+        self,
+        content: str,
+        role: str = "user",
+        timestamp: Any = None,
+        meta: dict | None = None,
+    ) -> Episode:
         ep = Episode(
-            content=content, role=role, namespace=self.namespace,
-            timestamp=timestamp or utcnow(), meta=meta or {},
+            content=content,
+            role=role,
+            namespace=self.namespace,
+            timestamp=timestamp or utcnow(),
+            meta=meta or {},
         )
         # sync: raw episode is immediately searchable
         self.doc.add_episode(ep)
-        self.vec.add(ep.id, self.embedder.embed([ep.embedding_text()])[0],
-                     memory_type="episodic", namespace=self.namespace)
-        self.doc.append([MemoryOp(op=OpType.ADD, target_type="episodic",
-                                  target_id=ep.id, actor="ingest",
-                                  payload={"role": role})])
-        self._dispatch(lambda: [
-            self._apply_ops(org.on_message(ep, self._ctx), actor=org.name)
-            for org in self.organizers
-        ])
+        self.vec.add(
+            ep.id,
+            self.embedder.embed([ep.embedding_text()])[0],
+            memory_type="episodic",
+            namespace=self.namespace,
+        )
+        self.doc.append(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodic",
+                    target_id=ep.id,
+                    actor="ingest",
+                    payload={"role": role},
+                )
+            ]
+        )
+        self._dispatch(
+            lambda: [
+                self._apply_ops(org.on_message(ep, self._ctx), actor=org.name)
+                for org in self.organizers
+            ]
+        )
         return ep
 
-    def add_task_result(self, trajectory: list[dict], outcome: str,
-                        task: str, agent_id: str = "agent") -> None:
+    def add_task_result(
+        self, trajectory: list[dict], outcome: str, task: str, agent_id: str = "agent"
+    ) -> None:
         ep = Episode(
-            content=task, role="task", namespace=self.namespace,
+            content=task,
+            role="task",
+            namespace=self.namespace,
             meta={"outcome": outcome, "agent_id": agent_id, "steps": len(trajectory)},
         )
         self.doc.add_episode(ep)
-        self.vec.add(ep.id, self.embedder.embed([ep.embedding_text()])[0],
-                     memory_type="episodic", namespace=self.namespace)
-        self.doc.append([MemoryOp(op=OpType.ADD, target_type="episodic",
-                                  target_id=ep.id, actor="ingest",
-                                  payload={"outcome": outcome})])
-        self._dispatch(lambda: [
-            self._apply_ops(org.on_task_end(trajectory, outcome, task, self._ctx),
-                            actor=org.name)
-            for org in self.organizers
-        ])
+        self.vec.add(
+            ep.id,
+            self.embedder.embed([ep.embedding_text()])[0],
+            memory_type="episodic",
+            namespace=self.namespace,
+        )
+        self.doc.append(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodic",
+                    target_id=ep.id,
+                    actor="ingest",
+                    payload={"outcome": outcome},
+                )
+            ]
+        )
+        self._dispatch(
+            lambda: [
+                self._apply_ops(
+                    org.on_task_end(trajectory, outcome, task, self._ctx),
+                    actor=org.name,
+                )
+                for org in self.organizers
+            ]
+        )
 
     def warm_start(self, corpus: list[Episode]) -> None:
         for ep in corpus:
             self.doc.add_episode(ep)
-            self.vec.add(ep.id, self.embedder.embed([ep.embedding_text()])[0],
-                         memory_type="episodic", namespace=self.namespace)
+            self.vec.add(
+                ep.id,
+                self.embedder.embed([ep.embedding_text()])[0],
+                memory_type="episodic",
+                namespace=self.namespace,
+            )
         for org in self.organizers:
             self._apply_ops(org.warm_start(corpus, self._ctx), actor=org.name)
 
@@ -261,8 +333,12 @@ class AgenticMemory:
             self.doc.put_item(op.target_id, op.target_type, self.namespace, data)
             text = data.get("embedding_text") or data.get("content")
             if text:
-                self.vec.add(op.target_id, self.embedder.embed([text])[0],
-                             memory_type=op.target_type, namespace=self.namespace)
+                self.vec.add(
+                    op.target_id,
+                    self.embedder.embed([text])[0],
+                    memory_type=op.target_type,
+                    namespace=self.namespace,
+                )
         elif op.op == OpType.INVALIDATE:
             items = self.doc.get_items([op.target_id], op.target_type)
             if items:
@@ -282,19 +358,34 @@ class AgenticMemory:
             # heat eviction, G-Memory REMOVE); the log keeps the audit trail.
             # The vector MUST go too — round-5 X1: a surviving vector made
             # deleted items resurface as empty ghost hits.
-            self.doc.put_item(op.target_id, op.target_type, self.namespace,
-                              {"id": op.target_id, "deleted": True})
+            self.doc.put_item(
+                op.target_id,
+                op.target_type,
+                self.namespace,
+                {"id": op.target_id, "deleted": True},
+            )
             self.vec.delete([op.target_id])
 
     # ---- read ---------------------------------------------------------------
 
-    def search(self, query: str, memory_types: Sequence[str] = ("episodic",),
-               k: int | dict[str, int] = 10) -> MemoryBundle:
-        bundle = self.pipeline.search(query, k=k, memory_types=tuple(memory_types),
-                                      namespace=self.namespace)
+    def search(
+        self,
+        query: str,
+        memory_types: Sequence[str] = ("episodic",),
+        k: int | dict[str, int] = 10,
+    ) -> MemoryBundle:
+        bundle = self.pipeline.search(
+            query, k=k, memory_types=tuple(memory_types), namespace=self.namespace
+        )
         # read->write feedback (round-5): organizers see what was served.
-        hits = [(getattr(s.item, "id", None) or s.item.data.get("id"),
-                 s.memory_type, s.score) for s in bundle.items]
+        hits = [
+            (
+                getattr(s.item, "id", None) or s.item.data.get("id"),
+                s.memory_type,
+                s.score,
+            )
+            for s in bundle.items
+        ]
         for org in self.organizers:
             self._apply_ops(org.on_retrieval(hits, self._ctx), actor=org.name)
         return bundle
@@ -310,22 +401,38 @@ class AgenticMemory:
             bullets = self.doc.get_items([mid], "playbook")
             if bullets:
                 field = "helpful" if helpful else "harmful"
-                ops.append(MemoryOp(op=OpType.UPDATE, target_type="playbook",
-                                    target_id=mid,
-                                    payload={field: int(bullets[0].get(field, 0)) + 1}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="playbook",
+                        target_id=mid,
+                        payload={field: int(bullets[0].get(field, 0)) + 1},
+                    )
+                )
                 continue
             strategies = self.doc.get_items([mid], "strategies")
             if strategies:
                 delta = 1.0 if helpful else -2.0
                 new_score = float(strategies[0].get("score", 0)) + delta
-                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                    target_id=mid, payload={"score": new_score}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="strategies",
+                        target_id=mid,
+                        payload={"score": new_score},
+                    )
+                )
                 # G-Memory clear_insights: reward closes the loop — an
                 # insight at score <= 0 stops being served (round-5 W-2)
                 if new_score <= 0 and strategies[0].get("kind") == "insight":
-                    ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
-                                        target_id=mid,
-                                        payload={"reason": "score_pruned"}))
+                    ops.append(
+                        MemoryOp(
+                            op=OpType.DELETE,
+                            target_type="strategies",
+                            target_id=mid,
+                            payload={"reason": "score_pruned"},
+                        )
+                    )
         self._apply_ops(ops, actor="feedback")
         return len(ops)
 
@@ -343,9 +450,9 @@ class AgenticMemory:
             by_section.setdefault(b.get("section", "general"), []).append(
                 f"[{b.get('section','general')}-{b['id'][:5]}] "
                 f"helpful={b.get('helpful', 0)} harmful={b.get('harmful', 0)} "
-                f":: {b.get('content', '')}")
-        return "\n".join(f"## {s}\n" + "\n".join(lines)
-                         for s, lines in sorted(by_section.items()))
+                f":: {b.get('content', '')}"
+            )
+        return "\n".join(f"## {s}\n" + "\n".join(lines) for s, lines in sorted(by_section.items()))
 
     # ---- introspection --------------------------------------------------------
 

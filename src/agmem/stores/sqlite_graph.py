@@ -50,36 +50,56 @@ class SqliteGraphStore:
         with self._lock, self._conn:
             self._conn.executescript(_SCHEMA)
 
-    def upsert_node(self, node_id: str, namespace: str, name: str,
-                    summary: str = "", entity_type: str = "Entity") -> None:
+    def upsert_node(
+        self,
+        node_id: str,
+        namespace: str,
+        name: str,
+        summary: str = "",
+        entity_type: str = "Entity",
+    ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO graph_nodes (id, namespace, name, summary, entity_type)"
                 " VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
                 " name=excluded.name, summary=excluded.summary,"
                 " entity_type=excluded.entity_type",
-                (node_id, namespace, name, summary, entity_type))
+                (node_id, namespace, name, summary, entity_type),
+            )
 
     def find_node_by_name(self, name: str, namespace: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM graph_nodes WHERE namespace=? AND name=? COLLATE NOCASE",
-                (namespace, name)).fetchone()
+                (namespace, name),
+            ).fetchone()
         return dict(row) if row else None
 
-    def upsert_edge(self, edge_id: str, namespace: str, src: str, dst: str,
-                    predicate: str, content: str, valid_at: str | None = None) -> None:
+    def upsert_edge(
+        self,
+        edge_id: str,
+        namespace: str,
+        src: str,
+        dst: str,
+        predicate: str,
+        content: str,
+        valid_at: str | None = None,
+    ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO graph_edges"
                 " (id, namespace, src, dst, predicate, content, valid_at)"
                 " VALUES (?,?,?,?,?,?,?)",
-                (edge_id, namespace, src, dst, predicate, content, valid_at))
+                (edge_id, namespace, src, dst, predicate, content, valid_at),
+            )
 
-    def edges_between(self, src: str, dst: str, namespace: str,
-                      active_only: bool = True) -> list[dict]:
-        sql = ("SELECT * FROM graph_edges WHERE namespace=? AND"
-               " ((src=? AND dst=?) OR (src=? AND dst=?))")
+    def edges_between(
+        self, src: str, dst: str, namespace: str, active_only: bool = True
+    ) -> list[dict]:
+        sql = (
+            "SELECT * FROM graph_edges WHERE namespace=? AND"
+            " ((src=? AND dst=?) OR (src=? AND dst=?))"
+        )
         if active_only:
             sql += f" AND {_ACTIVE}"
         with self._lock:
@@ -93,11 +113,13 @@ class SqliteGraphStore:
             self._conn.execute(
                 "UPDATE graph_edges SET invalid_at=?, expired_at=COALESCE("
                 "expired_at, strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?",
-                (t_invalid, edge_id))
+                (t_invalid, edge_id),
+            )
 
     def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
         with self._lock:
-            rows = self._conn.execute(f"""
+            rows = self._conn.execute(
+                f"""
                 WITH RECURSIVE walk(id, depth) AS (
                     SELECT ?, 0
                     UNION
@@ -107,17 +129,22 @@ class SqliteGraphStore:
                     WHERE w.depth < ? AND e.namespace = ? AND {_ACTIVE}
                 )
                 SELECT DISTINCT n.* FROM walk w JOIN graph_nodes n ON n.id = w.id
-                WHERE w.id != ?""", (node_id, hops, namespace, node_id)).fetchall()
+                WHERE w.id != ?""",
+                (node_id, hops, namespace, node_id),
+            ).fetchall()
         return [dict(r) for r in rows]
 
-    def edges_for_nodes(self, node_ids: list[str], namespace: str,
-                        active_only: bool = True) -> list[dict]:
+    def edges_for_nodes(
+        self, node_ids: list[str], namespace: str, active_only: bool = True
+    ) -> list[dict]:
         """Edges incident to any of the nodes (GraphRecall expansion)."""
         if not node_ids:
             return []
         marks = ",".join("?" * len(node_ids))
-        sql = (f"SELECT * FROM graph_edges WHERE namespace=? AND"
-               f" (src IN ({marks}) OR dst IN ({marks}))")
+        sql = (
+            f"SELECT * FROM graph_edges WHERE namespace=? AND"
+            f" (src IN ({marks}) OR dst IN ({marks}))"
+        )
         if active_only:
             sql += f" AND {_ACTIVE}"
         with self._lock:

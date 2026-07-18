@@ -31,21 +31,33 @@ logger = logging.getLogger("agmem.organizers.gmemory")
 
 SPARSIFY_SCHEMA = {
     "type": "object",
-    "properties": {"key_steps": {"type": "array", "items": {"type": "string"}},
-                   "mistakes": {"type": "array", "items": {"type": "string"}}},
+    "properties": {
+        "key_steps": {"type": "array", "items": {"type": "string"}},
+        "mistakes": {"type": "array", "items": {"type": "string"}},
+    },
     "required": ["key_steps"],
 }
 
 FINETUNE_SCHEMA = {
     "type": "object",
-    "properties": {"operations": {
-        "type": "array", "maxItems": 4,  # upstream: at most 4 ops per prompt
-        "items": {"type": "object",
-                  "properties": {"op": {"type": "string",
-                                        "enum": ["ADD", "EDIT", "REMOVE", "AGREE"]},
-                                 "id": {"type": "string"},
-                                 "rule": {"type": "string"}},
-                  "required": ["op"]}}},
+    "properties": {
+        "operations": {
+            "type": "array",
+            "maxItems": 4,  # upstream: at most 4 ops per prompt
+            "items": {
+                "type": "object",
+                "properties": {
+                    "op": {
+                        "type": "string",
+                        "enum": ["ADD", "EDIT", "REMOVE", "AGREE"],
+                    },
+                    "id": {"type": "string"},
+                    "rule": {"type": "string"},
+                },
+                "required": ["op"],
+            },
+        }
+    },
     "required": ["operations"],
 }
 
@@ -103,15 +115,18 @@ class GMemoryOrganizer(Organizer):
         # reward applies only to insights the agent actually saw (round-5 W-4)
         self._served: set[str] = set()
 
-    def on_retrieval(self, hits: list[tuple[str, str, float]],
-                     ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_retrieval(
+        self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
         self._served.update(i for i, mt, _ in hits if mt == "strategies")
         return []
 
-    def on_task_end(self, trajectory: list[dict], outcome: str,
-                    task: str, ctx: OrganizerContext) -> list[MemoryOp]:
-        traj_text = "\n".join(json.dumps(s, ensure_ascii=False, default=str)
-                              for s in trajectory)[:6000]
+    def on_task_end(
+        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        traj_text = "\n".join(json.dumps(s, ensure_ascii=False, default=str) for s in trajectory)[
+            :6000
+        ]
         self._task_count += 1
         ops: list[MemoryOp] = []
 
@@ -119,10 +134,12 @@ class GMemoryOrganizer(Organizer):
             logger.warning("gmemory: no LLM — storing mechanical trajectory (explicit degradation)")
             key_steps, mistakes = [traj_text[:1000]], []
         else:
-            result = ctx.llm.call("distill",
-                                  SPARSIFY_PROMPT.format(task=task, outcome=outcome,
-                                                         trajectory=traj_text),
-                                  SPARSIFY_SCHEMA, required_keys=("key_steps",))
+            result = ctx.llm.call(
+                "distill",
+                SPARSIFY_PROMPT.format(task=task, outcome=outcome, trajectory=traj_text),
+                SPARSIFY_SCHEMA,
+                required_keys=("key_steps",),
+            )
             if result is None:
                 key_steps, mistakes = [traj_text[:1000]], []
             else:
@@ -130,15 +147,23 @@ class GMemoryOrganizer(Organizer):
                 mistakes = [str(m) for m in result.get("mistakes", [])]
 
         traj_id = new_id()
-        content = "\n".join(key_steps) + (
-            "\nMistakes: " + "; ".join(mistakes) if mistakes else "")
-        ops.append(MemoryOp(
-            op=OpType.ADD, target_type="strategies", target_id=traj_id,
-            payload={"id": traj_id, "title": task[:80], "content": content,
-                     "outcome": outcome, "kind": "trajectory",
-                     "score": 1.0 if outcome == "success" else -2.0,
-                     "embedding_text": f"{task}\n{content}"[:2000]},
-        ))
+        content = "\n".join(key_steps) + ("\nMistakes: " + "; ".join(mistakes) if mistakes else "")
+        ops.append(
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="strategies",
+                target_id=traj_id,
+                payload={
+                    "id": traj_id,
+                    "title": task[:80],
+                    "content": content,
+                    "outcome": outcome,
+                    "kind": "trajectory",
+                    "score": 1.0 if outcome == "success" else -2.0,
+                    "embedding_text": f"{task}\n{content}"[:2000],
+                },
+            )
+        )
 
         if ctx.llm is not None and self._task_count % self.finetune_every == 0:
             ops.extend(self._finetune_insights(task, ctx))
@@ -146,8 +171,7 @@ class GMemoryOrganizer(Organizer):
 
     def _fetch(self, ctx: OrganizerContext, query: str, kind: str, k: int) -> list[dict]:
         emb = ctx.embedder.embed([query])[0]
-        hits = ctx.vec.search(emb, k=k * 3, memory_type="strategies",
-                              namespace=ctx.namespace)
+        hits = ctx.vec.search(emb, k=k * 3, memory_type="strategies", namespace=ctx.namespace)
         items = ctx.doc.get_items([h[0] for h in hits], "strategies")
         return [i for i in items if i.get("kind") == kind and not i.get("deleted")][:k]
 
@@ -157,12 +181,18 @@ class GMemoryOrganizer(Organizer):
         result = ctx.llm.call(
             "distill",
             FINETUNE_PROMPT.format(
-                rules="\n".join(f'- id={i["id"]} (score={i.get("score", 0)}) {i["content"]}'
-                                for i in insights) or "(none)",
+                rules="\n".join(
+                    f'- id={i["id"]} (score={i.get("score", 0)}) {i["content"]}' for i in insights
+                )
+                or "(none)",
                 trajectories="\n".join(
                     f'- [{t.get("outcome")}] {t.get("title")}: {t.get("content", "")[:300]}'
-                    for t in trajectories)),
-            FINETUNE_SCHEMA, required_keys=("operations",))
+                    for t in trajectories
+                ),
+            ),
+            FINETUNE_SCHEMA,
+            required_keys=("operations",),
+        )
         if result is None:
             return []
 
@@ -177,15 +207,30 @@ class GMemoryOrganizer(Organizer):
         n_insights = len(insights)
         list_full = n_insights >= self.insight_max
         for raw in result.get("operations", [])[:4]:
-            op, rid, rule = raw.get("op"), raw.get("id"), str(raw.get("rule", "")).strip()
+            op, rid, rule = (
+                raw.get("op"),
+                raw.get("id"),
+                str(raw.get("rule", "")).strip(),
+            )
             if op == "ADD" and rule:
                 if list_full:
                     continue  # upstream suppresses ADD when the list is full
                 iid = new_id()
-                ops.append(MemoryOp(
-                    op=OpType.ADD, target_type="strategies", target_id=iid,
-                    payload={"id": iid, "title": rule[:60], "content": rule,
-                             "kind": "insight", "score": 2.0, "embedding_text": rule}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.ADD,
+                        target_type="strategies",
+                        target_id=iid,
+                        payload={
+                            "id": iid,
+                            "title": rule[:60],
+                            "content": rule,
+                            "kind": "insight",
+                            "score": 2.0,
+                            "embedding_text": rule,
+                        },
+                    )
+                )
                 n_insights += 1
                 continue
             if rid not in valid or rid in touched:
@@ -193,36 +238,62 @@ class GMemoryOrganizer(Organizer):
             touched.add(rid)
             if op == "EDIT" and rule:
                 scores[rid] += 1.0
-                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                    target_id=rid,
-                                    payload={"content": rule, "score": scores[rid],
-                                             "embedding_text": rule}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="strategies",
+                        target_id=rid,
+                        payload={
+                            "content": rule,
+                            "score": scores[rid],
+                            "embedding_text": rule,
+                        },
+                    )
+                )
             elif op == "AGREE":
                 scores[rid] += 1.0
-                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                    target_id=rid, payload={"score": scores[rid]}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="strategies",
+                        target_id=rid,
+                        payload={"score": scores[rid]},
+                    )
+                )
             elif op == "REMOVE":
                 scores[rid] -= 3.0 if list_full else 1.0
-                ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                    target_id=rid, payload={"score": scores[rid]}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="strategies",
+                        target_id=rid,
+                        payload={"score": scores[rid]},
+                    )
+                )
 
         # prune: any insight whose score dropped to <= 0 is deleted
         for rid, score in scores.items():
             if score <= 0:
-                ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
-                                    target_id=rid,
-                                    payload={"reason": "score_pruned"}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.DELETE,
+                        target_type="strategies",
+                        target_id=rid,
+                        payload={"reason": "score_pruned"},
+                    )
+                )
         return ops
 
-    def project_insights(self, role: str, insights: list[str],
-                         ctx: OrganizerContext) -> list[str]:
+    def project_insights(self, role: str, insights: list[str], ctx: OrganizerContext) -> list[str]:
         """Role-specific insight rewriting (multi-agent injection path)."""
         if ctx.llm is None or not insights:
             return insights
-        result = ctx.llm.call("distill",
-                              PROJECT_PROMPT.format(role=role,
-                                                    insights="\n".join(f"- {i}" for i in insights)),
-                              PROJECT_SCHEMA, required_keys=("insights",))
+        result = ctx.llm.call(
+            "distill",
+            PROJECT_PROMPT.format(role=role, insights="\n".join(f"- {i}" for i in insights)),
+            PROJECT_SCHEMA,
+            required_keys=("insights",),
+        )
         return [str(i) for i in result["insights"]] if result else insights
 
     def backward(self, insight_items: list[dict], reward: float) -> list[MemoryOp]:
@@ -234,11 +305,22 @@ class GMemoryOrganizer(Organizer):
             if self._served and i["id"] not in self._served:
                 continue
             new_score = float(i.get("score", 0)) + reward
-            ops.append(MemoryOp(op=OpType.UPDATE, target_type="strategies",
-                                target_id=i["id"], payload={"score": new_score}))
+            ops.append(
+                MemoryOp(
+                    op=OpType.UPDATE,
+                    target_type="strategies",
+                    target_id=i["id"],
+                    payload={"score": new_score},
+                )
+            )
             if new_score <= 0 and i.get("kind") == "insight":
-                ops.append(MemoryOp(op=OpType.DELETE, target_type="strategies",
-                                    target_id=i["id"],
-                                    payload={"reason": "score_pruned"}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.DELETE,
+                        target_type="strategies",
+                        target_id=i["id"],
+                        payload={"reason": "score_pruned"},
+                    )
+                )
         self._served.clear()
         return ops

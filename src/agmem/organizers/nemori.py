@@ -143,9 +143,12 @@ _FOUR_TESTS = """Each statement must pass all four tests:
 
 # Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT: seven high-value
 # categories, the time/date ban, present-tense atomic style.
-CALIBRATE_PROMPT = """Compare the prediction against the actual conversation and
+CALIBRATE_PROMPT = (
+    """Compare the prediction against the actual conversation and
 extract ONLY new or surprising knowledge the prediction missed or got wrong.
-""" + _FOUR_TESTS + """
+"""
+    + _FOUR_TESTS
+    + """
 High-value categories: identity & background, preferences, technical
 details (technologies, versions, methodologies), relationships, goals &
 plans, beliefs & values, habits & patterns. Do NOT extract low-value
@@ -163,6 +166,7 @@ Actual conversation:
 {segment}
 
 Return JSON: {{"facts": ["...", ...]}}"""
+)
 
 # Cold start (audit P1-7): with no prior semantic knowledge there is nothing
 # to predict from — upstream switches to direct extraction over the generated
@@ -170,9 +174,12 @@ Return JSON: {{"facts": ["...", ...]}}"""
 # path: six categories and NO time/date ban — upstream's own good examples
 # carry dates ("joined Amazon in August 2020"), which matters for temporal
 # questions answered from early semantic facts.
-DIRECT_EXTRACT_PROMPT = """Extract HIGH-VALUE, PERSISTENT knowledge from this
+DIRECT_EXTRACT_PROMPT = (
+    """Extract HIGH-VALUE, PERSISTENT knowledge from this
 episode — long-term valuable knowledge, not temporary conversation details.
-""" + _FOUR_TESTS + """
+"""
+    + _FOUR_TESTS
+    + """
 High-value categories: identity & professional (names, titles, companies,
 education), persistent preferences (favorites, technology choices with
 reasons), technical knowledge (technologies with versions, architectures,
@@ -188,6 +195,7 @@ Title: {title}
 Content: {narrative}
 
 Return JSON: {{"facts": ["...", ...]}}"""
+)
 
 
 def _fmt(ep: Episode) -> str:
@@ -198,10 +206,15 @@ def _fmt(ep: Episode) -> str:
 class NemoriOrganizer(Organizer):
     name = "nemori"
 
-    def __init__(self, buffer_min: int = 2, buffer_max: int = 25,
-                 boundary_confidence: float = 0.7, semantic_top_k: int = 10) -> None:
-        self.buffer_min = buffer_min          # repo config buffer_size_min=2 (not in paper v1)
-        self.buffer_max = buffer_max          # paper beta_max=25
+    def __init__(
+        self,
+        buffer_min: int = 2,
+        buffer_max: int = 25,
+        boundary_confidence: float = 0.7,
+        semantic_top_k: int = 10,
+    ) -> None:
+        self.buffer_min = buffer_min  # repo config buffer_size_min=2 (not in paper v1)
+        self.buffer_max = buffer_max  # paper beta_max=25
         self.boundary_confidence = boundary_confidence  # paper sigma_boundary=0.7
         self.semantic_top_k = semantic_top_k  # repo config search_top_k_semantic=10
         self.buffer: list[Episode] = []
@@ -210,9 +223,11 @@ class NemoriOrganizer(Organizer):
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         if ctx.llm is None:
             if not self._warned_no_llm:
-                logger.warning("nemori: no LLM configured — boundary detection and "
-                               "distillation disabled, messages bypass the buffer "
-                               "(explicit degradation)")
+                logger.warning(
+                    "nemori: no LLM configured — boundary detection and "
+                    "distillation disabled, messages bypass the buffer "
+                    "(explicit degradation)"
+                )
                 self._warned_no_llm = True
             return []
 
@@ -229,11 +244,15 @@ class NemoriOrganizer(Organizer):
                 buffer="\n".join(_fmt(e) for e in self.buffer[:-1]),
                 message=_fmt(self.buffer[-1]),
             ),
-            BOUNDARY_SCHEMA, required_keys=("boundary", "confidence"),
+            BOUNDARY_SCHEMA,
+            required_keys=("boundary", "confidence"),
         )
         if verdict is None:
             return []  # drop counted upstream; treat as no boundary
-        if verdict.get("boundary") and float(verdict.get("confidence", 0.0)) >= self.boundary_confidence:
+        if (
+            verdict.get("boundary")
+            and float(verdict.get("confidence", 0.0)) >= self.boundary_confidence
+        ):
             # The newest message opened the next topic: it stays buffered.
             segment, self.buffer = self.buffer[:-1], [self.buffer[-1]]
             return self._flush_segment(segment, ctx)
@@ -257,11 +276,14 @@ class NemoriOrganizer(Organizer):
         seg_text = "\n".join(_fmt(e) for e in segment)
 
         # 1. representation alignment: title + temporally-anchored narrative
-        gen = ctx.llm.call("distill", EPISODE_PROMPT.format(segment=seg_text),
-                           EPISODE_SCHEMA, required_keys=("title", "narrative"))
+        gen = ctx.llm.call(
+            "distill",
+            EPISODE_PROMPT.format(segment=seg_text),
+            EPISODE_SCHEMA,
+            required_keys=("title", "narrative"),
+        )
         fallback_title = " ".join(segment[0].content.split()[:8])
-        fallback_ts = (segment[0].meta.get("date")
-                       or segment[0].timestamp.isoformat())
+        fallback_ts = segment[0].meta.get("date") or segment[0].timestamp.isoformat()
         if gen is None:
             logger.warning("nemori: episode generation failed — mechanical fallback episode")
             title, narrative, ep_ts = fallback_title, seg_text, fallback_ts
@@ -272,48 +294,72 @@ class NemoriOrganizer(Organizer):
 
         episode_id = new_id()
         source_ids = [e.id for e in segment]
-        ops = [MemoryOp(
-            op=OpType.ADD, target_type="episodes", target_id=episode_id,
-            payload={"id": episode_id, "title": title, "content": narrative,
-                     "timestamp": ep_ts, "source_episode_ids": source_ids,
-                     "embedding_text": f"{title}\n{narrative}"},
-        )]
+        ops = [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id=episode_id,
+                payload={
+                    "id": episode_id,
+                    "title": title,
+                    "content": narrative,
+                    "timestamp": ep_ts,
+                    "source_episode_ids": source_ids,
+                    "embedding_text": f"{title}\n{narrative}",
+                },
+            )
+        ]
         # upstream original_messages format for calibration: role: text,
         # no timestamps (time/date is banned from semantic statements anyway)
         plain_text = "\n".join(f"{e.role}: {e.content}" for e in segment)
-        ops.extend(self._predict_calibrate(title, narrative, plain_text,
-                                           episode_id, source_ids, ctx))
+        ops.extend(
+            self._predict_calibrate(title, narrative, plain_text, episode_id, source_ids, ctx)
+        )
         return ops
 
-    def _predict_calibrate(self, title: str, narrative: str, plain_text: str,
-                           episode_id: str, source_ids: list[str],
-                           ctx: OrganizerContext) -> list[MemoryOp]:
+    def _predict_calibrate(
+        self,
+        title: str,
+        narrative: str,
+        plain_text: str,
+        episode_id: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+    ) -> list[MemoryOp]:
         # Stage 1: predict the episode from title + retrieved knowledge only.
         emb = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
-        hits = ctx.vec.search(emb, k=self.semantic_top_k,
-                              memory_type="semantic", namespace=ctx.namespace)
+        hits = ctx.vec.search(
+            emb, k=self.semantic_top_k, memory_type="semantic", namespace=ctx.namespace
+        )
         known = ctx.doc.get_items([h[0] for h in hits], "semantic")
         if not known:
             # cold start: nothing to predict from -> direct extraction
             # (upstream reads the generated episode, not the raw segment)
-            cal = ctx.llm.call("distill",
-                               DIRECT_EXTRACT_PROMPT.format(title=title,
-                                                            narrative=narrative),
-                               CALIBRATE_SCHEMA, required_keys=("facts",))
+            cal = ctx.llm.call(
+                "distill",
+                DIRECT_EXTRACT_PROMPT.format(title=title, narrative=narrative),
+                CALIBRATE_SCHEMA,
+                required_keys=("facts",),
+            )
         else:
             knowledge = "\n".join(f"- {k.get('content', '')}" for k in known)
-            pred = ctx.llm.call("distill",
-                                PREDICT_PROMPT.format(title=title, knowledge=knowledge),
-                                PREDICT_SCHEMA, required_keys=("prediction",))
+            pred = ctx.llm.call(
+                "distill",
+                PREDICT_PROMPT.format(title=title, knowledge=knowledge),
+                PREDICT_SCHEMA,
+                required_keys=("prediction",),
+            )
             if pred is None:
                 return []  # episode is stored; only distillation is skipped
 
             # Stage 2: calibrate against the RAW segment — extract the gap only.
             cal = ctx.llm.call(
                 "distill",
-                CALIBRATE_PROMPT.format(prediction=str(pred.get("prediction", "")),
-                                        segment=plain_text),
-                CALIBRATE_SCHEMA, required_keys=("facts",),
+                CALIBRATE_PROMPT.format(
+                    prediction=str(pred.get("prediction", "")), segment=plain_text
+                ),
+                CALIBRATE_SCHEMA,
+                required_keys=("facts",),
             )
         if cal is None:
             return []
@@ -325,9 +371,18 @@ class NemoriOrganizer(Organizer):
             if not fact:
                 continue
             fid = new_id()
-            ops.append(MemoryOp(
-                op=OpType.ADD, target_type="semantic", target_id=fid,
-                payload={"id": fid, "content": fact, "episode_id": episode_id,
-                         "source_episode_ids": source_ids, "embedding_text": fact},
-            ))
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id=fid,
+                    payload={
+                        "id": fid,
+                        "content": fact,
+                        "episode_id": episode_id,
+                        "source_episode_ids": source_ids,
+                        "embedding_text": fact,
+                    },
+                )
+            )
         return ops

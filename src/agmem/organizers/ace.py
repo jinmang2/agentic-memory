@@ -40,8 +40,13 @@ REFLECT_SCHEMA = {
             "type": "array",
             "items": {
                 "type": "object",
-                "properties": {"id": {"type": "string"},
-                               "tag": {"type": "string", "enum": ["helpful", "harmful", "neutral"]}},
+                "properties": {
+                    "id": {"type": "string"},
+                    "tag": {
+                        "type": "string",
+                        "enum": ["helpful", "harmful", "neutral"],
+                    },
+                },
                 "required": ["id", "tag"],
             },
         },
@@ -57,9 +62,11 @@ CURATE_SCHEMA = {
             "maxItems": 5,
             "items": {
                 "type": "object",
-                "properties": {"type": {"type": "string", "enum": ["ADD"]},
-                               "section": {"type": "string"},
-                               "content": {"type": "string"}},
+                "properties": {
+                    "type": {"type": "string", "enum": ["ADD"]},
+                    "section": {"type": "string"},
+                    "content": {"type": "string"},
+                },
                 "required": ["type", "section", "content"],
             },
         }
@@ -107,8 +114,7 @@ def _cosine(a: list[float], b: list[float]) -> float:
 class ACEOrganizer(Organizer):
     name = "ace"
 
-    def __init__(self, dedup_threshold: float = DEDUP_THRESHOLD,
-                 max_ops: int = 5) -> None:
+    def __init__(self, dedup_threshold: float = DEDUP_THRESHOLD, max_ops: int = 5) -> None:
         self.dedup_threshold = dedup_threshold
         self.max_ops = max_ops
 
@@ -130,29 +136,37 @@ class ACEOrganizer(Organizer):
             section = b.get("section", "general")
             by_section.setdefault(section, []).append(
                 f"[{section}-{b['id'][:5]}] helpful={b.get('helpful', 0)} "
-                f"harmful={b.get('harmful', 0)} :: {b.get('content', '')}")
-        return "\n".join(f"## {s}\n" + "\n".join(lines)
-                         for s, lines in sorted(by_section.items()))
+                f"harmful={b.get('harmful', 0)} :: {b.get('content', '')}"
+            )
+        return "\n".join(f"## {s}\n" + "\n".join(lines) for s, lines in sorted(by_section.items()))
 
     # -- hook ----------------------------------------------------------------
 
-    def on_task_end(self, trajectory: list[dict], outcome: str,
-                    task: str, ctx: OrganizerContext) -> list[MemoryOp]:
+    def on_task_end(
+        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
         if ctx.llm is None:
             logger.warning("ace: no LLM configured — skipping reflection (explicit skip)")
             return []
 
         import json as _json
-        traj_text = "\n".join(_json.dumps(s, ensure_ascii=False, default=str)
-                              for s in trajectory)[:6000]
+
+        traj_text = "\n".join(_json.dumps(s, ensure_ascii=False, default=str) for s in trajectory)[
+            :6000
+        ]
         playbook = self._current_playbook(ctx)
         by_id = {b["id"]: b for b in playbook}
 
         reflection = ctx.llm.call(
             "distill",
-            REFLECT_PROMPT.format(task=task, outcome=outcome, trajectory=traj_text,
-                                  used_bullets=self._render_playbook(playbook)),
-            REFLECT_SCHEMA, required_keys=("key_insight", "lessons"),
+            REFLECT_PROMPT.format(
+                task=task,
+                outcome=outcome,
+                trajectory=traj_text,
+                used_bullets=self._render_playbook(playbook),
+            ),
+            REFLECT_SCHEMA,
+            required_keys=("key_insight", "lessons"),
         )
         if reflection is None:
             return []
@@ -169,17 +183,24 @@ class ACEOrganizer(Organizer):
                 continue
             full_id = matches[0]
             field = tag["tag"]
-            ops.append(MemoryOp(
-                op=OpType.UPDATE, target_type="playbook", target_id=full_id,
-                payload={field: int(by_id[full_id].get(field, 0)) + 1},
-            ))
+            ops.append(
+                MemoryOp(
+                    op=OpType.UPDATE,
+                    target_type="playbook",
+                    target_id=full_id,
+                    payload={field: int(by_id[full_id].get(field, 0)) + 1},
+                )
+            )
 
         curated = ctx.llm.call(
             "distill",
-            CURATE_PROMPT.format(playbook=self._render_playbook(playbook),
-                                 key_insight=reflection.get("key_insight", ""),
-                                 lessons=reflection.get("lessons", [])),
-            CURATE_SCHEMA, required_keys=("operations",),
+            CURATE_PROMPT.format(
+                playbook=self._render_playbook(playbook),
+                key_insight=reflection.get("key_insight", ""),
+                lessons=reflection.get("lessons", []),
+            ),
+            CURATE_SCHEMA,
+            required_keys=("operations",),
         )
         if curated is None:
             return ops
@@ -191,23 +212,32 @@ class ACEOrganizer(Organizer):
                 continue
             # deterministic grow-and-refine: embedding dedup, always on
             emb = ctx.embedder.embed([content])[0]
-            dup = ctx.vec.search(emb, k=1, memory_type="playbook",
-                                 namespace=ctx.namespace)
+            dup = ctx.vec.search(emb, k=1, memory_type="playbook", namespace=ctx.namespace)
             if dup and dup[0][1] >= self.dedup_threshold:
                 logger.info("ace: dedup skipped near-duplicate bullet (sim=%.2f)", dup[0][1])
                 continue
-            if any(_cosine(emb, prev) >= self.dedup_threshold
-                   for prev in accepted_embs):
+            if any(_cosine(emb, prev) >= self.dedup_threshold for prev in accepted_embs):
                 logger.info("ace: dedup skipped intra-batch near-duplicate")
                 continue
             accepted_embs.append(emb)
-            bullet = Bullet(content=content,
-                            section=str(raw.get("section", "general")) or "general",
-                            namespace=ctx.namespace)
-            ops.append(MemoryOp(
-                op=OpType.ADD, target_type="playbook", target_id=bullet.id,
-                payload={"id": bullet.id, "section": bullet.section,
-                         "content": content, "helpful": 0, "harmful": 0,
-                         "embedding_text": content},
-            ))
+            bullet = Bullet(
+                content=content,
+                section=str(raw.get("section", "general")) or "general",
+                namespace=ctx.namespace,
+            )
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="playbook",
+                    target_id=bullet.id,
+                    payload={
+                        "id": bullet.id,
+                        "section": bullet.section,
+                        "content": content,
+                        "helpful": 0,
+                        "harmful": 0,
+                        "embedding_text": content,
+                    },
+                )
+            )
         return ops

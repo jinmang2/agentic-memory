@@ -17,8 +17,13 @@ from typing import Any, Callable
 
 from agmem.memory import AgenticMemory
 
-CATEGORY_NAMES = {1: "multi-hop", 2: "temporal", 3: "open-domain",
-                  4: "single-hop", 5: "adversarial"}
+CATEGORY_NAMES = {
+    1: "multi-hop",
+    2: "temporal",
+    3: "open-domain",
+    4: "single-hop",
+    5: "adversarial",
+}
 
 # A-Mem official eval (WujiangXu test_advanced.py generate_query_llm): the
 # question is first rewritten into LLM keywords and the keyword string becomes
@@ -59,6 +64,7 @@ Short answer:"""
 
 # ---------------- data loading ----------------
 
+
 def load_locomo(path: str | Path) -> list[dict[str, Any]]:
     return json.loads(Path(path).read_text())
 
@@ -67,7 +73,8 @@ def iter_turns(sample: dict[str, Any], max_sessions: int | None = None):
     """Yield (session_no, date_str, speaker, text) in conversation order."""
     conv = sample["conversation"]
     numbers = sorted(
-        int(m.group(1)) for k in conv
+        int(m.group(1))
+        for k in conv
         if (m := re.fullmatch(r"session_(\d+)", k)) and isinstance(conv[k], list)
     )
     for n in numbers[: max_sessions or len(numbers)]:
@@ -84,9 +91,12 @@ def evidence_sessions(q: dict[str, Any]) -> set[int]:
     return out
 
 
-def select_questions(sample: dict[str, Any], max_sessions: int | None = None,
-                     categories: tuple[int, ...] = (1, 2, 3, 4, 5),
-                     limit: int | None = None) -> list[dict[str, Any]]:
+def select_questions(
+    sample: dict[str, Any],
+    max_sessions: int | None = None,
+    categories: tuple[int, ...] = (1, 2, 3, 4, 5),
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
     """Questions answerable within the ingested session prefix."""
     out = []
     for q in sample["qa"]:
@@ -135,27 +145,38 @@ def bleu1(pred: str, gold: str) -> float:
 
 # ---------------- pipeline ----------------
 
-def ingest(mem: AgenticMemory, sample: dict[str, Any],
-           max_sessions: int | None = None) -> int:
+
+def ingest(mem: AgenticMemory, sample: dict[str, Any], max_sessions: int | None = None) -> int:
     n = 0
     for _sess, date, speaker, text in iter_turns(sample, max_sessions):
-        mem.add_message(f"({date}) {speaker}: {text}", role="user",
-                        meta={"speaker": speaker, "date": date})
+        mem.add_message(
+            f"({date}) {speaker}: {text}",
+            role="user",
+            meta={"speaker": speaker, "date": date},
+        )
         n += 1
     mem.flush()
     return n
 
 
-def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
-           memory_types: tuple[str, ...] = ("episodic",),
-           budget_tokens: int = 6000, keyword_queries: bool = False) -> str:
+def answer(
+    mem: AgenticMemory,
+    question: str,
+    k: int | dict = 10,
+    memory_types: tuple[str, ...] = ("episodic",),
+    budget_tokens: int = 6000,
+    keyword_queries: bool = False,
+) -> str:
     # budget default raised 1600->6000 per fidelity audit P0-3: the tight
     # budget structurally penalized long-item methodologies (Nemori).
     query = question
     if keyword_queries and mem.structured is not None:
         kw = mem.structured.call(
-            "extract", KEYWORD_QUERY_PROMPT.format(question=question),
-            KEYWORD_QUERY_SCHEMA, required_keys=("keywords",))
+            "extract",
+            KEYWORD_QUERY_PROMPT.format(question=question),
+            KEYWORD_QUERY_SCHEMA,
+            required_keys=("keywords",),
+        )
         if kw and str(kw.get("keywords", "")).strip():
             query = str(kw["keywords"]).strip()
     bundle = mem.search(query, memory_types=memory_types, k=k)
@@ -164,37 +185,62 @@ def answer(mem: AgenticMemory, question: str, k: int | dict = 10,
     # the whole profile doc in every QA prompt — round-5 memoryos §3). Only
     # organizers that emit kind="profile" facts produce this section.
     if "semantic" in memory_types:
-        profile = [d.get("content", "") for d in
-                   mem.doc.list_items("semantic", namespace=mem.namespace)
-                   if d.get("kind") == "profile"][-100:]  # upstream KB cap=100
+        profile = [
+            d.get("content", "")
+            for d in mem.doc.list_items("semantic", namespace=mem.namespace)
+            if d.get("kind") == "profile"
+        ][
+            -100:
+        ]  # upstream KB cap=100
         if profile:
-            context = ("User Profile:\n" + "\n".join(f"- {p}" for p in profile)
-                       + "\n\n" + context)
+            context = "User Profile:\n" + "\n".join(f"- {p}" for p in profile) + "\n\n" + context
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
-    reply = mem.llm.chat("generate", [
-        {"role": "user", "content": ANSWER_PROMPT.format(context=context,
-                                                         question=question)},
-    ])
+    reply = mem.llm.chat(
+        "generate",
+        [
+            {
+                "role": "user",
+                "content": ANSWER_PROMPT.format(context=context, question=question),
+            },
+        ],
+    )
     return reply.strip().splitlines()[0] if reply.strip() else ""
 
 
-def evaluate(mem: AgenticMemory, questions: list[dict[str, Any]],
-             k: int | dict = 10,
-             memory_types: tuple[str, ...] = ("episodic",),
-             budget_tokens: int = 6000, keyword_queries: bool = False,
-             progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
+def evaluate(
+    mem: AgenticMemory,
+    questions: list[dict[str, Any]],
+    k: int | dict = 10,
+    memory_types: tuple[str, ...] = ("episodic",),
+    budget_tokens: int = 6000,
+    keyword_queries: bool = False,
+    progress: Callable[[int, int], None] | None = None,
+) -> dict[str, Any]:
     per_cat: dict[str, list[tuple[float, float]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
         gold = q.get("answer") or q.get("adversarial_answer") or ""
-        pred = answer(mem, q["question"], k=k, memory_types=memory_types,
-                      budget_tokens=budget_tokens, keyword_queries=keyword_queries)
+        pred = answer(
+            mem,
+            q["question"],
+            k=k,
+            memory_types=memory_types,
+            budget_tokens=budget_tokens,
+            keyword_queries=keyword_queries,
+        )
         f1, b1 = token_f1(pred, str(gold)), bleu1(pred, str(gold))
         cat = CATEGORY_NAMES.get(q.get("category"), "?")
         per_cat[cat].append((f1, b1))
-        records.append({"q": q["question"], "gold": str(gold), "pred": pred,
-                        "cat": cat, "f1": round(f1, 3)})
+        records.append(
+            {
+                "q": q["question"],
+                "gold": str(gold),
+                "pred": pred,
+                "cat": cat,
+                "f1": round(f1, 3),
+            }
+        )
         if progress:
             progress(i + 1, len(questions))
 

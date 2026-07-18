@@ -45,7 +45,10 @@ def resolve(
         return req.check(caps) if req is not None else (True, "")
 
     # 1. explicit override
-    for wanted, source in ((override, "config override"), (profile_default, "profile default")):
+    for wanted, source in (
+        (override, "config override"),
+        (profile_default, "profile default"),
+    ):
         if not wanted:
             continue
         if wanted not in by_name:

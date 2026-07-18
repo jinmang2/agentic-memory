@@ -31,43 +31,63 @@ logger = logging.getLogger("agmem.organizers.zep_graph")
 
 ENTITY_SCHEMA = {
     "type": "object",
-    "properties": {"entities": {
-        "type": "array", "maxItems": 10,
-        "items": {"type": "object",
-                  "properties": {"name": {"type": "string"},
-                                 "type": {"type": "string"},
-                                 "summary": {"type": "string"}},
-                  "required": ["name"]}}},
+    "properties": {
+        "entities": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["name"],
+            },
+        }
+    },
     "required": ["entities"],
 }
 
 RESOLVE_SCHEMA = {
     "type": "object",
-    "properties": {"duplicate_id": {"type": ["string", "null"]},
-                   "name": {"type": "string"},
-                   "summary": {"type": "string"}},
+    "properties": {
+        "duplicate_id": {"type": ["string", "null"]},
+        "name": {"type": "string"},
+        "summary": {"type": "string"},
+    },
     "required": ["duplicate_id"],
 }
 
 FACT_SCHEMA = {
     "type": "object",
-    "properties": {"facts": {
-        "type": "array", "maxItems": 10,
-        "items": {"type": "object",
-                  "properties": {"subject": {"type": "string"},
-                                 "predicate": {"type": "string"},
-                                 "object": {"type": "string"},
-                                 "statement": {"type": "string"},
-                                 "valid_at": {"type": ["string", "null"]},
-                                 "invalid_at": {"type": ["string", "null"]}},
-                  "required": ["subject", "predicate", "object", "statement"]}}},
+    "properties": {
+        "facts": {
+            "type": "array",
+            "maxItems": 10,
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject": {"type": "string"},
+                    "predicate": {"type": "string"},
+                    "object": {"type": "string"},
+                    "statement": {"type": "string"},
+                    "valid_at": {"type": ["string", "null"]},
+                    "invalid_at": {"type": ["string", "null"]},
+                },
+                "required": ["subject", "predicate", "object", "statement"],
+            },
+        }
+    },
     "required": ["facts"],
 }
 
 EDGE_RESOLVE_SCHEMA = {
     "type": "object",
-    "properties": {"duplicate_of": {"type": ["string", "null"]},
-                   "contradicts": {"type": "array", "items": {"type": "string"}}},
+    "properties": {
+        "duplicate_of": {"type": ["string", "null"]},
+        "contradicts": {"type": "array", "items": {"type": "string"}},
+    },
     "required": ["contradicts"],
 }
 
@@ -148,12 +168,15 @@ def _fmt(ep: Episode) -> str:
 class ZepGraphOrganizer(Organizer):
     name = "zep_graph"
 
-    def __init__(self, graph: SqliteGraphStore | None = None,
-                 candidate_threshold: float = 0.6,
-                 context_window: int = 4) -> None:
+    def __init__(
+        self,
+        graph: SqliteGraphStore | None = None,
+        candidate_threshold: float = 0.6,
+        context_window: int = 4,
+    ) -> None:
         self._own_graph = graph
         self.candidate_threshold = candidate_threshold  # upstream NODE_DEDUP_COSINE_MIN_SCORE
-        self.context_window = context_window            # paper n=4 previous messages
+        self.context_window = context_window  # paper n=4 previous messages
         self._recent: list[Episode] = []
 
     def _graph(self, ctx: OrganizerContext) -> SqliteGraphStore:
@@ -170,8 +193,9 @@ class ZepGraphOrganizer(Organizer):
 
     # -- entity resolution ----------------------------------------------------
 
-    def _resolve_entity(self, ent: dict, ep: Episode, ctx: OrganizerContext,
-                        ops: list[MemoryOp]) -> str:
+    def _resolve_entity(
+        self, ent: dict, ep: Episode, ctx: OrganizerContext, ops: list[MemoryOp]
+    ) -> str:
         """Three-stage resolution (Graphiti): embedding candidates ->
         exact normalized name -> LLM judgment. Returns the node id."""
         graph = self._graph(ctx)
@@ -180,10 +204,11 @@ class ZepGraphOrganizer(Organizer):
         etype = str(ent.get("type", "Entity"))
 
         emb = ctx.embedder.embed([name])[0]  # name only, as upstream
-        hits = [(i, s) for i, s in
-                ctx.vec.search(emb, k=5, memory_type="entities",
-                               namespace=ctx.namespace)
-                if s >= self.candidate_threshold]
+        hits = [
+            (i, s)
+            for i, s in ctx.vec.search(emb, k=5, memory_type="entities", namespace=ctx.namespace)
+            if s >= self.candidate_threshold
+        ]
         cands = ctx.doc.get_items([i for i, _ in hits], "entities")
 
         norm = name.casefold()
@@ -195,40 +220,64 @@ class ZepGraphOrganizer(Organizer):
             verdict = ctx.llm.call(
                 "extract",
                 RESOLVE_PROMPT.format(
-                    name=name, summary=summary, content=ep.content,
+                    name=name,
+                    summary=summary,
+                    content=ep.content,
                     candidates="\n".join(
                         f'- id={c["id"]} name="{c.get("name", "")}" '
-                        f'summary="{c.get("summary", "")}"' for c in cands)),
-                RESOLVE_SCHEMA, required_keys=("duplicate_id",))
+                        f'summary="{c.get("summary", "")}"'
+                        for c in cands
+                    ),
+                ),
+                RESOLVE_SCHEMA,
+                required_keys=("duplicate_id",),
+            )
             dup = (verdict or {}).get("duplicate_id")
             by_id = {c["id"]: c for c in cands}
             if dup in by_id:
                 # merge: refresh canonical name/summary (paper: "generates
                 # an updated name and summary" — round-5 ⑦)
                 new_name = str(verdict.get("name") or by_id[dup].get("name", name))
-                new_summary = str(verdict.get("summary")
-                                  or by_id[dup].get("summary", summary))
+                new_summary = str(verdict.get("summary") or by_id[dup].get("summary", summary))
                 graph.upsert_node(dup, ctx.namespace, new_name, new_summary, etype)
-                ops.append(MemoryOp(
-                    op=OpType.UPDATE, target_type="entities", target_id=dup,
-                    payload={"name": new_name, "summary": new_summary,
-                             "embedding_text": new_name}))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="entities",
+                        target_id=dup,
+                        payload={
+                            "name": new_name,
+                            "summary": new_summary,
+                            "embedding_text": new_name,
+                        },
+                    )
+                )
                 return dup
 
         node_id = new_id()
         graph.upsert_node(node_id, ctx.namespace, name, summary, etype)
-        ops.append(MemoryOp(
-            op=OpType.ADD, target_type="entities", target_id=node_id,
-            payload={"id": node_id, "name": name, "summary": summary,
-                     "entity_type": etype, "source_episode_ids": [ep.id],
-                     "embedding_text": name}))
+        ops.append(
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="entities",
+                target_id=node_id,
+                payload={
+                    "id": node_id,
+                    "name": name,
+                    "summary": summary,
+                    "entity_type": etype,
+                    "source_episode_ids": [ep.id],
+                    "embedding_text": name,
+                },
+            )
+        )
         return node_id
 
     # -- hook -----------------------------------------------------------------
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         previous = "\n".join(_fmt(e) for e in self._recent) or "(none)"
-        self._recent = (self._recent + [ep])[-self.context_window:]
+        self._recent = (self._recent + [ep])[-self.context_window :]
 
         if ctx.llm is None:
             logger.warning("zep_graph: no LLM — skipping graph construction (explicit skip)")
@@ -238,7 +287,9 @@ class ZepGraphOrganizer(Organizer):
         extracted = ctx.llm.call(
             "extract",
             ENTITY_PROMPT.format(previous=previous, content=ep.content),
-            ENTITY_SCHEMA, required_keys=("entities",))
+            ENTITY_SCHEMA,
+            required_keys=("entities",),
+        )
         if not extracted or not extracted.get("entities"):
             return []
 
@@ -246,8 +297,7 @@ class ZepGraphOrganizer(Organizer):
         name_to_id: dict[str, str] = {}
         for ent in extracted["entities"][:10]:
             if str(ent.get("name", "")).strip():
-                name_to_id[str(ent["name"]).strip()] = \
-                    self._resolve_entity(ent, ep, ctx, ops)
+                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(ent, ep, ctx, ops)
 
         if len(name_to_id) < 2:
             return ops
@@ -255,9 +305,15 @@ class ZepGraphOrganizer(Organizer):
         ref_time = ep.timestamp.isoformat()
         facts = ctx.llm.call(
             "extract",
-            FACT_PROMPT.format(names=list(name_to_id), ref_time=ref_time,
-                               previous=previous, content=ep.content),
-            FACT_SCHEMA, required_keys=("facts",))
+            FACT_PROMPT.format(
+                names=list(name_to_id),
+                ref_time=ref_time,
+                previous=previous,
+                content=ep.content,
+            ),
+            FACT_SCHEMA,
+            required_keys=("facts",),
+        )
         if not facts:
             return ops
 
@@ -272,27 +328,39 @@ class ZepGraphOrganizer(Organizer):
             existing = graph.edges_between(subj, obj, ctx.namespace)
             if existing:
                 by_id = {e["id"]: e for e in existing}
-                verdict = ctx.llm.call(
-                    "distill",
-                    EDGE_RESOLVE_PROMPT.format(
-                        existing="\n".join(
-                            f'- id={e["id"]} "{e["content"]}" '
-                            f'(valid {e.get("valid_at") or "?"} - '
-                            f'{e.get("invalid_at") or "present"})'
-                            for e in existing),
-                        statement=statement, valid_at=valid_at),
-                    EDGE_RESOLVE_SCHEMA, required_keys=("contradicts",)) or {}
+                verdict = (
+                    ctx.llm.call(
+                        "distill",
+                        EDGE_RESOLVE_PROMPT.format(
+                            existing="\n".join(
+                                f'- id={e["id"]} "{e["content"]}" '
+                                f'(valid {e.get("valid_at") or "?"} - '
+                                f'{e.get("invalid_at") or "present"})'
+                                for e in existing
+                            ),
+                            statement=statement,
+                            valid_at=valid_at,
+                        ),
+                        EDGE_RESOLVE_SCHEMA,
+                        required_keys=("contradicts",),
+                    )
+                    or {}
+                )
 
                 dup = verdict.get("duplicate_of")
                 if dup in by_id:
                     # duplicate: reuse the edge, append provenance (upstream
                     # episodes.append) — no new edge (round-5 ⑤)
                     items = ctx.doc.get_items([dup], "facts")
-                    prov = list((items[0] if items else {})
-                                .get("source_episode_ids", []))
-                    ops.append(MemoryOp(
-                        op=OpType.UPDATE, target_type="facts", target_id=dup,
-                        payload={"source_episode_ids": prov + [ep.id]}))
+                    prov = list((items[0] if items else {}).get("source_episode_ids", []))
+                    ops.append(
+                        MemoryOp(
+                            op=OpType.UPDATE,
+                            target_type="facts",
+                            target_id=dup,
+                            payload={"source_episode_ids": prov + [ep.id]},
+                        )
+                    )
                     continue
 
                 for eid in verdict.get("contradicts", []):
@@ -305,25 +373,47 @@ class ZepGraphOrganizer(Organizer):
                     # the new fact ended
                     if e.get("invalid_at") and str(e["invalid_at"]) <= valid_at:
                         continue
-                    if invalid_at and e.get("valid_at") and \
-                            str(invalid_at) <= str(e["valid_at"]):
+                    if invalid_at and e.get("valid_at") and str(invalid_at) <= str(e["valid_at"]):
                         continue
                     graph.invalidate_edge(eid, valid_at)
-                    ops.append(MemoryOp(op=OpType.INVALIDATE, target_type="facts",
-                                        target_id=eid,
-                                        payload={"t_invalid": valid_at}))
+                    ops.append(
+                        MemoryOp(
+                            op=OpType.INVALIDATE,
+                            target_type="facts",
+                            target_id=eid,
+                            payload={"t_invalid": valid_at},
+                        )
+                    )
 
             edge_id = new_id()
-            graph.upsert_edge(edge_id, ctx.namespace, subj, obj,
-                              str(f.get("predicate", "related_to")),
-                              statement, valid_at=valid_at)
-            payload = {"id": edge_id, "content": statement,
-                       "subject": f.get("subject"), "predicate": f.get("predicate"),
-                       "object": f.get("object"), "valid_at": valid_at,
-                       "source_episode_ids": [ep.id], "embedding_text": statement}
+            graph.upsert_edge(
+                edge_id,
+                ctx.namespace,
+                subj,
+                obj,
+                str(f.get("predicate", "related_to")),
+                statement,
+                valid_at=valid_at,
+            )
+            payload = {
+                "id": edge_id,
+                "content": statement,
+                "subject": f.get("subject"),
+                "predicate": f.get("predicate"),
+                "object": f.get("object"),
+                "valid_at": valid_at,
+                "source_episode_ids": [ep.id],
+                "embedding_text": statement,
+            }
             if invalid_at:
                 payload["invalid_at"] = str(invalid_at)
                 graph.invalidate_edge(edge_id, str(invalid_at))
-            ops.append(MemoryOp(op=OpType.ADD, target_type="facts",
-                                target_id=edge_id, payload=payload))
+            ops.append(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="facts",
+                    target_id=edge_id,
+                    payload=payload,
+                )
+            )
         return ops

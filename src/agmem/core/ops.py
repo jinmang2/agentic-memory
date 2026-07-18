@@ -30,10 +30,10 @@ class OpType(str, Enum):
 @dataclass
 class MemoryOp:
     op: OpType
-    target_type: str            # one of MEMORY_TYPES
+    target_type: str  # one of MEMORY_TYPES
     target_id: str
     payload: dict[str, Any] = field(default_factory=dict)
-    actor: str = "system"       # organizer name that produced the op
+    actor: str = "system"  # organizer name that produced the op
     t_transaction: datetime = field(default_factory=utcnow)
 
     def to_json(self) -> str:
@@ -43,8 +43,15 @@ class MemoryOp:
         return json.dumps(d, ensure_ascii=False, default=str)
 
     @classmethod
-    def from_row(cls, op: str, target_type: str, target_id: str,
-                 payload: str, actor: str, t_transaction: str) -> "MemoryOp":
+    def from_row(
+        cls,
+        op: str,
+        target_type: str,
+        target_id: str,
+        payload: str,
+        actor: str,
+        t_transaction: str,
+    ) -> "MemoryOp":
         return cls(
             op=OpType(op),
             target_type=target_type,

@@ -5,4 +5,9 @@ from agmem.embed.st_embedder import SentenceTransformerEmbedder
 # Preference order for the resolver.
 EMBEDDER_CANDIDATES: list[type] = [SentenceTransformerEmbedder, FakeEmbedder]
 
-__all__ = ["Embedder", "FakeEmbedder", "SentenceTransformerEmbedder", "EMBEDDER_CANDIDATES"]
+__all__ = [
+    "Embedder",
+    "FakeEmbedder",
+    "SentenceTransformerEmbedder",
+    "EMBEDDER_CANDIDATES",
+]

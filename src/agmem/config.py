@@ -49,12 +49,12 @@ DEFAULT_EMBED_MODEL = {
 @dataclass
 class AgmemConfig:
     profile: str = "lite"
-    data_dir: Path | None = None            # None -> in-memory (tests)
-    embed_model: str | None = None          # None -> profile default
-    overrides: dict[str, str] = field(default_factory=dict)   # slot -> class name
+    data_dir: Path | None = None  # None -> in-memory (tests)
+    embed_model: str | None = None  # None -> profile default
+    overrides: dict[str, str] = field(default_factory=dict)  # slot -> class name
     llm_roles: dict[str, RoleConfig] = field(default_factory=dict)
     strict: bool = False
-    sync_write: bool = True                 # Phase 0: synchronous apply
+    sync_write: bool = True  # False -> background write worker (memory.py)
     use_guided_json: bool = True
     # memory types that get a BM25/FTS lexical channel fused with dense
     # (Zep hybrid search adds "facts"/"entities"; A-Mem/Nemori stay
@@ -68,8 +68,9 @@ class AgmemConfig:
 
     @property
     def resolved_embed_model(self) -> str:
-        return self.embed_model or DEFAULT_EMBED_MODEL.get(self.profile,
-                                                           DEFAULT_EMBED_MODEL["lite"])
+        return self.embed_model or DEFAULT_EMBED_MODEL.get(
+            self.profile, DEFAULT_EMBED_MODEL["lite"]
+        )
 
 
 def load_config(path: str | Path) -> AgmemConfig:

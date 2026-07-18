@@ -16,8 +16,18 @@ from pathlib import Path
 from agmem.capabilities.requires import Requires
 
 _NODE_COLS = ("id", "namespace", "name", "summary", "entity_type", "created_at")
-_EDGE_COLS = ("id", "namespace", "src", "dst", "predicate", "content",
-              "created_at", "expired_at", "valid_at", "invalid_at")
+_EDGE_COLS = (
+    "id",
+    "namespace",
+    "src",
+    "dst",
+    "predicate",
+    "content",
+    "created_at",
+    "expired_at",
+    "valid_at",
+    "invalid_at",
+)
 
 
 def _now() -> str:
@@ -41,12 +51,14 @@ class KuzuGraphStore:
             self._conn.execute(
                 "CREATE NODE TABLE IF NOT EXISTS Entity("
                 "id STRING PRIMARY KEY, namespace STRING, name STRING,"
-                " summary STRING, entity_type STRING, created_at STRING)")
+                " summary STRING, entity_type STRING, created_at STRING)"
+            )
             self._conn.execute(
                 "CREATE REL TABLE IF NOT EXISTS RELATES(FROM Entity TO Entity,"
                 " id STRING, namespace STRING, predicate STRING, content STRING,"
                 " created_at STRING, expired_at STRING, valid_at STRING,"
-                " invalid_at STRING)")
+                " invalid_at STRING)"
+            )
 
     def _rows(self, result, cols: tuple[str, ...]) -> list[dict]:
         out = []
@@ -56,8 +68,14 @@ class KuzuGraphStore:
 
     # -- nodes ----------------------------------------------------------------
 
-    def upsert_node(self, node_id: str, namespace: str, name: str,
-                    summary: str = "", entity_type: str = "Entity") -> None:
+    def upsert_node(
+        self,
+        node_id: str,
+        namespace: str,
+        name: str,
+        summary: str = "",
+        entity_type: str = "Entity",
+    ) -> None:
         with self._lock:
             self._conn.execute(
                 "MERGE (n:Entity {id: $id})"
@@ -65,8 +83,15 @@ class KuzuGraphStore:
                 "  n.entity_type=$etype, n.created_at=$now"
                 " ON MATCH SET n.name=$name, n.summary=$summary,"
                 "  n.entity_type=$etype",
-                {"id": node_id, "ns": namespace, "name": name,
-                 "summary": summary, "etype": entity_type, "now": _now()})
+                {
+                    "id": node_id,
+                    "ns": namespace,
+                    "name": name,
+                    "summary": summary,
+                    "etype": entity_type,
+                    "now": _now(),
+                },
+            )
 
     def find_node_by_name(self, name: str, namespace: str) -> dict | None:
         with self._lock:
@@ -74,14 +99,23 @@ class KuzuGraphStore:
                 "MATCH (n:Entity) WHERE n.namespace=$ns AND"
                 " lower(n.name)=lower($name) RETURN n.id, n.namespace, n.name,"
                 " n.summary, n.entity_type, n.created_at",
-                {"ns": namespace, "name": name})
+                {"ns": namespace, "name": name},
+            )
             rows = self._rows(res, _NODE_COLS)
         return rows[0] if rows else None
 
     # -- edges ----------------------------------------------------------------
 
-    def upsert_edge(self, edge_id: str, namespace: str, src: str, dst: str,
-                    predicate: str, content: str, valid_at: str | None = None) -> None:
+    def upsert_edge(
+        self,
+        edge_id: str,
+        namespace: str,
+        src: str,
+        dst: str,
+        predicate: str,
+        content: str,
+        valid_at: str | None = None,
+    ) -> None:
         with self._lock:
             self._conn.execute(
                 "MATCH (a:Entity {id: $src}), (b:Entity {id: $dst})"
@@ -90,20 +124,31 @@ class KuzuGraphStore:
                 "  e.content=$content, e.valid_at=$valid, e.created_at=$now"
                 " ON MATCH SET e.predicate=$pred, e.content=$content,"
                 "  e.valid_at=$valid",
-                {"src": src, "dst": dst, "eid": edge_id, "ns": namespace,
-                 "pred": predicate, "content": content, "valid": valid_at,
-                 "now": _now()})
+                {
+                    "src": src,
+                    "dst": dst,
+                    "eid": edge_id,
+                    "ns": namespace,
+                    "pred": predicate,
+                    "content": content,
+                    "valid": valid_at,
+                    "now": _now(),
+                },
+            )
 
-    def edges_between(self, src: str, dst: str, namespace: str,
-                      active_only: bool = True) -> list[dict]:
+    def edges_between(
+        self, src: str, dst: str, namespace: str, active_only: bool = True
+    ) -> list[dict]:
         active = " AND e.invalid_at IS NULL" if active_only else ""
         with self._lock:
             res = self._conn.execute(
                 "MATCH (a:Entity)-[e:RELATES]-(b:Entity)"
-                " WHERE e.namespace=$ns AND a.id=$src AND b.id=$dst" + active +
-                " RETURN DISTINCT e.id, e.namespace, a.id, b.id, e.predicate,"
+                " WHERE e.namespace=$ns AND a.id=$src AND b.id=$dst"
+                + active
+                + " RETURN DISTINCT e.id, e.namespace, a.id, b.id, e.predicate,"
                 " e.content, e.created_at, e.expired_at, e.valid_at, e.invalid_at",
-                {"ns": namespace, "src": src, "dst": dst})
+                {"ns": namespace, "src": src, "dst": dst},
+            )
             return self._rows(res, _EDGE_COLS)
 
     def invalidate_edge(self, edge_id: str, t_invalid: str) -> None:
@@ -111,10 +156,12 @@ class KuzuGraphStore:
             self._conn.execute(
                 "MATCH ()-[e:RELATES]->() WHERE e.id=$eid"
                 " SET e.invalid_at=$t, e.expired_at=coalesce(e.expired_at, $now)",
-                {"eid": edge_id, "t": t_invalid, "now": _now()})
+                {"eid": edge_id, "t": t_invalid, "now": _now()},
+            )
 
-    def edges_for_nodes(self, node_ids: list[str], namespace: str,
-                        active_only: bool = True) -> list[dict]:
+    def edges_for_nodes(
+        self, node_ids: list[str], namespace: str, active_only: bool = True
+    ) -> list[dict]:
         if not node_ids:
             return []
         active = " AND e.invalid_at IS NULL" if active_only else ""
@@ -122,10 +169,12 @@ class KuzuGraphStore:
             res = self._conn.execute(
                 "MATCH (a:Entity)-[e:RELATES]->(b:Entity)"
                 " WHERE e.namespace=$ns AND (list_contains($ids, a.id)"
-                " OR list_contains($ids, b.id))" + active +
-                " RETURN DISTINCT e.id, e.namespace, a.id, b.id, e.predicate,"
+                " OR list_contains($ids, b.id))"
+                + active
+                + " RETURN DISTINCT e.id, e.namespace, a.id, b.id, e.predicate,"
                 " e.content, e.created_at, e.expired_at, e.valid_at, e.invalid_at",
-                {"ns": namespace, "ids": node_ids})
+                {"ns": namespace, "ids": node_ids},
+            )
             return self._rows(res, _EDGE_COLS)
 
     def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
@@ -149,7 +198,9 @@ class KuzuGraphStore:
                     res = self._conn.execute(
                         "MATCH (n:Entity) WHERE list_contains($ids, n.id)"
                         " RETURN n.id, n.namespace, n.name, n.summary,"
-                        " n.entity_type, n.created_at", {"ids": nxt})
+                        " n.entity_type, n.created_at",
+                        {"ids": nxt},
+                    )
                     out.extend(self._rows(res, _NODE_COLS))
         return out
 

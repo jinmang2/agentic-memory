@@ -54,8 +54,13 @@ class SqliteVecStore:
                 )
             self._conn.execute("INSERT OR REPLACE INTO vec_meta VALUES ('dim', ?)", (str(dim),))
 
-    def add(self, item_id: str, embedding: list[float],
-            memory_type: str = "episodic", namespace: str = "main") -> None:
+    def add(
+        self,
+        item_id: str,
+        embedding: list[float],
+        memory_type: str = "episodic",
+        namespace: str = "main",
+    ) -> None:
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         with self._lock, self._conn:
@@ -72,9 +77,13 @@ class SqliteVecStore:
                 (rowid, _serialize(embedding)),
             )
 
-    def search(self, embedding: list[float], k: int = 10,
-               memory_type: str | None = None,
-               namespace: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        memory_type: str | None = None,
+        namespace: str | None = None,
+    ) -> list[tuple[str, float]]:
         # Over-fetch then post-filter on map attributes.
         fetch_k = k * 4 if (memory_type or namespace) else k
         with self._lock:
@@ -105,10 +114,7 @@ class SqliteVecStore:
                 f" JOIN vectors v ON v.rowid = m.rowid WHERE m.item_id IN ({marks})",
                 ids,
             ).fetchall()
-        return {
-            item_id: list(struct.unpack(f"{self.dim}f", blob))
-            for item_id, blob in rows
-        }
+        return {item_id: list(struct.unpack(f"{self.dim}f", blob)) for item_id, blob in rows}
 
     def delete(self, ids: list[str]) -> None:
         if not ids:
@@ -120,8 +126,7 @@ class SqliteVecStore:
             ).fetchall()
             for (rowid,) in rows:
                 self._conn.execute("DELETE FROM vectors WHERE rowid = ?", (rowid,))
-            self._conn.execute(
-                f"DELETE FROM vec_map WHERE item_id IN ({marks})", ids)
+            self._conn.execute(f"DELETE FROM vec_map WHERE item_id IN ({marks})", ids)
 
     def count(self) -> int:
         with self._lock:

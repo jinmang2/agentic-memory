@@ -44,8 +44,13 @@ class NumpyVectorStore:
         self._meta = [tuple(m) for m in meta["meta"]]
         self._pos = {i: n for n, i in enumerate(self._ids)}
 
-    def add(self, item_id: str, embedding: list[float],
-            memory_type: str = "episodic", namespace: str = "main") -> None:
+    def add(
+        self,
+        item_id: str,
+        embedding: list[float],
+        memory_type: str = "episodic",
+        namespace: str = "main",
+    ) -> None:
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         vec = np.asarray(embedding, dtype=np.float32)
@@ -63,9 +68,13 @@ class NumpyVectorStore:
                 self._meta.append((namespace, memory_type))
                 self._vecs = np.vstack([self._vecs, vec[None, :]])
 
-    def search(self, embedding: list[float], k: int = 10,
-               memory_type: str | None = None,
-               namespace: str | None = None) -> list[tuple[str, float]]:
+    def search(
+        self,
+        embedding: list[float],
+        k: int = 10,
+        memory_type: str | None = None,
+        namespace: str | None = None,
+    ) -> list[tuple[str, float]]:
         with self._lock:
             if not self._ids:
                 return []
@@ -112,7 +121,8 @@ class NumpyVectorStore:
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             np.savez_compressed(
-                self.path, vecs=self._vecs,
+                self.path,
+                vecs=self._vecs,
                 meta=json.dumps({"ids": self._ids, "meta": self._meta}),
             )
 
