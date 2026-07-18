@@ -275,3 +275,41 @@ def test_memoryos_heat_eviction_drops_reverse_index():
     )
     inv = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.INVALIDATE]
     assert inv == []
+
+
+# ---------------- A-Mem input="episodes" consumer (Task 13) -----------------
+
+
+def test_amem_consumes_episodes_and_retires_notes():
+    from agmem.organizers.amem import AMemOrganizer
+
+    org = AMemOrganizer(input="episodes")
+    mem = _mk(organizers=[org])  # LLM 없음 → bare note 경로 (explicit degradation)
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id="e1",
+                payload={"id": "e1", "content": "ep narrative", "timestamp": "2026-01-01"},
+            )
+        ],
+        actor="src",
+    )
+    notes = [o for o in mem.log.tail(10) if o.target_type == "notes"]
+    assert len(notes) == 1 and notes[0].payload["source_episode_ids"] == ["e1"]
+    mem._propagate_events(
+        [
+            MemoryOp(
+                op=OpType.MERGE,
+                target_type="episodes",
+                target_id="e2",
+                payload={"id": "e2", "content": "merged", "supersedes": ["e1"]},
+            )
+        ],
+        actor="src",
+    )
+    inv = [
+        o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.INVALIDATE
+    ]
+    assert len(inv) == 1 and inv[0].target_id == notes[0].target_id

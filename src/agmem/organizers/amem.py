@@ -33,7 +33,7 @@ import logging
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, Note
-from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.amem")
 
@@ -118,12 +118,56 @@ Return JSON: {{"should_evolve": true/false,
 class AMemOrganizer(Organizer):
     name = "amem"
 
-    def __init__(self, top_k: int = 5) -> None:
+    def __init__(self, top_k: int = 5, input: str = "messages") -> None:
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
+        # input="episodes": chained-manager mode (Task 12 pattern) —
+        # subscribe to another organizer's episodes instead of the raw
+        # message stream. on_memory_event feeds episodes into the same
+        # note pipeline (_ingest); on_message becomes a no-op.
+        # ``_episode_notes`` maps episode id -> the ADD note it produced,
+        # so a later supersedes can INVALIDATE the note (spec §3).
+        self.input_mode = input
+        if input == "episodes":
+            self.consumes = ("episodes",)
+        self._episode_notes: dict[str, str] = {}
 
     def on_message(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        if self.input_mode == "episodes":
+            return []  # input is fed via on_memory_event only (spec §3)
+        return self._ingest(ep, ctx)
+
+    def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
+        if self.input_mode != "episodes":
+            return []
+        ops: list[MemoryOp] = []
+        for sid in ev.supersedes:
+            nid = self._episode_notes.pop(sid, None)
+            if nid:
+                ops.append(
+                    MemoryOp(
+                        op=OpType.INVALIDATE,
+                        target_type="notes",
+                        target_id=nid,
+                        payload={"reason": "episode_superseded"},
+                    )
+                )
+        if ev.op is OpType.UPDATE:
+            return ops  # note 재작성은 하지 않음 — 문서화된 staleness (spec §3)
+        unit = Episode(
+            content=str(ev.payload.get("content", "")),
+            role="episode",
+            id=ev.target_id,
+            namespace=ctx.namespace,
+            meta={"date": ev.payload.get("timestamp", "")},
+        )
+        note_ops = self._ingest(unit, ctx)
+        if note_ops:
+            self._episode_notes[ev.target_id] = note_ops[0].target_id  # 첫 op = ADD note
+        return ops + note_ops
+
+    def _ingest(self, ep: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         # upstream "talk start time": the conversation date when known,
         # not the ingest wall clock
         talk_time = ep.meta.get("date") or ep.timestamp.isoformat()
