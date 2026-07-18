@@ -66,6 +66,8 @@ Short answer:"""
 
 
 def load_locomo(path: str | Path) -> list[dict[str, Any]]:
+    """Raw snap-research/locomo samples (typically 10); raises on a missing
+    file or invalid JSON — no fallback to an empty list."""
     return json.loads(Path(path).read_text())
 
 
@@ -84,6 +86,8 @@ def iter_turns(sample: dict[str, Any], max_sessions: int | None = None):
 
 
 def evidence_sessions(q: dict[str, Any]) -> set[int]:
+    """Session numbers referenced by `q["evidence"]` entries (e.g. `"D3:2"` ->
+    `3`); empty set if there's no evidence field or no `D<n>:` prefixed refs."""
     out = set()
     for ev in q.get("evidence", []):
         if m := re.match(r"D(\d+):", str(ev)):
@@ -115,6 +119,8 @@ _ARTICLES = re.compile(r"\b(a|an|the)\b")
 
 
 def normalize(text: str) -> list[str]:
+    """Tokens, not text: lowercased, punctuation stripped, articles (a/an/the)
+    removed, whitespace-split (SQuAD-style normalization for F1/BLEU-1)."""
     text = str(text).lower()
     text = text.translate(str.maketrans("", "", string.punctuation))
     text = _ARTICLES.sub(" ", text)
@@ -122,6 +128,8 @@ def normalize(text: str) -> list[str]:
 
 
 def token_f1(pred: str, gold: str) -> float:
+    """1.0 if both normalize to no tokens, 0.0 if only one does, else the
+    harmonic mean of precision/recall over the token multiset overlap."""
     p, g = normalize(pred), normalize(gold)
     if not p or not g:
         return float(p == g)
@@ -134,6 +142,8 @@ def token_f1(pred: str, gold: str) -> float:
 
 
 def bleu1(pred: str, gold: str) -> float:
+    """Same empty-token edge case as `token_f1`; otherwise unigram precision
+    scaled by a brevity penalty when `pred` is shorter than `gold`."""
     p, g = normalize(pred), normalize(gold)
     if not p or not g:
         return float(p == g)
@@ -147,6 +157,9 @@ def bleu1(pred: str, gold: str) -> float:
 
 
 def ingest(mem: AgenticMemory, sample: dict[str, Any], max_sessions: int | None = None) -> int:
+    """Feeds every turn (up to `max_sessions`) into `mem.add_message` in
+    conversation order, then flushes; returns the number of turns ingested.
+    Mutates `mem`'s namespace state — not idempotent across repeated calls."""
     n = 0
     for _sess, date, speaker, text in iter_turns(sample, max_sessions):
         mem.add_message(
@@ -167,6 +180,11 @@ def answer(
     budget_tokens: int = 6000,
     keyword_queries: bool = False,
 ) -> str:
+    """One QA turn: optionally rewrite `question` into keywords (A-Mem's
+    upstream eval query style) before `mem.search`, inject the MemoryOS
+    profile section unconditionally when `"semantic"` is in `memory_types`,
+    then generate. Raises `RuntimeError` if `mem.llm` is unset. Returns `""`
+    if the LLM reply is empty after stripping."""
     # budget default raised 1600->6000 per fidelity audit P0-3: the tight
     # budget structurally penalized long-item methodologies (Nemori).
     query = question
@@ -217,6 +235,10 @@ def evaluate(
     keyword_queries: bool = False,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
+    """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
+    per category; `progress(i, total)` (1-indexed `i`) fires after each
+    question if given. `records` in the result carries one row per question
+    for error inspection, not just the aggregates."""
     per_cat: dict[str, list[tuple[float, float]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
@@ -245,6 +267,7 @@ def evaluate(
             progress(i + 1, len(questions))
 
     def agg(pairs: list[tuple[float, float]]) -> dict[str, float]:
+        """Mean F1/BLEU-1 as 0-100 percentages, plus the pair count."""
         return {
             "f1": round(100 * sum(p[0] for p in pairs) / len(pairs), 2),
             "bleu1": round(100 * sum(p[1] for p in pairs) / len(pairs), 2),

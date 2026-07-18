@@ -19,9 +19,16 @@ def _serialize(vec: list[float]) -> bytes:
 
 
 class SqliteVecStore:
+    """`VectorStore` on the sqlite-vec extension; a rowid<->item_id map table
+    carries namespace/memory_type for post-filtering (vec0 itself is
+    filter-free)."""
+
     requires = Requires(python_pkgs=("sqlite_vec",))
 
     def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
+        """Raises `ValueError` if an existing index at ``path`` was built
+        with a different ``dim`` — embedders can't be swapped in place
+        without rebuilding the collection (docs/03 §1.2)."""
         import sqlite_vec  # gated by requires
 
         self.path = str(path) if path is not None else ":memory:"
@@ -61,6 +68,8 @@ class SqliteVecStore:
         memory_type: str = "episodic",
         namespace: str = "main",
     ) -> None:
+        """Upsert by `item_id`; raises `ValueError` on an embedding/store dim
+        mismatch."""
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         with self._lock, self._conn:
@@ -84,6 +93,9 @@ class SqliteVecStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
+        """Over-fetches (4x when filtering) then drops rows failing the
+        namespace/memory_type filter, so a heavily-filtered query can still
+        return fewer than ``k`` results if the pool is thin."""
         # Over-fetch then post-filter on map attributes.
         fetch_k = k * 4 if (memory_type or namespace) else k
         with self._lock:
@@ -133,6 +145,7 @@ class SqliteVecStore:
             return int(self._conn.execute("SELECT COUNT(*) FROM vec_map").fetchone()[0])
 
     def persist(self) -> None:
+        """No-op — SQLite already persists each write on commit."""
         pass  # SQLite persists on commit
 
     def close(self) -> None:

@@ -64,9 +64,16 @@ CREATE TABLE IF NOT EXISTS evolution_log (
 
 
 class PostgresDocStore:
+    """`DocStore` backed by a real, embedded PostgreSQL — see module
+    docstring for the pgserver/tsvector rationale and the contract this
+    mirrors from `SqliteDocStore`."""
+
     requires = Requires(python_pkgs=("pgserver", "psycopg"))
 
     def __init__(self, path: str | Path | None = None) -> None:
+        """``path=None`` provisions a private temp datadir that `close()`
+        deletes; a path reuses/creates a persistent datadir that survives
+        close()."""
         import pgserver
         import psycopg
 
@@ -81,7 +88,7 @@ class PostgresDocStore:
 
     # -- episodes -------------------------------------------------------------
 
-    def add_episode(self, ep: Episode) -> None:
+    def add_episode(self, episode: Episode) -> None:
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO episodes (id, namespace, role, content, timestamp, meta)"
@@ -90,12 +97,12 @@ class PostgresDocStore:
                 " content=EXCLUDED.content, timestamp=EXCLUDED.timestamp,"
                 " meta=EXCLUDED.meta",
                 (
-                    ep.id,
-                    ep.namespace,
-                    ep.role,
-                    ep.content,
-                    ep.timestamp.isoformat(),
-                    json.dumps(ep.meta, ensure_ascii=False, default=str),
+                    episode.id,
+                    episode.namespace,
+                    episode.role,
+                    episode.content,
+                    episode.timestamp.isoformat(),
+                    json.dumps(episode.meta, ensure_ascii=False, default=str),
                 ),
             )
 
@@ -199,6 +206,8 @@ class PostgresDocStore:
     def search_lexical_items(
         self, query: str, memory_type: str, k: int = 10, namespace: str | None = None
     ) -> list[tuple[str, float]]:
+        """(item_id, score), highest-relevance-first (ts_rank is already
+        higher-is-better, unlike bm25 — no sign flip needed here)."""
         sql = (
             "SELECT id, ts_rank(content_tsv, q) AS rank FROM items,"
             " websearch_to_tsquery('simple', %s) q"
@@ -277,6 +286,9 @@ class PostgresDocStore:
         return int(row[0] or 0)
 
     def close(self) -> None:
+        """Shuts down the embedded pgserver and, for an ephemeral datadir,
+        deletes it — irreversible; do not call while other stores share
+        the same datadir."""
         with self._lock:
             self._conn.close()
         self._server.cleanup()

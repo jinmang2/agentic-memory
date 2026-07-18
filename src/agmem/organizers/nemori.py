@@ -230,6 +230,9 @@ Return JSON: {{"facts": ["...", ...]}}"""
 
 
 class NemoriOrganizer(Organizer):
+    """Nemori (see module docstring for the segment/episode/semantic pipeline and
+    upstream-deviation list)."""
+
     name = "nemori"
 
     def __init__(
@@ -254,6 +257,11 @@ class NemoriOrganizer(Organizer):
         integrate_top_k: int | None = None,
         integrate_tau: float | None = None,
     ) -> None:
+        """`fidelity` selects a preset from `NEMORI_PRESETS` ("v1" if None/unknown,
+        keeping the no-arg constructor stable); every other explicit (non-None)
+        kwarg overrides that preset's value for the matching field. See the module
+        docstring for what each preset combination implies (segmenter, merge
+        stance, semantic-integration strategy)."""
         # Preset resolution: an explicit (non-None) kwarg always wins over
         # the preset's value for that field. fidelity=None (or unknown) ==
         # "v1" so the no-arg constructor stays config/test compatible.
@@ -328,6 +336,13 @@ class NemoriOrganizer(Organizer):
         self._warned_no_llm = False
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Returns `[]` (with a one-time warning) if `ctx.llm` is unset — messages
+        bypass the buffer entirely rather than accumulating unprocessed, since
+        there is no way to ever flush them without an LLM. Otherwise buffers the
+        episode, lets the configured segmenter decide how much to cut, and flushes
+        zero or more segments; ops from multiple segments in one call share a
+        within-batch supersession guard so an earlier segment's INVALIDATE is
+        respected by a later one before either is actually applied to the stores."""
         if ctx.llm is None:
             if not self._warned_no_llm:
                 logger.warning(
@@ -355,6 +370,9 @@ class NemoriOrganizer(Organizer):
         return ops
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
+        """Replays `corpus` through `on_message`, then flushes the buffer — unlike a
+        stream of `add_message` calls, warm start has no later message to trigger a
+        boundary cut, so the tail segment would otherwise sit unflushed."""
         ops = super().warm_start(corpus, ctx)
         ops.extend(self.flush_buffer(ctx))  # don't strand the tail segment
         return ops
@@ -371,6 +389,9 @@ class NemoriOrganizer(Organizer):
         return ops
 
     def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
+        """No-op unless `consolidation="semantic_offline"` was selected at
+        construction and `ctx.llm` is set — otherwise there is no deferred pass
+        configured to run."""
         if self._consolidator is None or ctx.llm is None:
             return []
         return self._consolidator.run(self, ctx)

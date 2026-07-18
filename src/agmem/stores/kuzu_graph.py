@@ -35,9 +35,15 @@ def _now() -> str:
 
 
 class KuzuGraphStore:
+    """Embedded Cypher graph store; see module docstring for the bi-temporal
+    edge invariant (edges are invalidated, never deleted) it shares with
+    `SqliteGraphStore`."""
+
     requires = Requires(python_pkgs=("kuzu",))
 
     def __init__(self, path: str | Path | None = None) -> None:
+        """`path=None` opens an in-memory database; otherwise the database
+        directory is created and reused across instances."""
         import kuzu
 
         if path is None:
@@ -76,6 +82,8 @@ class KuzuGraphStore:
         summary: str = "",
         entity_type: str = "Entity",
     ) -> None:
+        """Merge by `node_id`: sets `created_at` only on first insert, refreshes
+        name/summary/entity_type on every call."""
         with self._lock:
             self._conn.execute(
                 "MERGE (n:Entity {id: $id})"
@@ -94,6 +102,7 @@ class KuzuGraphStore:
             )
 
     def find_node_by_name(self, name: str, namespace: str) -> dict | None:
+        """Case-insensitive exact match within `namespace`; `None` if no node matches."""
         with self._lock:
             res = self._conn.execute(
                 "MATCH (n:Entity) WHERE n.namespace=$ns AND"
@@ -116,6 +125,8 @@ class KuzuGraphStore:
         content: str,
         valid_at: str | None = None,
     ) -> None:
+        """Merge by `edge_id`: idempotent re-upsert refreshes predicate/content/valid_at
+        but never touches `invalid_at`/`expired_at` — those are `invalidate_edge`'s job."""
         with self._lock:
             self._conn.execute(
                 "MATCH (a:Entity {id: $src}), (b:Entity {id: $dst})"
@@ -139,6 +150,8 @@ class KuzuGraphStore:
     def edges_between(
         self, src: str, dst: str, namespace: str, active_only: bool = True
     ) -> list[dict]:
+        """Undirected match between `src` and `dst`; `active_only=True` (default)
+        excludes edges with a non-null `invalid_at`."""
         active = " AND e.invalid_at IS NULL" if active_only else ""
         with self._lock:
             res = self._conn.execute(
@@ -152,6 +165,9 @@ class KuzuGraphStore:
             return self._rows(res, _EDGE_COLS)
 
     def invalidate_edge(self, edge_id: str, t_invalid: str) -> None:
+        """Sets `invalid_at`; `expired_at` is set only the first time (via
+        `coalesce`) so re-invalidating an already-invalid edge is a no-op on
+        that field. The edge row itself is never deleted."""
         with self._lock:
             self._conn.execute(
                 "MATCH ()-[e:RELATES]->() WHERE e.id=$eid"
@@ -162,6 +178,8 @@ class KuzuGraphStore:
     def edges_for_nodes(
         self, node_ids: list[str], namespace: str, active_only: bool = True
     ) -> list[dict]:
+        """Directed edges touching any of `node_ids` as source or destination
+        (deduped); `active_only` filters as in `edges_between`."""
         if not node_ids:
             return []
         active = " AND e.invalid_at IS NULL" if active_only else ""
@@ -178,6 +196,7 @@ class KuzuGraphStore:
             return self._rows(res, _EDGE_COLS)
 
     def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
+        """BFS out to `hops` hops over active edges only; `node_id` itself is excluded."""
         # hop-by-hop frontier walk over ACTIVE edges — version-stable across
         # Kuzu releases (recursive-rel predicate syntax varies)
         seen, frontier = {node_id}, [node_id]
@@ -205,6 +224,8 @@ class KuzuGraphStore:
         return out
 
     def counts(self) -> dict[str, int]:
+        """Edge count includes invalidated edges (never deleted, so `edges` is
+        a lifetime total, not an active-only count)."""
         with self._lock:
             n = self._conn.execute("MATCH (n:Entity) RETURN count(n)").get_next()[0]
             e = self._conn.execute("MATCH ()-[e:RELATES]->() RETURN count(e)").get_next()[0]

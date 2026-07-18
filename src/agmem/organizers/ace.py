@@ -112,9 +112,18 @@ def _cosine(a: list[float], b: list[float]) -> float:
 
 
 class ACEOrganizer(Organizer):
+    """ACE playbook organizer (arXiv:2510.04618 §3; see module docstring for
+    upstream deviations). Reflector+curator write only through returned
+    MemoryOps — reads of the full playbook go through ``ctx.doc_store`` /
+    ``ctx.vector_store`` (round-5 §3.2), never a partial top-k view."""
+
     name = "ace"
 
     def __init__(self, dedup_threshold: float = DEDUP_THRESHOLD, max_ops: int = 5) -> None:
+        """``dedup_threshold`` gates embedding-cosine dedup against both the
+        existing playbook and the current curator batch (round-5 §3.4,
+        always-on per module docstring); ``max_ops`` caps ADD operations
+        accepted from one curator call."""
         self.dedup_threshold = dedup_threshold
         self.max_ops = max_ops
 
@@ -145,6 +154,12 @@ class ACEOrganizer(Organizer):
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Reflect on the trajectory, then curate new bullets. Returns []
+        with no side effect when no LLM is configured or the reflection
+        call fails (explicit skip, logged); otherwise returns UPDATE ops
+        for helpful/harmful counters on tag-validated existing bullet ids
+        plus ADD ops for curated bullets that survive dedup (see
+        ``dedup_threshold``), up to ``max_ops``."""
         if ctx.llm is None:
             logger.warning("ace: no LLM configured — skipping reflection (explicit skip)")
             return []

@@ -166,6 +166,9 @@ def _fmt(episode: Episode) -> str:
 
 
 class ZepGraphOrganizer(Organizer):
+    """Zep temporal-KG organizer (see module docstring for the extraction/resolution
+    pipeline and paper mapping)."""
+
     name = "zep_graph"
 
     def __init__(
@@ -174,6 +177,12 @@ class ZepGraphOrganizer(Organizer):
         candidate_threshold: float = 0.6,
         context_window: int = 4,
     ) -> None:
+        """`graph=None` defers to `ctx.graph_store` at hook time (facade-wired,
+        persistent); pass an explicit `graph` to override that (e.g. standalone use).
+        `candidate_threshold` is the min cosine similarity for entity-resolution
+        embedding candidates (upstream `NODE_DEDUP_COSINE_MIN_SCORE`);
+        `context_window` bounds how many recent messages are shown to the entity/fact
+        extraction prompts (paper n=4)."""
         self._own_graph = graph
         self.candidate_threshold = candidate_threshold  # upstream NODE_DEDUP_COSINE_MIN_SCORE
         self.context_window = context_window  # paper n=4 previous messages
@@ -278,6 +287,11 @@ class ZepGraphOrganizer(Organizer):
     # -- hook -----------------------------------------------------------------
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Returns `[]` without calling the LLM if `ctx.llm` is unset (logged warning,
+        explicit skip) or if entity extraction finds nothing. Entities are resolved
+        and their ops appended before fact extraction runs, so a partial result (no
+        facts, or fewer than 2 resolved entities) still keeps entity-resolution ops.
+        Facts naming an unresolved/hallucinated entity are dropped individually."""
         previous = "\n".join(_fmt(e) for e in self._recent) or "(none)"
         self._recent = (self._recent + [episode])[-self.context_window :]
 

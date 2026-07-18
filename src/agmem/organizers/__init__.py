@@ -1,3 +1,9 @@
+"""Organizer registry: maps config/CLI organizer names to their classes.
+
+Consumed by ``AgenticMemory``'s ``organizers`` constructor arg and mcp/server.py's
+``--organizers`` flag, both of which accept these string keys interchangeably with
+pre-built ``Organizer`` instances."""
+
 from agmem.organizers.ace import ACEOrganizer
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext

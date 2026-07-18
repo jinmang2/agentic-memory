@@ -105,9 +105,20 @@ Return JSON: {{"insights": ["role-tailored insight", ...]}}"""
 
 
 class GMemoryOrganizer(Organizer):
+    """G-Memory trajectory + insight-rule organizer (arXiv:2506.07398; see
+    module docstring for the query-graph approximation and score-semantics
+    deviations from the official code). Writes only via returned MemoryOps;
+    reads (task-similar trajectories/insights) go through ``ctx.doc_store``
+    / ``ctx.vector_store``."""
+
     name = "gmemory"
 
     def __init__(self, finetune_every: int = 5, insight_max: int = 10) -> None:
+        """``finetune_every``: run the insight-rule finetune LLM call once
+        per this many ``on_task_end`` calls. ``insight_max``: cap on
+        insights fetched into one finetune prompt — reaching it suppresses
+        further ADD operations (upstream full-list behavior, round-5
+        §2.2)."""
         self.finetune_every = finetune_every
         self.insight_max = insight_max
         self._task_count = 0
@@ -118,12 +129,19 @@ class GMemoryOrganizer(Organizer):
     def on_retrieval(
         self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Records served insight ids into ``_served`` for ``backward()``
+        reward attribution (round-5 W-4); always returns [] — no store
+        writes, no LLM calls."""
         self._served.update(i for i, mt, _ in hits if mt == "strategies")
         return []
 
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Always emits one ADD trajectory op (mechanical fallback to a
+        truncated raw trajectory when no LLM is configured or sparsify
+        fails); every ``finetune_every`` calls, additionally runs
+        ``_finetune_insights`` and appends its ADD/UPDATE/DELETE ops."""
         traj_text = "\n".join(json.dumps(s, ensure_ascii=False, default=str) for s in trajectory)[
             :6000
         ]

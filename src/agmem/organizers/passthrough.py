@@ -12,7 +12,10 @@ from agmem.organizers.base import Organizer, OrganizerContext
 
 
 class PassthroughOrganizer(Organizer):
+    """Control-condition organizer: every hook is a no-op (see module docstring)."""
+
     name = "passthrough"
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Always returns `[]` — the facade already stored/indexed the raw episode."""
         return []  # the facade already stored/indexed the raw episode

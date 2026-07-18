@@ -69,9 +69,16 @@ def _fts_query(query: str) -> str:
 
 
 class SqliteDocStore:
+    """Default `DocStore`: one SQLite file backs episodes, derived items, and
+    the evolution log, each with an FTS5 shadow table for lexical search.
+    Safe to share across threads (serialized behind an internal lock)."""
+
     requires = Requires()  # stdlib only — always available
 
     def __init__(self, path: str | Path | None = None) -> None:
+        """``path=None`` opens an in-memory, non-persistent database; a path
+        creates parent dirs as needed and opens WAL mode for concurrent reads
+        during writes."""
         self.path = str(path) if path is not None else ":memory:"
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -84,24 +91,24 @@ class SqliteDocStore:
 
     # -- episodes -----------------------------------------------------------
 
-    def add_episode(self, ep: Episode) -> None:
+    def add_episode(self, episode: Episode) -> None:
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO episodes (id, namespace, role, content, timestamp, meta)"
                 " VALUES (?,?,?,?,?,?)",
                 (
-                    ep.id,
-                    ep.namespace,
-                    ep.role,
-                    ep.content,
-                    ep.timestamp.isoformat(),
-                    json.dumps(ep.meta, ensure_ascii=False, default=str),
+                    episode.id,
+                    episode.namespace,
+                    episode.role,
+                    episode.content,
+                    episode.timestamp.isoformat(),
+                    json.dumps(episode.meta, ensure_ascii=False, default=str),
                 ),
             )
-            self._conn.execute("DELETE FROM episodes_fts WHERE id = ?", (ep.id,))
+            self._conn.execute("DELETE FROM episodes_fts WHERE id = ?", (episode.id,))
             self._conn.execute(
                 "INSERT INTO episodes_fts (content, id, namespace) VALUES (?,?,?)",
-                (ep.content, ep.id, ep.namespace),
+                (episode.content, episode.id, episode.namespace),
             )
 
     def get_episodes(self, ids: list[str]) -> list[Episode]:
@@ -293,7 +300,8 @@ class SqliteDocStore:
             self._conn.close()
 
 
-def episode_to_dict(ep: Episode) -> dict[str, Any]:
-    d = asdict(ep)
-    d["timestamp"] = ep.timestamp.isoformat()
+def episode_to_dict(episode: Episode) -> dict[str, Any]:
+    """Serialize an `Episode` to a JSON-ready dict (timestamp as ISO 8601 string)."""
+    d = asdict(episode)
+    d["timestamp"] = episode.timestamp.isoformat()
     return d

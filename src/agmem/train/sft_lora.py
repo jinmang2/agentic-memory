@@ -16,6 +16,10 @@ from pathlib import Path
 
 
 def main() -> None:
+    """CLI entrypoint (see module docstring for usage/VRAM constraints).
+    Exits via `SystemExit` with an actionable message if the `train` extra
+    isn't installed, rather than a raw `ImportError` traceback. Trains and
+    saves a LoRA adapter to `--out`; does not merge it into the base model."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--data", required=True, help="jsonl from distill_data.py")
     ap.add_argument("--model", default="Qwen/Qwen3-0.6B")
@@ -46,6 +50,9 @@ def main() -> None:
     tok = AutoTokenizer.from_pretrained(args.model)
 
     def to_text(r: dict) -> dict:
+        """One training row's chat-template text: system + prompt (user) +
+        the teacher's completion (assistant), so the student learns to
+        reproduce `completion` given `prompt`."""
         messages = [
             {
                 "role": "system",
@@ -59,6 +66,8 @@ def main() -> None:
     ds = Dataset.from_list([to_text(r) for r in rows])
 
     def tokenize(batch):
+        """`labels` is a copy of `input_ids` — plain causal-LM loss over the
+        whole templated sequence, not masked to the assistant span only."""
         out = tok(batch["text"], truncation=True, max_length=args.max_len)
         out["labels"] = out["input_ids"].copy()
         return out

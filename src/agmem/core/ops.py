@@ -18,6 +18,8 @@ from agmem.core.types import utcnow
 
 
 class OpType(str, Enum):
+    """The mutation kinds every organizer's output is normalized into."""
+
     ADD = "ADD"
     UPDATE = "UPDATE"
     MERGE = "MERGE"
@@ -29,6 +31,14 @@ class OpType(str, Enum):
 
 @dataclass
 class MemoryOp:
+    """The only channel through which an organizer may mutate memory state.
+
+    Organizers never write to a store directly (docs/04 §2) — they return
+    `MemoryOp`s, which `AgenticMemory` appends to the evolution log and then
+    applies. `target_type` must be one of `MEMORY_TYPES`; `payload` shape is
+    op- and target-type-specific (interpreted by `AgenticMemory._apply_one`).
+    """
+
     op: OpType
     target_type: str  # one of MEMORY_TYPES
     target_id: str
@@ -37,6 +47,7 @@ class MemoryOp:
     t_transaction: datetime = field(default_factory=utcnow)
 
     def to_json(self) -> str:
+        """Serialize for the evolution log; `op`/`t_transaction` become strings."""
         d = asdict(self)
         d["op"] = self.op.value
         d["t_transaction"] = self.t_transaction.isoformat()
@@ -52,6 +63,7 @@ class MemoryOp:
         actor: str,
         t_transaction: str,
     ) -> "MemoryOp":
+        """Inverse of `to_json`; `payload` may be `""`/`None` (empty dict then)."""
         return cls(
             op=OpType(op),
             target_type=target_type,
@@ -65,8 +77,12 @@ class MemoryOp:
 class EvolutionLog(Protocol):
     """Append-only op log. Implemented by the doc store."""
 
-    def append(self, ops: list[MemoryOp]) -> None: ...
+    def append(self, ops: list[MemoryOp]) -> None:
+        """Persist before the caller applies the ops (log-ahead, docs/12 §3.2)."""
+        ...
 
-    def tail(self, n: int = 20) -> list[MemoryOp]: ...
+    def tail(self, n: int = 20) -> list[MemoryOp]:
+        """Most recent `n` ops, oldest-first (so replay order is preserved)."""
+        ...
 
     def count(self) -> int: ...

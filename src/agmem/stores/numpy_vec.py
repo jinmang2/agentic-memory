@@ -18,9 +18,14 @@ from agmem.capabilities.requires import Requires
 
 
 class NumpyVectorStore:
+    """Brute-force exact-cosine `VectorStore` reference implementation — see
+    module docstring for why it is a test fixture, not a runtime candidate."""
+
     requires = Requires()  # numpy is a hard dependency of agmem itself
 
     def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
+        """Loads from `path` if it already exists; raises `ValueError` on a
+        stored/requested `dim` mismatch (docs/03 §1.2)."""
         self.path = Path(path) if path else None
         self.dim = dim
         self._lock = threading.RLock()
@@ -51,6 +56,8 @@ class NumpyVectorStore:
         memory_type: str = "episodic",
         namespace: str = "main",
     ) -> None:
+        """Upsert by `item_id`; the embedding is L2-normalized in place so
+        `search`'s dot product is cosine similarity."""
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         vec = np.asarray(embedding, dtype=np.float32)
@@ -75,6 +82,9 @@ class NumpyVectorStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
+        """`namespace`/`memory_type` are post-filters applied while walking the
+        full similarity-sorted order, so `k` bounds the returned count after
+        filtering, not the number of candidates scored."""
         with self._lock:
             if not self._ids:
                 return []
@@ -97,10 +107,12 @@ class NumpyVectorStore:
             return out
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
+        """Ids not present in the store are silently omitted from the result."""
         with self._lock:
             return {i: self._vecs[self._pos[i]].tolist() for i in ids if i in self._pos}
 
     def delete(self, ids: list[str]) -> None:
+        """Ids not present in the store are ignored, not errored."""
         with self._lock:
             drop = {i for i in ids if i in self._pos}
             if not drop:
@@ -116,6 +128,7 @@ class NumpyVectorStore:
             return len(self._ids)
 
     def persist(self) -> None:
+        """No-op when opened without a `path` (in-memory only)."""
         if not self.path:
             return
         with self._lock:
@@ -127,4 +140,6 @@ class NumpyVectorStore:
             )
 
     def close(self) -> None:
+        """Flushes to `path` before releasing — unlike most other adapters, this
+        store has no live connection to close, only an in-memory buffer."""
         self.persist()

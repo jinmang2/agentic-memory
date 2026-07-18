@@ -18,9 +18,14 @@ _TABLE = "vectors"
 
 
 class LanceDBVectorStore:
+    """Cosine-metric `VectorStore` over a LanceDB table (see module docstring
+    for the persistence/ephemeral split and prefilter semantics)."""
+
     requires = Requires(python_pkgs=("lancedb",))
 
     def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
+        """`path=None` uses a private temp dir removed in `close()`; opening an
+        existing table with a different `dim` raises `ValueError` (docs/03 §1.2)."""
         import lancedb
         import pyarrow as pa
 
@@ -56,6 +61,8 @@ class LanceDBVectorStore:
         memory_type: str = "episodic",
         namespace: str = "main",
     ) -> None:
+        """Upsert by `item_id` (delete-then-add); raises `ValueError` on an
+        embedding/store dim mismatch."""
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         # upsert = delete + add (ids are uuid hex, safe to inline)
@@ -78,6 +85,8 @@ class LanceDBVectorStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
+        """Converts Lance's cosine *distance* to similarity (`1 - dist`) so
+        results match the `VectorStore` contract of higher = closer."""
         q = self._tbl.search(embedding).metric("cosine")
         preds = []
         if namespace:
@@ -90,6 +99,7 @@ class LanceDBVectorStore:
         return [(r["id"], 1.0 - float(r["_distance"])) for r in rows]
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
+        """Ids not present in the table are silently omitted from the result."""
         if not ids:
             return {}
         id_list = ", ".join(f"'{i}'" for i in ids)  # uuid hex, safe to inline
@@ -106,8 +116,12 @@ class LanceDBVectorStore:
         return int(self._tbl.count_rows())
 
     def persist(self) -> None:
+        """No-op: Lance datasets are durable per write, unlike stores that
+        batch to memory and need an explicit flush."""
         pass  # Lance datasets are durable per write
 
     def close(self) -> None:
+        """Removes the private temp dir when opened with `path=None`; a
+        `path`-backed dataset needs no cleanup."""
         if self._ephemeral_dir:
             shutil.rmtree(self._ephemeral_dir, ignore_errors=True)

@@ -33,6 +33,10 @@ NOTHINK = {"chat_template_kwargs": {"enable_thinking": False}}
 
 
 def make_roles(overrides: dict[str, dict] | None = None) -> dict[str, RoleConfig]:
+    """Build the 4-role (extract/distill/judge/generate) local llama.cpp
+    `RoleConfig` set. `overrides` maps role -> partial kwargs that are
+    merged over that role's default (e.g. a methodology-specific temperature)
+    before construction; unmentioned roles keep the defaults below."""
     # Defaults: write-path roles 0.1; judge/generate 0.0 (Nemori answers at
     # t=0.0, ReasoningBank judges at t=0.0). max_tokens 1000 per audit A6:
     # 300 could truncate multi-neighbor evolution JSON -> parse failure ->
@@ -43,17 +47,17 @@ def make_roles(overrides: dict[str, dict] | None = None) -> dict[str, RoleConfig
         "judge": {"temperature": 0.0},
         "generate": {"temperature": 0.0},
     }
-    for role, kw in (overrides or {}).items():
-        base[role] = {**base[role], **kw}
+    for role, kwargs in (overrides or {}).items():
+        base[role] = {**base[role], **kwargs}
     return {
         r: RoleConfig(
             endpoint="http://localhost:8080/v1",
             model="qwen3-0.6b",
-            max_tokens=kw.pop("max_tokens", 1000),
+            max_tokens=kwargs.pop("max_tokens", 1000),
             extra_body=NOTHINK,
-            **kw,
+            **kwargs,
         )
-        for r, kw in base.items()
+        for r, kwargs in base.items()
     }
 
 
@@ -71,6 +75,11 @@ def run(
     slot_overrides: dict[str, str] | None = None,
     lexical_types: tuple[str, ...] = ("episodic",),
 ) -> dict:
+    """Run one config end-to-end: build a fresh `AgenticMemory`, ingest
+    `sample` (flushing tail buffers and calling `consolidate()`), answer the
+    selected questions, then write `results/locomo-conv0-<config_name>.json`
+    and return the same result dict. Always closes the memory instance, even
+    on failure."""
     # 0-arg factory callables (lambdas in ``known``) build a fresh organizer
     # instance per run() call — reusing one instance across configs/runs
     # would leak Nemori's message buffer and MemoryOS/A-Mem's episode-id
@@ -166,6 +175,11 @@ def run(
 
 
 def main() -> None:
+    """CLI entrypoint (see module docstring for the `--max-sessions`/`--limit`
+    flags). Loads the first LoCoMo sample once, then runs every config named
+    in `--configs` (default passthrough+amem) against it via `run()`,
+    writing one results JSON per config; unknown config names raise
+    `KeyError` from the `known` lookup."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--max-sessions", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None)

@@ -27,6 +27,10 @@ PREFIXES: dict[str, dict[EmbedKind, str]] = {
 
 
 class SentenceTransformerEmbedder:
+    """`Embedder` backed by a local sentence-transformers model (the `lite`/
+    `standard` profile default). Gated by `requires` — the import is deferred
+    to `__init__` so the module loads even without the package installed."""
+
     requires = Requires(python_pkgs=("sentence_transformers",))
 
     def __init__(
@@ -34,6 +38,9 @@ class SentenceTransformerEmbedder:
         model_name: str = "intfloat/multilingual-e5-small",
         device: str | None = None,
     ) -> None:
+        """`device=None` lets sentence-transformers auto-select (GPU if
+        available). `dim` comes from the model itself when it exposes one,
+        else `KNOWN_MODELS`, else a hardcoded 384 guess."""
         from sentence_transformers import SentenceTransformer  # gated by requires
 
         self.name = model_name
@@ -46,6 +53,8 @@ class SentenceTransformerEmbedder:
         self._prefixes = PREFIXES.get(model_name, {})
 
     def embed(self, texts: list[str], kind: EmbedKind = "passage") -> list[list[float]]:
+        """L2-normalized vectors; applies the model's role prefix from
+        `PREFIXES` when `model_name` is asymmetric, else `kind` is a no-op."""
         prefix = self._prefixes.get(kind, "")
         inputs = [prefix + t for t in texts] if prefix else texts
         vecs = self._model.encode(inputs, normalize_embeddings=True, show_progress_bar=False)

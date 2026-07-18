@@ -5,11 +5,11 @@ from agmem.capabilities.resolver import ResolutionError, resolve
 import pytest
 
 
-def make_caps(**kw) -> HostCapabilities:
+def make_caps(**kwargs) -> HostCapabilities:
     base = dict(ram_gb=8.0, cpu_cores=4, vram_gb=6.0, gpu_name="RTX 2060",
                 services={"neo4j": False, "ollama": True},
                 python_pkgs={"sqlite_vec": True, "sentence_transformers": False})
-    base.update(kw)
+    base.update(kwargs)
     return HostCapabilities(**base)
 
 

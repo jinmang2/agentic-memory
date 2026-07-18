@@ -116,9 +116,20 @@ Return JSON: {{"should_evolve": true/false,
 
 
 class AMemOrganizer(Organizer):
+    """A-Mem note organizer (arXiv:2502.12110 Ps1-Ps3; see module docstring
+    for the upstream bug fixes this port applies). Per message: construct a
+    note, retrieve ``top_k`` neighbors, then one batched evolution call
+    decides links/tag refinements — all as returned ADD/LINK/UPDATE
+    MemoryOps, never direct store writes."""
+
     name = "amem"
 
     def __init__(self, top_k: int = 5, input: str = "messages") -> None:
+        """``input="episodes"`` switches this organizer into chained-manager
+        mode (Task 12 pattern): ``on_message`` becomes a no-op and notes are
+        instead produced from another organizer's episodes via
+        ``on_memory_event``, with ``_episode_notes`` tracking which note an
+        episode produced so a later supersede can invalidate it (spec §3)."""
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
@@ -134,11 +145,18 @@ class AMemOrganizer(Organizer):
         self._episode_notes: dict[str, str] = {}
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """No-op in ``input="episodes"`` mode (fed via ``on_memory_event``
+        instead); otherwise runs the full note pipeline via ``_ingest``."""
         if self.input_mode == "episodes":
             return []  # input is fed via on_memory_event only (spec §3)
         return self._ingest(episode, ctx)
 
     def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
+        """No-op unless ``input="episodes"``. Invalidates notes tied to any
+        superseded episode ids; for a plain UPDATE event, leaves the
+        existing note stale rather than re-ingesting (documented staleness,
+        spec §3); for ADD/MERGE, ingests the episode via ``_ingest`` and
+        records the produced note id for future supersede invalidation."""
         if self.input_mode != "episodes":
             return []
         ops: list[MemoryOp] = []

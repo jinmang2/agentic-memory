@@ -40,6 +40,12 @@ class MemoryEvent:
 
 @dataclass
 class OrganizerContext:
+    """Read-only handles an organizer hook needs; never mutated by hooks (docs/04 §2).
+
+    ``doc_store``/``vector_store``/``graph_store`` are the facade's own store instances —
+    hooks read from them but express writes only as returned ``MemoryOp``s. ``embedder``
+    is shared so organizer-computed embeddings stay consistent with retrieval's."""
+
     doc_store: DocStore
     vector_store: VectorStore
     embedder: Embedder
@@ -49,17 +55,25 @@ class OrganizerContext:
 
 
 class Organizer:
-    """Base class. Subclasses override the hooks they care about."""
+    """Base class: subclasses override the hooks they care about.
+
+    Hooks only read via ``ctx.*_store``; they never write directly — mutations are
+    expressed as returned ``MemoryOp`` lists, which the facade logs (append-only) before
+    applying (docs/04 §2). Unoverridden hooks are no-ops (return [])."""
 
     name = "base"
     consumes: tuple[str, ...] = ()
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Called once per stored episode; the raw episode is already durable/searchable
+        by this point (write-then-organize order, docs/04 §2)."""
         return []
 
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Called once per completed task; the facade never persists the full
+        ``trajectory`` itself, so this hook is the only place methodologies see it."""
         return []
 
     def on_retrieval(

@@ -27,6 +27,10 @@ _mem: AgenticMemory | None = None
 
 
 def get_mem() -> AgenticMemory:
+    """Return the process-wide `AgenticMemory` instance built by `main()`.
+
+    Raises `AssertionError` if called before `main()` has run — tool handlers only
+    execute after the server is up, so this should never fire in practice."""
     assert _mem is not None, "server not initialized"
     return _mem
 
@@ -109,6 +113,11 @@ def memory_stats() -> str:
 
 
 def register_admin_tools() -> None:
+    """Register the admin-only tools (log tail, flush) onto the shared `mcp` server.
+
+    Call only when `--enable-admin-tools` is passed — these expose internal state
+    (evolution log contents) that isn't meant for untrusted MCP clients."""
+
     @mcp.tool()
     def admin_snapshot_log(n: int = 50) -> str:
         """(admin) Tail the append-only evolution log."""
@@ -125,6 +134,10 @@ def register_admin_tools() -> None:
 
 
 def main() -> None:
+    """CLI entrypoint: parse args, build the process-wide `AgenticMemory`, run the server.
+
+    Blocks for the process lifetime (stdio or streamable-HTTP transport per `--transport`);
+    admin tools are registered before `mcp.run()` only if `--enable-admin-tools` is set."""
     ap = argparse.ArgumentParser(description="agmem MCP server")
     ap.add_argument("--namespace", default="main")
     ap.add_argument("--profile", default="lite")

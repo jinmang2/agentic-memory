@@ -17,11 +17,13 @@ logger = logging.getLogger("agmem.capabilities")
 
 
 class CapabilityWarning(UserWarning):
-    pass
+    """Emitted (not raised) when `resolve()` degrades to a fallback candidate
+    outside `strict` mode — an override or profile default was unsatisfiable."""
 
 
 class ResolutionError(RuntimeError):
-    pass
+    """Raised by `resolve()` in `strict` mode instead of warning, or
+    unconditionally when no candidate at all is satisfiable."""
 
 
 def resolve(
@@ -41,6 +43,7 @@ def resolve(
     by_name = {c.__name__: c for c in candidates}
 
     def satisfied(cls: type) -> tuple[bool, str]:
+        """(ok, reason); a class with no `requires` attribute is always satisfiable."""
         req = getattr(cls, "requires", None)
         return req.check(caps) if req is not None else (True, "")
 

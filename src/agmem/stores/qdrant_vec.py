@@ -25,9 +25,14 @@ def _point_id(item_id: str) -> str:
 
 
 class QdrantVectorStore:
+    """Cosine-metric `VectorStore` over an embedded (local-mode) Qdrant
+    collection — see module docstring for the uuid5 point-id mapping."""
+
     requires = Requires(python_pkgs=("qdrant_client",))
 
     def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
+        """`path=None` opens an in-memory client; opening an existing
+        collection with a different `dim` raises `ValueError` (docs/03 §1.2)."""
         from qdrant_client import QdrantClient
         from qdrant_client import models as qm
 
@@ -59,6 +64,8 @@ class QdrantVectorStore:
         memory_type: str = "episodic",
         namespace: str = "main",
     ) -> None:
+        """Upsert by `item_id` (mapped to a uuid5 point id); raises `ValueError`
+        on an embedding/store dim mismatch."""
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         self._client.upsert(
@@ -83,6 +90,8 @@ class QdrantVectorStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
+        """`namespace`/`memory_type` combine with AND only (no OR support);
+        Qdrant's cosine score is returned as-is (already higher = closer)."""
         qm = self._qm
         must = []
         if namespace:
@@ -100,6 +109,7 @@ class QdrantVectorStore:
         return [(h.payload["item_id"], float(h.score)) for h in hits]
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
+        """Ids not present in the collection are silently omitted from the result."""
         if not ids:
             return {}
         points = self._client.retrieve(
@@ -119,6 +129,8 @@ class QdrantVectorStore:
         return int(self._client.count(_COLLECTION).count)
 
     def persist(self) -> None:
+        """No-op: local mode writes through immediately when `path`-backed
+        (and is inherently non-durable when `path=None`)."""
         pass  # local mode persists on write when path-backed
 
     def close(self) -> None:

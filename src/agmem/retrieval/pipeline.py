@@ -19,6 +19,10 @@ from agmem.stores.base import DocStore, VectorStore
 
 
 class RetrievalPipeline:
+    """Facade over one namespace's stores for `search()`; stateless beyond
+    its store/embedder/reranker references, so one instance is safe to
+    reuse across calls with different memory types."""
+
     def __init__(
         self,
         doc_store: DocStore,
@@ -31,6 +35,13 @@ class RetrievalPipeline:
         lexical_types: tuple[str, ...] = ("episodic",),
         graph_expansion_cap: int = 10,
     ) -> None:
+        """``reranker=None`` keeps RRF fusion order as-is. ``link_expansion_cap``
+        bounds A-Mem's 1-hop note-link expansion; ``attach_sources_top_r``
+        bounds how many top episodic hits get their source messages attached.
+        ``graph_store``/``graph_expansion_cap`` enable the Zep GraphRecall
+        step (entity hits pull incident active edges) — no-op when
+        ``graph_store`` is None. ``lexical_types`` selects which memory types
+        get a BM25 channel fused via RRF alongside the dense one."""
         self.doc_store = doc_store
         self.vector_store = vector_store
         self.embedder = embedder
@@ -238,10 +249,14 @@ class _DictItem:
     item timestamps, and attached source messages."""
 
     def __init__(self, data: dict) -> None:
+        """`data` is kept by reference, not copied — callers like `_attach_sources`
+        mutate it in place (e.g. to inject `_source_messages`)."""
         self.data = data
         self.content = data.get("content", "")
 
     def render(self) -> str:
+        """Multi-line text injected verbatim into the LLM context — order and
+        section labels here are part of the read-path prompt contract."""
         parts: list[str] = []
         title = self.data.get("title")
         head = f"{title}: " if title else ""

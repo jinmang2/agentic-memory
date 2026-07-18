@@ -40,6 +40,8 @@ DEFAULT_LLM_ENDPOINTS = [
 
 @dataclass
 class EndpointInfo:
+    """Health-check result for one candidate OpenAI-compatible endpoint."""
+
     base_url: str
     alive: bool
     models: list[str] = field(default_factory=list)
@@ -47,6 +49,9 @@ class EndpointInfo:
 
 @dataclass
 class HostCapabilities:
+    """Point-in-time snapshot of what this host can run, cached to disk with
+    a TTL by `detect()` and matched against `Requires` by the resolver."""
+
     ram_gb: float
     cpu_cores: int
     vram_gb: float | None = None
@@ -57,9 +62,12 @@ class HostCapabilities:
     detected_at: float = field(default_factory=time.time)
 
     def has_service(self, name: str) -> bool:
+        """`False` for a service that was never probed (not just unavailable)."""
         return self.services.get(name, False)
 
     def has_pkg(self, name: str) -> bool:
+        """Lazily probes and memoizes into `self.python_pkgs` on first call
+        for a name outside `PROBE_PKGS`, so this mutates the instance."""
         if name not in self.python_pkgs:
             self.python_pkgs[name] = find_spec(name) is not None
         return self.python_pkgs[name]
@@ -134,6 +142,14 @@ def detect(
     force: bool = False,
     extra_endpoints: list[str] | None = None,
 ) -> HostCapabilities:
+    """Read `<cache_dir>/capabilities.json` if it exists and is younger than
+    `CACHE_TTL_SECONDS`, otherwise re-probe the host and overwrite the cache
+    (best-effort: a write failure is swallowed, not raised). `force=True`
+    skips the cache entirely. `python_pkgs` is always re-probed fresh even
+    on a cache hit — `find_spec` is cheap and a stale "not installed" would
+    otherwise survive a `pip install` for the rest of the TTL window.
+    `extra_endpoints` are probed in addition to `DEFAULT_LLM_ENDPOINTS`,
+    de-duplicated, extras first."""
     cache_dir = cache_dir or Path.home() / ".agmem"
     cache_file = cache_dir / "capabilities.json"
 

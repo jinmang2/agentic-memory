@@ -18,6 +18,10 @@ ROLES = ("extract", "distill", "judge", "rerank", "generate")
 
 @dataclass
 class RoleConfig:
+    """Endpoint+model+sampling config for one role (docs/03 §6 tiering).
+    `extra_body` is passed through to the OpenAI-compatible request as-is
+    (e.g. vLLM's `guided_json`/`chat_template_kwargs`)."""
+
     endpoint: str
     model: str
     api_key: str = "not-needed"  # local servers ignore it
@@ -27,7 +31,12 @@ class RoleConfig:
 
 
 class LLMClient:
+    """Routes each role to its own `RoleConfig` and OpenAI-compatible
+    endpoint, and records every call (success or failure) into `budget`."""
+
     def __init__(self, roles: dict[str, RoleConfig], budget: BudgetTracker | None = None) -> None:
+        """`budget` defaults to a fresh `BudgetTracker` when omitted; pass a
+        shared one to aggregate cost across multiple `LLMClient` instances."""
         self.roles = roles
         self.budget = budget or BudgetTracker()
         self._clients: dict[str, Any] = {}
@@ -41,6 +50,8 @@ class LLMClient:
         return self._clients[key]
 
     def has_role(self, role: str) -> bool:
+        """Cheap membership check callers use to skip an optional role
+        (e.g. `rerank`) instead of catching the `KeyError` from `chat`."""
         return role in self.roles
 
     def chat(
@@ -50,6 +61,11 @@ class LLMClient:
         budget_key: str | None = None,
         **overrides: Any,
     ) -> str:
+        """Raises `KeyError` if `role` has no `RoleConfig` — callers that
+        want a role to be optional must check `has_role` first. On a
+        transport/API exception, the attempt is still recorded in `budget`
+        (as an error) before the exception is re-raised — never swallowed.
+        Returns `""` if the response has no message content."""
         if role not in self.roles:
             raise KeyError(
                 f"no LLM configured for role '{role}' " f"(configured: {sorted(self.roles)})"

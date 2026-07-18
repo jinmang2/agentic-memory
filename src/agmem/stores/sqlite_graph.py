@@ -37,9 +37,17 @@ _ACTIVE = "invalid_at IS NULL AND expired_at IS NULL"
 
 
 class SqliteGraphStore:
+    """SQL recursive-CTE emulation of the shared graph-store contract used by
+
+    Zep/G-Memory organizers (no formal `Protocol` collects it — Kuzu/Neo4j
+    implement the same methods). Nodes are upserted by id; edges are never
+    hard-deleted, only invalidated (see module docstring for the bi-temporal
+    ``invalid_at``/``expired_at`` axes)."""
+
     requires = Requires()
 
     def __init__(self, path: str | Path | None = None) -> None:
+        """``path=None`` opens an in-memory, non-persistent database."""
         self.path = str(path) if path is not None else ":memory:"
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -58,6 +66,10 @@ class SqliteGraphStore:
         summary: str = "",
         entity_type: str = "Entity",
     ) -> None:
+        """Upsert is keyed on `node_id`, not `name` — reusing an existing id
+        overwrites name/summary/entity_type in place; a new name with a new id
+        creates a second node even if it resolves to the same real-world entity
+        (dedup is the organizer's job via `find_node_by_name`/embedding search)."""
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO graph_nodes (id, namespace, name, summary, entity_type)"
@@ -68,6 +80,8 @@ class SqliteGraphStore:
             )
 
     def find_node_by_name(self, name: str, namespace: str) -> dict | None:
+        """Case-insensitive exact match within `namespace`; returns the first
+        match only — callers needing all same-name nodes must query differently."""
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM graph_nodes WHERE namespace=? AND name=? COLLATE NOCASE",
@@ -85,6 +99,9 @@ class SqliteGraphStore:
         content: str,
         valid_at: str | None = None,
     ) -> None:
+        """Full-row replace by `edge_id` — reusing an id resets `invalid_at`/
+        `expired_at` to unset even if the prior row had been invalidated;
+        call `invalidate_edge` afterward if that's not intended."""
         with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR REPLACE INTO graph_edges"
@@ -96,6 +113,8 @@ class SqliteGraphStore:
     def edges_between(
         self, src: str, dst: str, namespace: str, active_only: bool = True
     ) -> list[dict]:
+        """Matches edges in either direction between `src`/`dst`; set
+        `active_only=False` to also see invalidated edges."""
         sql = (
             "SELECT * FROM graph_edges WHERE namespace=? AND"
             " ((src=? AND dst=?) OR (src=? AND dst=?))"
@@ -107,6 +126,9 @@ class SqliteGraphStore:
         return [dict(r) for r in rows]
 
     def invalidate_edge(self, edge_id: str, t_invalid: str) -> None:
+        """Marks an edge no-longer-true as of ``t_invalid`` without deleting
+        it (bi-temporal: ``expired_at`` records when the system learned this,
+        distinct from ``t_invalid``'s "was true until" axis)."""
         # round-5 ⑨: expired_at (T' axis) must be stamped too, preserving an
         # earlier value if the edge was already expired (upstream semantics).
         with self._lock, self._conn:
@@ -117,6 +139,8 @@ class SqliteGraphStore:
             )
 
     def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
+        """Nodes reachable within ``hops`` steps over ACTIVE edges only
+        (invalidated edges are not walked), excluding ``node_id`` itself."""
         with self._lock:
             rows = self._conn.execute(
                 f"""
@@ -152,6 +176,8 @@ class SqliteGraphStore:
         return [dict(r) for r in rows]
 
     def counts(self) -> dict[str, int]:
+        """Edge count includes invalidated edges (never deleted, so `edges` is
+        a lifetime total, not an active-only count)."""
         with self._lock:
             n = self._conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0]
             e = self._conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]

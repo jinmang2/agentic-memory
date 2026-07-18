@@ -41,6 +41,10 @@ TASKS = {
 
 
 def build_prompts(task: str, data_path: Path, limit: int, seed: int = 7) -> list[str]:
+    """Renders one organizer prompt per eligible turn/window across every
+    LoCoMo sample at `data_path`, shuffles deterministically with `seed`,
+    then truncates to `limit`. Unknown `task` values silently produce zero
+    prompts (no error) since `elif` falls through."""
     rng = random.Random(seed)
     samples = locomo.load_locomo(data_path)
     prompts: list[str] = []
@@ -66,6 +70,10 @@ def build_prompts(task: str, data_path: Path, limit: int, seed: int = 7) -> list
 
 
 def main() -> None:
+    """CLI entrypoint (see module docstring for usage). Writes one JSONL line
+    per teacher-accepted (prompt, completion) pair to `--out`; a dropped
+    (unparseable) teacher response is skipped, not written, and does not
+    abort the run — the final print reports kept/total plus teacher budget."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", choices=sorted(TASKS), required=True)
     ap.add_argument("--teacher-endpoint", required=True)

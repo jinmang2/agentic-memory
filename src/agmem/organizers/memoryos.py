@@ -74,6 +74,11 @@ Return JSON: {{"profile_facts": ["self-contained fact", ...]}}"""
 
 
 class MemoryOSOrganizer(Organizer):
+    """MemoryOS STM/MTM/LPM organizer (arXiv:2506.06326; see module
+    docstring for the paper-vs-eval-core constant discrepancy and other
+    upstream deviations). Writes only via returned MemoryOps; STM/heat
+    state lives in this instance, not the stores."""
+
     name = "memoryos"
 
     def __init__(
@@ -85,6 +90,16 @@ class MemoryOSOrganizer(Organizer):
         recency_tau_hours: float = 24.0,
         input: str = "messages",
     ) -> None:
+        """``stm_capacity``: STM batch size that triggers a flush to MTM.
+        ``mtm_capacity``: max MTM segments before lowest-heat eviction.
+        ``heat_threshold``: heat (τ) at which a segment promotes to LPM.
+        ``similarity_threshold``: F_score (θ) merge threshold — cosine +
+        keyword Jaccard, paper eq.(3). ``recency_tau_hours``: heat's
+        recency-decay time constant. ``input="episodes"`` switches to
+        chained-manager mode (Task 12): ``on_message`` becomes a no-op and
+        ``_page_sources``/``_unit_pages`` track which STM units back which
+        MTM pages so a later supersede can retire units and invalidate
+        fully-absorbed pages."""
         # mtm_capacity 2000 = upstream default (round-5 N6 fixed 200->2000)
         self.stm_capacity = stm_capacity
         self.mtm_capacity = mtm_capacity
@@ -122,6 +137,9 @@ class MemoryOSOrganizer(Organizer):
     def on_retrieval(
         self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Bumps ``n_visit``/``last_access`` on served page hits (paper's
+        heat-feedback loop, §3.4); always returns [] — heat lives in
+        ``self._heat``, no store writes."""
         # upstream mid_term.py updates N_visit/last_visit_time on every
         # retrieval hit (paper §3.4) — the heat feedback loop round-5 N1
         # found missing. No ops needed: heat lives in organizer state.
@@ -134,6 +152,10 @@ class MemoryOSOrganizer(Organizer):
         return []
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
+        """No-op in ``input="episodes"`` mode (fed via ``on_memory_event``
+        instead). Otherwise appends to the STM buffer; once it reaches
+        ``stm_capacity``, flushes the whole batch to MTM via
+        ``_evict_to_mtm`` and returns those ops (empty list otherwise)."""
         if self.input_mode == "episodes":
             return []  # input is fed via on_memory_event only (spec §3)
         self._stm.append(episode)
@@ -143,6 +165,11 @@ class MemoryOSOrganizer(Organizer):
         return self._evict_to_mtm(batch, ctx)
 
     def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
+        """No-op unless ``input="episodes"``. Retires STM/page-index entries
+        for superseded unit ids first; a plain UPDATE event patches the STM
+        copy in place without re-paging (documented staleness once already
+        paged, spec §3); ADD/MERGE units are appended to STM, flushing to
+        MTM via ``_evict_to_mtm`` when capacity is reached."""
         if self.input_mode != "episodes":
             return []
         ops: list[MemoryOp] = []
@@ -207,12 +234,17 @@ class MemoryOSOrganizer(Organizer):
         return ops
 
     def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Forces any partial STM batch to MTM regardless of
+        ``stm_capacity``; no-op (returns []) when STM is empty."""
         if not self._stm:
             return []
         batch, self._stm = self._stm, []
         return self._evict_to_mtm(batch, ctx)
 
     def warm_start(self, corpus, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Replays ``corpus`` through ``on_message`` (base behavior), then
+        flushes any leftover partial STM batch so no episode is left
+        un-paged after warm start."""
         ops = super().warm_start(corpus, ctx)
         ops.extend(self.flush_buffer(ctx))
         return ops

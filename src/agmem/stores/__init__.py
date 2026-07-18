@@ -1,3 +1,6 @@
+"""Store protocols plus per-slot candidate lists, ordered heaviest/most
+capable first for `agmem.capabilities.resolver` to walk (docs/01 REGISTRY)."""
+
 from agmem.stores.base import DocStore, VectorStore
 from agmem.stores.chroma_vec import ChromaVectorStore
 from agmem.stores.kuzu_graph import KuzuGraphStore

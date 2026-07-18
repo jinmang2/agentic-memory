@@ -56,7 +56,12 @@ def coerce_to_schema(parsed: Any, schema: dict[str, Any]) -> dict[str, Any] | No
 
 
 class StructuredCaller:
+    """Wraps `LLMClient` with the retry/repair/drop defense chain described
+    in the module docstring; `call()` is the only public entry point."""
+
     def __init__(self, client: LLMClient, use_guided_json: bool = True) -> None:
+        """`use_guided_json=False` skips the `guided_json` extra_body layer
+        entirely (e.g. for endpoints that reject unknown fields outright)."""
         self.client = client
         self.use_guided_json = use_guided_json
         self.drops: dict[str, int] = {}

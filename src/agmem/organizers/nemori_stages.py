@@ -71,6 +71,9 @@ class PerMessageBoundary:
         buffer_min: int = 2,
         buffer_max: int = 25,
     ) -> None:
+        """``confidence`` is the boundary-verdict threshold (sigma); below
+        ``buffer_min`` messages ``push`` never calls the LLM; at
+        ``buffer_max`` the whole buffer is force-cut as one segment."""
         self.confidence = confidence  # paper sigma_boundary=0.7
         self.buffer_min = buffer_min  # repo config buffer_size_min=2 (not in paper v1)
         self.buffer_max = buffer_max  # paper beta_max=25
@@ -150,6 +153,12 @@ class BatchPartitioner:
     batch_threshold."""
 
     def __init__(self, window: int = 20, buffer_min: int = 2, chunk_max: int = 80) -> None:
+        """``window`` messages accumulate before ``push`` triggers a
+        partition call; ``chunk_max`` caps how many messages go into one LLM
+        partitioning call, splitting larger buffers into sequential chunks.
+        ``buffer_min`` is accepted for interface parity with
+        `PerMessageBoundary` but unused here (batch mode has no per-message
+        minimum)."""
         self.window = window
         self.buffer_min = buffer_min
         self.chunk_max = chunk_max  # upstream: >80msg batches are chunked
@@ -157,11 +166,19 @@ class BatchPartitioner:
     def push(
         self, buffer: list[Episode], ctx: OrganizerContext
     ) -> tuple[list[list[Episode]], list[Episode]]:
+        """Returns ``([], buffer)`` unchanged until ``window`` is reached;
+        once reached, partitions the WHOLE buffer via `_partition` and
+        always returns an empty remaining buffer (unlike
+        `PerMessageBoundary`, which may keep a tail message buffered)."""
         if len(buffer) < self.window:
             return [], buffer
         return self._partition(buffer, ctx), []
 
     def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
+        """Empty buffer -> ``[]``. Below ``window`` -> the whole buffer as
+        one segment, no LLM call (upstream's single-group short-batch path).
+        At or above ``window`` -> partitions via `_partition` same as
+        `push`."""
         if not buffer:
             return []
         if len(buffer) < self.window:
@@ -282,6 +299,11 @@ class EpisodeMerger:
         similarity: float | None = None,
         time_gap_hours: float | None = None,
     ) -> None:
+        """``top_k`` bounds the candidate-episode neighborhood searched.
+        ``similarity=None`` means no cosine floor is applied before asking
+        the LLM (v4 paper has none); ``time_gap_hours=None`` means no
+        merge-ban-by-elapsed-time rule is injected into the merge-decision
+        prompt (see the field comments for each default's provenance)."""
         self.top_k = top_k
         self.similarity = similarity  # upstream 0.85; v4 paper doesn't specify one (None)
         self.time_gap_hours = time_gap_hours  # upstream 1.0; v4 paper has no gap ban (None)
@@ -295,6 +317,13 @@ class EpisodeMerger:
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
     ) -> tuple[list[MemoryOp], str, str, str] | None:
+        """On success: ``(ops, merged_id, merged_title, merged_narrative)``
+        where ``ops`` is a MERGE op for the new synthesized episode plus an
+        INVALIDATE for the absorbed one. Returns ``None`` on every failure
+        path (see class docstring) — the caller must then fall back to a
+        plain ADD. ``exclude_ids`` removes candidates already merged away
+        earlier in the same batch (e.g. `NemoriOrganizer`'s within-call
+        supersession guard, I1)."""
         # exclude_ids drops episodes already merged-away earlier in this same
         # on_message batch (I1) — same within-pass guard as ThreeWayIntegrator.
         query_embedding = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
@@ -428,6 +457,9 @@ class AppendIntegrator:
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
+        """Always returns exactly one ADD op for ``fact`` — never merges,
+        never fails. ``exclude_ids`` is accepted for interface parity with
+        the other integrators but has no effect here."""
         # exclude_ids is part of the common integrator contract (I1) but has no
         # effect here — Append never searches for candidates.
         fact_id = new_id()
@@ -452,6 +484,8 @@ class DedupIdReuseIntegrator:
     latest content wins, provenance re-pointed. No LLM call."""
 
     def __init__(self, threshold: float = 0.85) -> None:
+        """``threshold`` is the min cosine similarity for the top-1 match to
+        be treated as the same fact and reused (PR#19 semantics)."""
         self.threshold = threshold
 
     def integrate(
@@ -462,6 +496,11 @@ class DedupIdReuseIntegrator:
         ctx: OrganizerContext,
         exclude_ids: set[str] | None = None,
     ) -> list[MemoryOp]:
+        """If the nearest existing semantic item scores >= ``threshold``,
+        returns one UPDATE op that overwrites its content/provenance
+        (id reused, latest content wins). Otherwise falls back to
+        `AppendIntegrator` and returns a plain ADD. ``exclude_ids`` removes
+        ids from consideration before the top-1 check."""
         query_embedding = ctx.embedder.embed([fact])[0]
         hits = [
             (hit_id, s)
@@ -495,6 +534,9 @@ class ThreeWayIntegrator:
     lost to a failed integration attempt."""
 
     def __init__(self, top_k: int = 5, tau: float = 0.70) -> None:
+        """``top_k`` bounds the vector-neighborhood search; ``tau`` is the
+        minimum cosine similarity a hit must clear to become an LLM
+        candidate at all (v4 §3.3.3)."""
         self.top_k = top_k
         self.tau = tau
 
@@ -507,6 +549,14 @@ class ThreeWayIntegrator:
         exclude_ids: set[str] | None = None,
         phase: str = "integrate",
     ) -> list[MemoryOp]:
+        """Returns a plain ADD (`AppendIntegrator` fallback) on every failure
+        path (see class docstring). On "merge"/"conflict", returns a list
+        starting with the new head op (MERGE or ADD respectively) followed
+        by one INVALIDATE per superseded target. ``phase`` is passed through
+        to `ctx.llm.call` only to distinguish inline calls from
+        `SemanticOfflineConsolidator`'s deferred reuse of this method in
+        budget/logging breakdowns — it does not change the decision logic.
+        ``exclude_ids`` removes ids from the candidate search."""
         # ``phase`` distinguishes the same integration code running inline
         # (llm3way, phase="integrate") from SemanticOfflineConsolidator's
         # deferred pass over the shared implementation (phase="consolidate").
@@ -592,12 +642,25 @@ class SemanticOfflineConsolidator:
     converge instead of re-judging their own merges."""
 
     def __init__(self, top_k: int = 5, tau: float = 0.70, scan_limit: int = 10000) -> None:
+        """``top_k``/``tau`` are forwarded to the inner `ThreeWayIntegrator`.
+        ``scan_limit`` bounds one `run()` call's `ops_since` page — see
+        `run` for what happens when a scan hits this limit."""
         self._inner = ThreeWayIntegrator(top_k=top_k, tau=tau)
         # scan_limit mirrors the doc store's ops_since page size; exposed so a
         # test can force truncation with a tiny value (review I2).
         self.scan_limit = scan_limit
 
     def run(self, organizer, ctx: OrganizerContext) -> list[MemoryOp]:
+        """Re-judges every not-yet-consolidated semantic ADD this
+        ``organizer`` produced since its cursor, via `ThreeWayIntegrator`
+        (own merge/conflict outputs marked ``consolidated=True`` so they
+        aren't re-judged on a later pass). Returns ``[]`` with no cursor
+        advance when there is nothing new since the cursor; otherwise
+        returns the accumulated ADD/MERGE/INVALIDATE ops plus exactly one
+        trailing cursor-advance op. If the scan hit ``scan_limit``, the
+        cursor advances only to the last row actually scanned (not to
+        `last_seq()`), so a future call resumes rather than skipping the
+        unscanned tail."""
         cursor = organizer.read_cursor(ctx)
         rows = ctx.doc_store.ops_since(cursor, target_type="semantic", limit=self.scan_limit)
         # Cursor advance must respect ops_since's limit truncation (review I2):

@@ -16,10 +16,12 @@ from typing import Any
 
 
 def new_id() -> str:
+    """32-char hex UUID4, used as the default id factory for every dataclass here."""
     return uuid.uuid4().hex
 
 
 def utcnow() -> datetime:
+    """Timezone-aware UTC now — never mix with naive `datetime.utcnow()` results."""
     return datetime.now(timezone.utc)
 
 
@@ -49,6 +51,9 @@ class Episode:
     meta: dict[str, Any] = field(default_factory=dict)
 
     def embedding_text(self) -> str:
+        """Text handed to the embedder. Every memory-type dataclass implements
+        this method so retrieval can embed heterogeneous items polymorphically
+        without a shared base class; for `Episode` it is exactly `content`."""
         return self.content
 
 
@@ -67,6 +72,7 @@ class Note:
     timestamp: datetime = field(default_factory=utcnow)
 
     def embedding_text(self) -> str:
+        """Content plus keywords/tags/context, unlike the plain-content default."""
         # A-Mem finding: embed content concatenated with metadata.
         parts = [
             self.content,
@@ -89,6 +95,7 @@ class SemanticFact:
     timestamp: datetime = field(default_factory=utcnow)
 
     def embedding_text(self) -> str:
+        """Plain `content` — no metadata folded in (unlike `Note`)."""
         return self.content
 
 
@@ -104,6 +111,7 @@ class Entity:
     source_episode_ids: list[str] = field(default_factory=list)
 
     def embedding_text(self) -> str:
+        """`"name: summary"` once an entity has an LLM-generated summary, else the bare name."""
         return f"{self.name}: {self.summary}" if self.summary else self.name
 
 
@@ -129,6 +137,7 @@ class Fact:
     source_episode_ids: list[str] = field(default_factory=list)
 
     def embedding_text(self) -> str:
+        """Plain `content` (the fact sentence, not subject/predicate/object)."""
         return self.content
 
 
@@ -147,9 +156,11 @@ class StrategyItem:
     timestamp: datetime = field(default_factory=utcnow)
 
     def embedding_text(self) -> str:
+        """Title + description only — `content` is excluded (render-only field)."""
         return f"{self.title}\n{self.description}"
 
     def render(self) -> str:
+        """Markdown block injected into LLM context by `MemoryBundle.render`."""
         return f"## {self.title}\n{self.description}\n{self.content}"
 
 
@@ -166,9 +177,12 @@ class Bullet:
     source_episode_ids: list[str] = field(default_factory=list)
 
     def embedding_text(self) -> str:
+        """Plain `content` (section/helpful/harmful counters are render-only)."""
         return self.content
 
     def render(self) -> str:
+        """Playbook-line form injected into LLM context, tagged with section
+        and the helpful/harmful counters ACE's reflect step updates."""
         return f"[{self.section}-{self.id[:5]}] helpful={self.helpful} harmful={self.harmful} :: {self.content}"
 
 

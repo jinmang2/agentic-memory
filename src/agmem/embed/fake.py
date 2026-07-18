@@ -17,9 +17,14 @@ _TOKEN = re.compile(r"\w+", re.UNICODE)
 
 
 class FakeEmbedder:
+    """`Embedder` with no dependencies (`Requires()` is always satisfiable) —
+    the resolver's last-resort candidate, and the standard test double."""
+
     requires = Requires()
 
     def __init__(self, dim: int = 256) -> None:
+        """`dim` doubles as the hash-bucket count `_bucket` mods into — a smaller
+        `dim` means more token collisions, not just a narrower vector."""
         self.name = f"fake-hash-{dim}"
         self.dim = dim
 

@@ -18,9 +18,20 @@ _COLLECTION = "agmem"
 
 
 class ChromaVectorStore:
+    """Cosine-space `VectorStore` over a Chroma collection (see module docstring
+    for the upstream #24 space-metric fix this adapter carries).
+
+    `path=None` gives an `EphemeralClient` with a private, uuid-suffixed
+    collection (dropped in `close()`); a `path` gives a `PersistentClient`
+    reusing one fixed collection name across instances.
+    """
+
     requires = Requires(python_pkgs=("chromadb",))
 
     def __init__(self, path: str | Path | None = None, dim: int = 384) -> None:
+        """Open/create the collection; raises `ValueError` if it was already
+        built with a different `dim` (embedder swaps require a rebuild,
+        docs/03 §1.2)."""
         import chromadb
 
         self.dim = dim
@@ -55,6 +66,7 @@ class ChromaVectorStore:
         memory_type: str = "episodic",
         namespace: str = "main",
     ) -> None:
+        """Upsert by `item_id`; raises `ValueError` on an embedding/store dim mismatch."""
         if len(embedding) != self.dim:
             raise ValueError(f"embedding dim {len(embedding)} != store dim {self.dim}")
         self._col.upsert(
@@ -70,6 +82,8 @@ class ChromaVectorStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
+        """Converts Chroma's cosine *distance* to similarity (`1 - dist`) so results
+        match the `VectorStore` contract of higher = closer."""
         clauses = []
         if namespace:
             clauses.append({"namespace": namespace})
@@ -89,6 +103,7 @@ class ChromaVectorStore:
         ]
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
+        """Ids not present in the collection are silently omitted from the result."""
         if not ids:
             return {}
         res = self._col.get(ids=ids, include=["embeddings"])
@@ -106,9 +121,12 @@ class ChromaVectorStore:
         return int(self._col.count())
 
     def persist(self) -> None:
+        """No-op: `PersistentClient` writes through on every call, unlike stores
+        that batch to memory and need an explicit flush."""
         pass  # PersistentClient persists per write
 
     def close(self) -> None:
+        """Drops the private ephemeral collection; persistent stores need no cleanup."""
         if self._ephemeral_name:
             try:
                 self._client.delete_collection(self._ephemeral_name)

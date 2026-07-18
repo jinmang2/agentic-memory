@@ -32,6 +32,14 @@ BITEMPORAL_TYPES = ("facts",)  # Types kept in vector store even after INVALIDAT
 
 
 class AgenticMemory:
+    """Public facade: one namespace's stores + embedder + organizers, wired by capability.
+
+    Construction resolves each backend slot (doc/vector/graph store, embedder, reranker)
+    against detected/declared host capabilities and records any forced degradation in
+    ``self._degradations`` (surfaced via ``capabilities()``). All writes go through the
+    facade so every mutation is logged to the evolution log before being applied
+    (docs/04 §2) — organizers themselves never touch stores directly."""
+
     def __init__(
         self,
         namespace: str = "main",
@@ -41,6 +49,11 @@ class AgenticMemory:
         embedder: Embedder | None = None,
         caps: HostCapabilities | None = None,
     ) -> None:
+        """Resolve backends for ``caps`` (or freshly detected ones) and build the pipeline.
+
+        ``organizers`` may mix registry names and pre-built ``Organizer`` instances.
+        Unless ``config.sync_write`` is set, a daemon thread is started to run organizer
+        work off the caller's thread — see ``close()``/``flush()`` for the drain contract."""
         if isinstance(config, (str, Path)):
             config = load_config(config)
         self.config = config or AgmemConfig(profile=profile)
@@ -199,6 +212,13 @@ class AgenticMemory:
         timestamp: Any = None,
         meta: dict | None = None,
     ) -> Episode:
+        """Persist and index a raw episode synchronously, then dispatch organizers.
+
+        The episode is written to the doc store, embedded into the vector store, and
+        logged (ADD op) before this call returns — it is immediately searchable. Organizer
+        ``on_message`` hooks then run either inline (``config.sync_write=True``, exceptions
+        propagate to the caller) or on the background worker (exceptions are only logged,
+        see ``_drain``)."""
         episode = Episode(
             content=content,
             role=role,
@@ -236,6 +256,11 @@ class AgenticMemory:
     def add_task_result(
         self, trajectory: list[dict], outcome: str, task: str, agent_id: str = "agent"
     ) -> None:
+        """Record a completed task and dispatch organizer ``on_task_end`` hooks.
+
+        The stored episode's ``meta`` keeps only ``outcome``/``agent_id``/step count — the
+        full ``trajectory`` is never persisted by the facade, so ``on_task_end`` is the only
+        place methodologies (ReasoningBank/ACE/G-Memory) see step-by-step detail."""
         episode = Episode(
             content=task,
             role="task",
@@ -271,6 +296,11 @@ class AgenticMemory:
         )
 
     def warm_start(self, corpus: list[Episode]) -> None:
+        """Bulk-ingest ``corpus`` into the stores, then replay it through each organizer.
+
+        Unlike ``add_message``, indexing and organizer work both run synchronously on the
+        caller's thread (bypassing the write queue) — intended for backfilling history
+        before serving traffic, not for steady-state ingest."""
         for episode in corpus:
             self.doc_store.add_episode(episode)
             self.vector_store.add(
@@ -432,6 +462,14 @@ class AgenticMemory:
         memory_types: Sequence[str] = ("episodic",),
         k: int | dict[str, int] = 10,
     ) -> MemoryBundle:
+        """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
+        read->write hooks.
+
+        Ranking/fusion policy lives in ``RetrievalPipeline`` (lexical+vector fusion,
+        reranker); this method's own contract is the read->write loop: every served
+        ``(item_id, memory_type, score)`` triple is passed to each organizer's
+        ``on_retrieval`` synchronously, before this call returns, so their returned ops
+        are applied for the *next* search — never the one in progress."""
         bundle = self.pipeline.search(
             query, k=k, memory_types=tuple(memory_types), namespace=self.namespace
         )
@@ -516,9 +554,11 @@ class AgenticMemory:
 
     @property
     def log(self):
+        """Expose the doc store as an EvolutionLog (``tail()``/``count()``) for admin/CLI use."""
         return self.doc_store  # EvolutionLog protocol: tail()/count()
 
     def stats(self) -> dict[str, Any]:
+        """Snapshot of counts/costs at call time — not cached, each call re-queries stores."""
         return {
             "namespace": self.namespace,
             "profile": self.config.profile,
@@ -532,6 +572,11 @@ class AgenticMemory:
         }
 
     def capabilities(self) -> dict[str, Any]:
+        """Detected host caps, currently-active adapter classes, and forced degradations.
+
+        ``degradations`` is the list accumulated in ``__init__`` when capability resolution
+        couldn't satisfy a config override/profile default — the only place that history
+        is exposed after construction."""
         return {
             "detected": {
                 "ram_gb": self.caps.ram_gb,
@@ -550,6 +595,9 @@ class AgenticMemory:
         }
 
     def close(self) -> None:
+        """Drain pending async organizer work, then close stores in order (vector, graph,
+        doc). The queue must join first — closing a store while queued work still
+        references it would touch a closed handle."""
         if self._queue is not None:
             self._queue.join()  # drain pending organizer work before closing
         self.vector_store.close()

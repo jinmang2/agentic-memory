@@ -108,11 +108,17 @@ def _format_trajectory(trajectory: list[dict], max_chars: int = 60000) -> str:
 
 
 class ReasoningBankOrganizer(Organizer):
+    """ReasoningBank (see module docstring for the paper/upstream mapping)."""
+
     name = "reasoning_bank"
 
     def __init__(
         self, max_items: int = 3, self_judge: bool = True, persona: str | None = None
     ) -> None:
+        """`self_judge=True` runs the judge role when `outcome` isn't already
+        "success"/"failure"; set False to always trust the caller-supplied `outcome`
+        and skip that LLM call. `persona` is prepended to the extraction system
+        message verbatim when set (see module docstring)."""
         self.max_items = max_items
         self.self_judge = self_judge
         self.persona = persona  # e.g. "You are an expert in web navigation."
@@ -120,6 +126,10 @@ class ReasoningBankOrganizer(Organizer):
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
+        """Returns `[]` without calling the LLM if `ctx.llm` is unset, if the judge
+        or extraction call drops (see `StructuredCaller`), or if extraction returns
+        no items — never raises on LLM failure. Items missing a required field are
+        skipped individually rather than failing the whole batch."""
         if ctx.llm is None:
             logger.warning(
                 "reasoning_bank: no LLM configured — skipping distillation "

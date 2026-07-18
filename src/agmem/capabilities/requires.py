@@ -14,6 +14,10 @@ from agmem.capabilities.detect import HostCapabilities
 
 @dataclass(frozen=True)
 class Requires:
+    """A threshold declaration attached to an adapter class as `requires = ...`.
+    Every field's zero/empty/`False` default means "no requirement on this
+    dimension" — `check()` only evaluates dimensions with a truthy value."""
+
     ram_gb: float = 0.0
     vram_gb: float = 0.0
     services: tuple[str, ...] = ()

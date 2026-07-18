@@ -12,6 +12,9 @@ from agmem.capabilities.requires import Requires
 
 
 class NoopReranker:
+    """Keeps fusion (RRF) order; the baseline every other reranker is judged
+    against."""
+
     requires = Requires()
     name = "noop"
     needs_text = False
@@ -25,6 +28,7 @@ class NoopReranker:
         texts: dict[str, str] | None = None,
         query: str = "",
     ) -> list[tuple[str, float]]:
+        """Truncates to ``k`` without reordering."""
         return candidates[:k]
 
 
@@ -40,6 +44,7 @@ class MMRReranker:
     needs_text = False
 
     def __init__(self, lambda_: float = 0.5) -> None:
+        """``lambda_`` trades relevance (1.0) for diversity (lower)."""
         self.lambda_ = lambda_
 
     def rerank(
@@ -51,6 +56,11 @@ class MMRReranker:
         texts: dict[str, str] | None = None,
         query: str = "",
     ) -> list[tuple[str, float]]:
+        """Greedily selects up to ``k`` items maximizing relevance minus
+        redundancy with what's already selected; candidates missing a
+        stored vector are appended after the MMR-selected ones, in their
+        original fusion order, so a reranker with partial vectors can never
+        drop a candidate outright."""
         pool = [(cid, score) for cid, score in candidates if cid in vectors]
         missing = [(cid, score) for cid, score in candidates if cid not in vectors]
         if not pool:
@@ -108,6 +118,8 @@ Snippets:
 Return JSON: {{"ranking": [most relevant index numbers, e.g. 2, 0, 1, ...]}}"""
 
     def __init__(self, structured_caller=None) -> None:
+        """``structured_caller`` is optional at construction (injected later
+        by the facade); `rerank` degrades to fusion order until it's set."""
         self.llm = structured_caller  # StructuredCaller; injected by the facade
 
     def rerank(
@@ -119,6 +131,10 @@ Return JSON: {{"ranking": [most relevant index numbers, e.g. 2, 0, 1, ...]}}"""
         texts: dict[str, str] | None = None,
         query: str = "",
     ):
+        """Sends up to ``max(2k, 10)`` candidates to the 'rerank' LLM role in
+        one listwise call. Falls back to incoming order (no reorder) if the
+        caller has no LLM, no texts, or the LLM call fails to parse. Indices
+        the model omits keep their relative fusion order at the tail."""
         if self.llm is None or not texts:
             return candidates[:k]
         pool = candidates[: max(k * 2, 10)]
@@ -151,6 +167,8 @@ class CrossEncoderReranker:
         model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
         device: str | None = None,
     ) -> None:
+        """Loads ``model_name`` eagerly (network/disk fetch on first use);
+        ``device=None`` lets sentence-transformers pick (GPU if available)."""
         from sentence_transformers import CrossEncoder  # gated by requires
 
         self._model = CrossEncoder(model_name, device=device)
@@ -164,6 +182,9 @@ class CrossEncoderReranker:
         texts: dict[str, str] | None = None,
         query: str = "",
     ):
+        """Scores each candidate's text against the query with the loaded
+        cross-encoder and sorts descending. Candidates with no text fall
+        back to fusion order, appended after the scored ones."""
         if not texts:
             return candidates[:k]
         pool = [(cid, s) for cid, s in candidates if cid in texts]
