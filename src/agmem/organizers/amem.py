@@ -183,9 +183,9 @@ class AMemOrganizer(Organizer):
 
         # 3. link + evolution (Ps3) — one batched LLM call over all neighbors
         neighbor_text = "\n".join(
-            f'- id={n["id"]} time={n.get("timestamp", "")} '
+            f"- id={n['id']} time={n.get('timestamp', '')} "
             f'content="{n.get("content", "")}" context="{n.get("context", "")}" '
-            f'keywords={n.get("keywords", [])} tags={n.get("tags", [])}'
+            f"keywords={n.get('keywords', [])} tags={n.get('tags', [])}"
             for n in neighbors
         )
         evolution_verdict = ctx.llm.call(

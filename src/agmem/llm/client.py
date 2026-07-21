@@ -68,7 +68,7 @@ class LLMClient:
         Returns `""` if the response has no message content."""
         if role not in self.roles:
             raise KeyError(
-                f"no LLM configured for role '{role}' " f"(configured: {sorted(self.roles)})"
+                f"no LLM configured for role '{role}' (configured: {sorted(self.roles)})"
             )
         cfg = self.roles[role]
         client = self._client_for(cfg)

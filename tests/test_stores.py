@@ -15,8 +15,9 @@ from agmem.stores.sqlite_vec import SqliteVecStore
 
 
 def _param(cls, pkg: str | None = None):
-    marks = ([] if pkg is None or find_spec(pkg)
-             else [pytest.mark.skip(reason=f"{pkg} not installed")])
+    marks = (
+        [] if pkg is None or find_spec(pkg) else [pytest.mark.skip(reason=f"{pkg} not installed")]
+    )
     return pytest.param(cls, id=cls.__name__, marks=marks)
 
 
@@ -52,8 +53,15 @@ def test_lexical_search_handles_special_chars(doc):
 
 
 def test_evolution_log_append_only(doc):
-    ops = [MemoryOp(op=OpType.ADD, target_type="notes", target_id="n1",
-                    payload={"content": "x"}, actor="amem")]
+    ops = [
+        MemoryOp(
+            op=OpType.ADD,
+            target_type="notes",
+            target_id="n1",
+            payload={"content": "x"},
+            actor="amem",
+        )
+    ]
     doc.append(ops)
     doc.append([MemoryOp(op=OpType.INVALIDATE, target_type="facts", target_id="f1")])
     assert doc.count() == 2
@@ -207,9 +215,10 @@ def test_numpy_store_persistence(tmp_path):
         NumpyVectorStore(path, dim=16)
 
 
-@pytest.mark.skipif(not os.environ.get("AGMEM_TEST_PG"),
-                    reason="embedded Postgres spins up a real server (~10s); "
-                           "set AGMEM_TEST_PG=1 to include")
+@pytest.mark.skipif(
+    not os.environ.get("AGMEM_TEST_PG"),
+    reason="embedded Postgres spins up a real server (~10s); set AGMEM_TEST_PG=1 to include",
+)
 def test_postgres_doc_store_roundtrip():
     from agmem.stores.postgres_doc import PostgresDocStore
 
@@ -221,8 +230,9 @@ def test_postgres_doc_store_roundtrip():
         assert s.search_lexical("hiking", namespace="t")[0][0] == episode.id
         s.put_item("i1", "facts", "t", {"id": "i1", "content": "Alice lives in Paris"})
         assert s.search_lexical_items("Paris", "facts", namespace="t")[0][0] == "i1"
-        s.append([MemoryOp(op=OpType.ADD, target_type="facts", target_id="i1",
-                           payload={}, actor="test")])
+        s.append(
+            [MemoryOp(op=OpType.ADD, target_type="facts", target_id="i1", payload={}, actor="test")]
+        )
         assert s.count() == 1
     finally:
         s.close()

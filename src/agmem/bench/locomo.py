@@ -207,9 +207,7 @@ def answer(
             d.get("content", "")
             for d in mem.doc_store.list_items("semantic", namespace=mem.namespace)
             if d.get("kind") == "profile"
-        ][
-            -100:
-        ]  # upstream KB cap=100
+        ][-100:]  # upstream KB cap=100
         if profile:
             context = "User Profile:\n" + "\n".join(f"- {p}" for p in profile) + "\n\n" + context
     if mem.llm is None:

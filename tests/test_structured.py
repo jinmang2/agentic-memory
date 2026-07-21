@@ -25,8 +25,7 @@ def test_coerce_bare_array_wrapped_into_single_array_field():
 
 
 def test_coerce_ambiguous_array_schema_refused():
-    two_arrays = {"type": "object", "properties": {
-        "a": {"type": "array"}, "b": {"type": "array"}}}
+    two_arrays = {"type": "object", "properties": {"a": {"type": "array"}, "b": {"type": "array"}}}
     assert coerce_to_schema([1, 2], two_arrays) is None
 
 

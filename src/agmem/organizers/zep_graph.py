@@ -313,9 +313,7 @@ class ZepGraphOrganizer(Organizer):
         name_to_id: dict[str, str] = {}
         for ent in extracted["entities"][:10]:
             if str(ent.get("name", "")).strip():
-                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(
-                    ent, episode, ctx, ops
-                )
+                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(ent, episode, ctx, ops)
 
         if len(name_to_id) < 2:
             return ops
@@ -352,8 +350,8 @@ class ZepGraphOrganizer(Organizer):
                         EDGE_RESOLVE_PROMPT.format(
                             existing="\n".join(
                                 f'- id={e["id"]} "{e["content"]}" '
-                                f'(valid {e.get("valid_at") or "?"} - '
-                                f'{e.get("invalid_at") or "present"})'
+                                f"(valid {e.get('valid_at') or '?'} - "
+                                f"{e.get('invalid_at') or 'present'})"
                                 for e in existing
                             ),
                             statement=statement,

@@ -1,6 +1,5 @@
 """Phase 1 exit criterion: MemoryOp abstraction holds for RB + A-Mem."""
 
-
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig
 from agmem.core.ops import OpType
@@ -11,8 +10,7 @@ from helpers import StubLLM
 
 
 def make_mem(organizer, llm) -> AgenticMemory:
-    mem = AgenticMemory(namespace="t", organizers=[organizer],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(namespace="t", organizers=[organizer], embedder=FakeEmbedder(dim=128))
     mem.structured = llm
     mem._ctx.llm = llm
     return mem
@@ -20,19 +18,30 @@ def make_mem(organizer, llm) -> AgenticMemory:
 
 # ---------------- ReasoningBank ----------------
 
+
 def rb_llm(success=True):
-    return StubLLM({
-        "judge": [{"success": success, "reason": "checked final state"}],
-        "distill": [{"items": [
-            {"title": "Verify filters before submit",
-             "description": "Use when a form has filter controls",
-             "content": "Check each filter state, then submit."},
-            {"title": "", "description": "broken item", "content": "x"},  # dropped
-            {"title": "Re-read error banners",
-             "description": "Use after any failed action",
-             "content": "Error text usually names the missing field."},
-        ]}],
-    })
+    return StubLLM(
+        {
+            "judge": [{"success": success, "reason": "checked final state"}],
+            "distill": [
+                {
+                    "items": [
+                        {
+                            "title": "Verify filters before submit",
+                            "description": "Use when a form has filter controls",
+                            "content": "Check each filter state, then submit.",
+                        },
+                        {"title": "", "description": "broken item", "content": "x"},  # dropped
+                        {
+                            "title": "Re-read error banners",
+                            "description": "Use after any failed action",
+                            "content": "Error text usually names the missing field.",
+                        },
+                    ]
+                }
+            ],
+        }
+    )
 
 
 def test_reasoning_bank_distills_and_indexes():
@@ -41,8 +50,9 @@ def test_reasoning_bank_distills_and_indexes():
     llm = rb_llm()
     mem = make_mem(ReasoningBankOrganizer(), llm)
     try:
-        mem.add_task_result(trajectory=[{"a": 1}], outcome="unknown",
-                            task="filter products by price")
+        mem.add_task_result(
+            trajectory=[{"a": 1}], outcome="unknown", task="filter products by price"
+        )
         # judge was consulted for unknown outcome, then distill
         assert [r for r, _ in llm.calls] == ["judge", "distill"]
         ops = mem.log.tail(10)
@@ -74,8 +84,9 @@ def test_reasoning_bank_known_outcome_skips_judge():
 def test_reasoning_bank_no_llm_explicit_skip():
     from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
 
-    mem = AgenticMemory(namespace="t", organizers=[ReasoningBankOrganizer()],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(
+        namespace="t", organizers=[ReasoningBankOrganizer()], embedder=FakeEmbedder(dim=128)
+    )
     try:
         mem.add_task_result(trajectory=[], outcome="success", task="t")
         # raw episode logged, but no strategy ops
@@ -86,22 +97,36 @@ def test_reasoning_bank_no_llm_explicit_skip():
 
 # ---------------- A-Mem ----------------
 
+
 def test_amem_note_link_and_evolution():
     from agmem.organizers.amem import AMemOrganizer
 
-    llm = StubLLM({
-        "extract": [
-            {"keywords": ["파리", "여행"], "context": "파리 여행 계획", "tags": ["travel"]},
-            {"keywords": ["파리", "예산"], "context": "파리 여행 예산", "tags": ["travel", "budget"]},
-        ],
-        "distill": [
-            # second note's evolution: link to first + update its context
-            {"should_evolve": True, "connections": ["__FIRST__"],
-             "neighbor_updates": [{"id": "__FIRST__",
-                                   "new_context": "파리 여행 계획 (예산 300만원 확정)",
-                                   "new_tags": ["travel", "budget"]}]},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "extract": [
+                {"keywords": ["파리", "여행"], "context": "파리 여행 계획", "tags": ["travel"]},
+                {
+                    "keywords": ["파리", "예산"],
+                    "context": "파리 여행 예산",
+                    "tags": ["travel", "budget"],
+                },
+            ],
+            "distill": [
+                # second note's evolution: link to first + update its context
+                {
+                    "should_evolve": True,
+                    "connections": ["__FIRST__"],
+                    "neighbor_updates": [
+                        {
+                            "id": "__FIRST__",
+                            "new_context": "파리 여행 계획 (예산 300만원 확정)",
+                            "new_tags": ["travel", "budget"],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
     mem = make_mem(AMemOrganizer(top_k=5), llm)
     try:
         mem.add_message("다음 달에 파리로 여행 가려고 해")
@@ -122,8 +147,9 @@ def test_amem_note_link_and_evolution():
 
         # unidirectional link, as upstream: the NEW note links to the
         # neighbor; the neighbor itself gains no back-link
-        second_id = next(o.target_id for o in ops
-                         if o.op is OpType.LINK and o.target_type == "notes")
+        second_id = next(
+            o.target_id for o in ops if o.op is OpType.LINK and o.target_type == "notes"
+        )
         second = mem.doc_store.get_items([second_id], "notes")[0]
         assert first_id in second["links"]
         first = mem.doc_store.get_items([first_id], "notes")[0]
@@ -138,16 +164,21 @@ def test_amem_note_link_and_evolution():
 def test_amem_hallucinated_neighbor_ids_ignored():
     from agmem.organizers.amem import AMemOrganizer
 
-    llm = StubLLM({
-        "extract": [
-            {"keywords": ["a"], "context": "c1", "tags": ["t"]},
-            {"keywords": ["a"], "context": "c2", "tags": ["t"]},
-        ],
-        "distill": [
-            {"should_evolve": True, "connections": ["not-a-real-id"],
-             "neighbor_updates": [{"id": "also-fake", "new_context": "x"}]},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "extract": [
+                {"keywords": ["a"], "context": "c1", "tags": ["t"]},
+                {"keywords": ["a"], "context": "c2", "tags": ["t"]},
+            ],
+            "distill": [
+                {
+                    "should_evolve": True,
+                    "connections": ["not-a-real-id"],
+                    "neighbor_updates": [{"id": "also-fake", "new_context": "x"}],
+                },
+            ],
+        }
+    )
     mem = make_mem(AMemOrganizer(), llm)
     try:
         mem.add_message("first note about topic alpha")
@@ -162,8 +193,7 @@ def test_amem_hallucinated_neighbor_ids_ignored():
 def test_amem_degrades_without_llm():
     from agmem.organizers.amem import AMemOrganizer
 
-    mem = AgenticMemory(namespace="t", organizers=[AMemOrganizer()],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(namespace="t", organizers=[AMemOrganizer()], embedder=FakeEmbedder(dim=128))
     try:
         mem.add_message("bare note without llm")
         notes = [o for o in mem.log.tail(10) if o.target_type == "notes"]
@@ -174,13 +204,17 @@ def test_amem_degrades_without_llm():
 
 # ---------------- async worker ----------------
 
+
 def test_async_write_flush():
     from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
 
     llm = rb_llm()
-    mem = AgenticMemory(namespace="t", organizers=[ReasoningBankOrganizer()],
-                        embedder=FakeEmbedder(dim=128),
-                        config=AgmemConfig(sync_write=False))
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=[ReasoningBankOrganizer()],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(sync_write=False),
+    )
     mem.structured = llm
     mem._ctx.llm = llm
     try:
@@ -193,6 +227,7 @@ def test_async_write_flush():
 
 
 # ---------------- MMR ----------------
+
 
 def test_mmr_prefers_diversity():
     from agmem.retrieval.rerank import MMRReranker

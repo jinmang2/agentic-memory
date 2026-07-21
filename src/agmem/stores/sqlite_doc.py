@@ -148,10 +148,7 @@ class SqliteDocStore:
         self, query: str, k: int = 10, namespace: str | None = None
     ) -> list[tuple[str, float]]:
         """BM25 search; returns (episode_id, score) with higher = better."""
-        sql = (
-            "SELECT id, bm25(episodes_fts) AS rank FROM episodes_fts"
-            " WHERE episodes_fts MATCH ?"
-        )
+        sql = "SELECT id, bm25(episodes_fts) AS rank FROM episodes_fts WHERE episodes_fts MATCH ?"
         params: list[Any] = [_fts_query(query)]
         if namespace:
             sql += " AND namespace = ?"
@@ -170,8 +167,7 @@ class SqliteDocStore:
     ) -> None:
         with self._lock, self._conn:
             self._conn.execute(
-                "INSERT OR REPLACE INTO items (id, memory_type, namespace, data)"
-                " VALUES (?,?,?,?)",
+                "INSERT OR REPLACE INTO items (id, memory_type, namespace, data) VALUES (?,?,?,?)",
                 (
                     item_id,
                     memory_type,
@@ -209,9 +205,7 @@ class SqliteDocStore:
             rows = self._conn.execute(sql, params).fetchall()
         return [(r[0], -float(r[1])) for r in rows]
 
-    def list_items(
-        self, memory_type: str, namespace: str | None = None
-    ) -> list[dict[str, Any]]:
+    def list_items(self, memory_type: str, namespace: str | None = None) -> list[dict[str, Any]]:
         """Full scan of one memory type (e.g. ACE's whole-playbook read)."""
         sql = "SELECT data FROM items WHERE memory_type = ?"
         args: list[Any] = [memory_type]
@@ -268,9 +262,7 @@ class SqliteDocStore:
 
     def count(self) -> int:
         with self._lock:
-            return int(
-                self._conn.execute("SELECT COUNT(*) FROM evolution_log").fetchone()[0]
-            )
+            return int(self._conn.execute("SELECT COUNT(*) FROM evolution_log").fetchone()[0])
 
     def ops_since(
         self, seq: int, target_type: str | None = None, limit: int = 10000

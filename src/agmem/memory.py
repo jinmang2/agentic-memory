@@ -387,9 +387,7 @@ class AgenticMemory:
                 target_type=op.target_type,
                 target_id=op.target_id,
                 payload=dict(op.payload),
-                supersedes=tuple(op.payload.get("supersedes", ()))
-                if op.op is OpType.MERGE
-                else (),
+                supersedes=tuple(op.payload.get("supersedes", ())) if op.op is OpType.MERGE else (),
             )
             for org in self.organizers:
                 if org.name == actor or ev.target_type not in org.consumes:
@@ -424,9 +422,7 @@ class AgenticMemory:
             if items:
                 data = items[0]
                 # 최초 무효화 시각 보존 — 이중 무효화 멱등 (spec §1.2)
-                data.setdefault(
-                    "invalid_at", op.payload.get("t_invalid", utcnow().isoformat())
-                )
+                data.setdefault("invalid_at", op.payload.get("t_invalid", utcnow().isoformat()))
                 if "superseded_by" in op.payload:
                     data["superseded_by"] = op.payload["superseded_by"]
                 self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
@@ -544,7 +540,7 @@ class AgenticMemory:
         by_section: dict[str, list[str]] = {}
         for b in bullets:
             by_section.setdefault(b.get("section", "general"), []).append(
-                f"[{b.get('section','general')}-{b['id'][:5]}] "
+                f"[{b.get('section', 'general')}-{b['id'][:5]}] "
                 f"helpful={b.get('helpful', 0)} harmful={b.get('harmful', 0)} "
                 f":: {b.get('content', '')}"
             )

@@ -25,7 +25,17 @@ ORGANIZERS: dict[str, type[Organizer]] = {
     "gmemory": GMemoryOrganizer,
 }
 
-__all__ = ["MemoryEvent", "Organizer", "OrganizerContext", "ORGANIZERS",
-           "PassthroughOrganizer", "ReasoningBankOrganizer", "AMemOrganizer",
-           "NemoriOrganizer", "MemoryOSOrganizer", "ACEOrganizer",
-           "ZepGraphOrganizer", "GMemoryOrganizer"]
+__all__ = [
+    "MemoryEvent",
+    "Organizer",
+    "OrganizerContext",
+    "ORGANIZERS",
+    "PassthroughOrganizer",
+    "ReasoningBankOrganizer",
+    "AMemOrganizer",
+    "NemoriOrganizer",
+    "MemoryOSOrganizer",
+    "ACEOrganizer",
+    "ZepGraphOrganizer",
+    "GMemoryOrganizer",
+]

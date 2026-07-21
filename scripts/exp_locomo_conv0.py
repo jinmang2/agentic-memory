@@ -166,8 +166,7 @@ def run(
             json.dumps(result, indent=2, ensure_ascii=False)
         )
         print(
-            f"[{config_name}] overall={res['overall']} "
-            f"ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
+            f"[{config_name}] overall={res['overall']} ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
             flush=True,
         )
         return result

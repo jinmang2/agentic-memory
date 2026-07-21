@@ -100,9 +100,7 @@ class ThreeWayIntegrator:
         add = AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
         if not candidates:
             return add
-        existing = "\n".join(
-            f"[{i}] {c.get('content', '')}" for i, c in enumerate(candidates)
-        )
+        existing = "\n".join(f"[{i}] {c.get('content', '')}" for i, c in enumerate(candidates))
         verdict = ctx.llm.call(
             "distill",
             INTEGRATE_PROMPT.format(fact=fact, existing=existing),
@@ -167,9 +165,7 @@ class SemanticOfflineConsolidator:
     consolidated=True and are skipped on later passes, so repeated calls
     converge instead of re-judging their own merges."""
 
-    def __init__(
-        self, top_k: int = 5, tau: float = 0.70, scan_limit: int = 10000
-    ) -> None:
+    def __init__(self, top_k: int = 5, tau: float = 0.70, scan_limit: int = 10000) -> None:
         """``top_k``/``tau`` are forwarded to the inner `ThreeWayIntegrator`.
         ``scan_limit`` bounds one `run()` call's `ops_since` page — see
         `run` for what happens when a scan hits this limit."""
@@ -190,9 +186,7 @@ class SemanticOfflineConsolidator:
         `last_seq()`), so a future call resumes rather than skipping the
         unscanned tail."""
         cursor = organizer.read_cursor(ctx)
-        rows = ctx.doc_store.ops_since(
-            cursor, target_type="semantic", limit=self.scan_limit
-        )
+        rows = ctx.doc_store.ops_since(cursor, target_type="semantic", limit=self.scan_limit)
         # Cursor advance must respect ops_since's limit truncation (review I2):
         # if the semantic log since the cursor filled scan_limit, the tail is
         # cut off here, so advance only to the last row we actually scanned and
@@ -259,9 +253,7 @@ class SemanticOfflineConsolidator:
                     payload={"reason": "consolidated", "superseded_by": head_id},
                 )
             )
-            superseded_this_pass.update(
-                o.target_id for o in out if o.op is OpType.INVALIDATE
-            )
+            superseded_this_pass.update(o.target_id for o in out if o.op is OpType.INVALIDATE)
             ops.extend(out)
         ops.append(organizer.cursor_op(end))
         return ops

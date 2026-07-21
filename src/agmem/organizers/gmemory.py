@@ -202,11 +202,11 @@ class GMemoryOrganizer(Organizer):
             "distill",
             FINETUNE_PROMPT.format(
                 rules="\n".join(
-                    f'- id={i["id"]} (score={i.get("score", 0)}) {i["content"]}' for i in insights
+                    f"- id={i['id']} (score={i.get('score', 0)}) {i['content']}" for i in insights
                 )
                 or "(none)",
                 trajectories="\n".join(
-                    f'- [{t.get("outcome")}] {t.get("title")}: {t.get("content", "")[:300]}'
+                    f"- [{t.get('outcome')}] {t.get('title')}: {t.get('content', '')[:300]}"
                     for t in trajectories
                 ),
             ),

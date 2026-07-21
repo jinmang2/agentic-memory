@@ -8,15 +8,14 @@ from helpers import StubLLM, make_mem_multi
 def _mk(organizers=("passthrough",)):
     from agmem import AgenticMemory
     from agmem.embed.fake import FakeEmbedder
-    return AgenticMemory(namespace="t", organizers=list(organizers),
-                         embedder=FakeEmbedder(dim=128))
+
+    return AgenticMemory(namespace="t", organizers=list(organizers), embedder=FakeEmbedder(dim=128))
 
 
 def test_base_defaults_are_noop():
     org = Organizer()
     assert org.consumes == ()
-    ev = MemoryEvent(source="x", op=OpType.ADD, target_type="episodes",
-                     target_id="e1", payload={})
+    ev = MemoryEvent(source="x", op=OpType.ADD, target_type="episodes", target_id="e1", payload={})
     assert org.on_memory_event(ev, None) == []
     assert org.consolidate(None) == []
     assert ev.supersedes == ()
@@ -39,61 +38,112 @@ def test_cursor_helpers_roundtrip():
 
 def test_invalidate_preserves_first_and_removes_vector():
     mem = _mk()
-    mem._apply_ops([MemoryOp(op=OpType.ADD, target_type="semantic", target_id="s1",
-                             payload={"id": "s1", "content": "fact", "embedding_text": "fact"})],
-                   actor="t")
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id="s1",
+                payload={"id": "s1", "content": "fact", "embedding_text": "fact"},
+            )
+        ],
+        actor="t",
+    )
     assert mem.vector_store.count() == 1
-    mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="semantic", target_id="s1",
-                             payload={"t_invalid": "2026-01-01T00:00:00",
-                                      "superseded_by": "s2"})], actor="t")
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="semantic",
+                target_id="s1",
+                payload={"t_invalid": "2026-01-01T00:00:00", "superseded_by": "s2"},
+            )
+        ],
+        actor="t",
+    )
     item = mem.doc_store.get_items(["s1"], "semantic")[0]
     assert item["invalid_at"] == "2026-01-01T00:00:00"
     assert item["superseded_by"] == "s2"
     assert mem.vector_store.count() == 0  # semantic은 bi-temporal 렌더 타입이 아님 → 벡터 제거
     # 이중 무효화: 최초 시각 보존, 예외 없음
-    mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="semantic", target_id="s1",
-                             payload={"t_invalid": "2027-01-01T00:00:00"})], actor="t")
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="semantic",
+                target_id="s1",
+                payload={"t_invalid": "2027-01-01T00:00:00"},
+            )
+        ],
+        actor="t",
+    )
     assert mem.doc_store.get_items(["s1"], "semantic")[0]["invalid_at"] == "2026-01-01T00:00:00"
 
 
 def test_invalidate_facts_keeps_vector():
     mem = _mk()
-    mem._apply_ops([MemoryOp(op=OpType.ADD, target_type="facts", target_id="f1",
-                             payload={"id": "f1", "content": "A는 B다", "embedding_text": "A는 B다"})],
-                   actor="t")
-    mem._apply_ops([MemoryOp(op=OpType.INVALIDATE, target_type="facts", target_id="f1",
-                             payload={})], actor="t")
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="facts",
+                target_id="f1",
+                payload={"id": "f1", "content": "A는 B다", "embedding_text": "A는 B다"},
+            )
+        ],
+        actor="t",
+    )
+    mem._apply_ops(
+        [MemoryOp(op=OpType.INVALIDATE, target_type="facts", target_id="f1", payload={})], actor="t"
+    )
     assert mem.vector_store.count() == 1  # Zep bi-temporal: 무효화돼도 validity 렌더 대상
 
 
 class Emitter(Organizer):
     name = "emitter"
+
     def on_message(self, episode, ctx):
         return [
-            MemoryOp(op=OpType.MERGE, target_type="episodes", target_id="new",
-                     payload={"id": "new", "content": "merged", "supersedes": ["old"]}),
-            MemoryOp(op=OpType.INVALIDATE, target_type="episodes", target_id="old",
-                     payload={"superseded_by": "new"}),
+            MemoryOp(
+                op=OpType.MERGE,
+                target_type="episodes",
+                target_id="new",
+                payload={"id": "new", "content": "merged", "supersedes": ["old"]},
+            ),
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="episodes",
+                target_id="old",
+                payload={"superseded_by": "new"},
+            ),
         ]
 
 
 class Consumer(Organizer):
     name = "consumer"
     consumes = ("episodes",)
+
     def __init__(self):
         self.seen: list[MemoryEvent] = []
+
     def on_memory_event(self, ev, ctx):
         self.seen.append(ev)
         # depth=1 검증용: consumer도 episodes를 반환하지만 재전파되면 안 됨
-        return [MemoryOp(op=OpType.ADD, target_type="episodes", target_id=f"d1-{len(self.seen)}",
-                         payload={"id": f"d1-{len(self.seen)}", "content": "derived"})]
+        return [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id=f"d1-{len(self.seen)}",
+                payload={"id": f"d1-{len(self.seen)}", "content": "derived"},
+            )
+        ]
 
 
 def test_event_propagation_supersedes_and_depth1():
     consumer = Consumer()
     mem = _mk(organizers=[Emitter(), consumer])
     mem.add_message("hi")
-    assert len(consumer.seen) == 1            # MERGE만 전파 (INVALIDATE 비전파)
+    assert len(consumer.seen) == 1  # MERGE만 전파 (INVALIDATE 비전파)
     ev = consumer.seen[0]
     assert (ev.op, ev.target_id, ev.supersedes) == (OpType.MERGE, "new", ("old",))
     assert ev.source == "emitter"
@@ -113,6 +163,7 @@ def test_no_self_delivery_and_consumes_filter():
         def on_memory_event(self, ev, ctx):
             self.seen.append(ev)
             return []
+
     org = SelfSub()
     mem = _mk(organizers=[org])
     mem.add_message("hi")
@@ -122,12 +173,24 @@ def test_no_self_delivery_and_consumes_filter():
 def test_consolidate_api_applies_ops_and_cursor():
     class Cons(Organizer):
         name = "cons"
+
         def consolidate(self, ctx):
             end = ctx.doc_store.last_seq()
-            return [MemoryOp(op=OpType.ADD, target_type="semantic", target_id="c1",
-                             payload={"id": "c1", "content": "merged fact",
-                                      "consolidated": True, "embedding_text": "merged fact"}),
-                    self.cursor_op(end)]
+            return [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id="c1",
+                    payload={
+                        "id": "c1",
+                        "content": "merged fact",
+                        "consolidated": True,
+                        "embedding_text": "merged fact",
+                    },
+                ),
+                self.cursor_op(end),
+            ]
+
     org = Cons()
     mem = _mk(organizers=[org])
     mem.add_message("test")  # add an episode to ensure last_seq() > 0
@@ -191,7 +254,9 @@ def test_memoryos_consumes_nemori_episodes():
             "distill": [
                 {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},  # episode
                 {"facts": []},  # cold-start direct extract
-                {"groups": [{"topic": "g", "summary": "s", "message_indexes": [0]}]},  # MemoryOS segment
+                {
+                    "groups": [{"topic": "g", "summary": "s", "message_indexes": [0]}]
+                },  # MemoryOS segment
             ],
         }
     )
@@ -201,9 +266,7 @@ def test_memoryos_consumes_nemori_episodes():
     mem = make_mem_multi([NemoriOrganizer(fidelity="v1", buffer_min=1), mos], llm)
     mem.add_message("hello", meta={"date": "2026-01-01"})
     mem.add_message("new topic", meta={"date": "2026-01-01"})  # boundary -> episode flush
-    pages = [
-        o for o in mem.log.tail(30) if o.target_type == "pages" and o.actor == "memoryos"
-    ]
+    pages = [o for o in mem.log.tail(30) if o.target_type == "pages" and o.actor == "memoryos"]
     assert pages  # Nemori 에피소드가 MemoryOS page로 흘러들어감
     # 에피소드 원문이 아니라 Nemori 서사가 STM에 들어갔는지: page의 source가 episode id
     ep_ids = [
@@ -260,8 +323,16 @@ def test_memoryos_heat_eviction_drops_reverse_index():
     llm = StubLLM(
         {
             "distill": [
-                {"groups": [{"topic": "g1", "summary": "alpha", "keywords": [], "message_indexes": [0]}]},
-                {"groups": [{"topic": "g2", "summary": "beta", "keywords": [], "message_indexes": [0]}]},
+                {
+                    "groups": [
+                        {"topic": "g1", "summary": "alpha", "keywords": [], "message_indexes": [0]}
+                    ]
+                },
+                {
+                    "groups": [
+                        {"topic": "g2", "summary": "beta", "keywords": [], "message_indexes": [0]}
+                    ]
+                },
             ]
         }
     )
@@ -358,9 +429,7 @@ def test_amem_consumes_episodes_and_retires_notes():
         ],
         actor="src",
     )
-    inv = [
-        o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.INVALIDATE
-    ]
+    inv = [o for o in mem.log.tail(10) if o.target_type == "notes" and o.op == OpType.INVALIDATE]
     assert len(inv) == 1 and inv[0].target_id == notes[0].target_id
 
 

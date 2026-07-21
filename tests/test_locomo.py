@@ -1,6 +1,12 @@
 from agmem import AgenticMemory
-from agmem.bench.locomo import (answer, bleu1, evidence_sessions, iter_turns,
-                                select_questions, token_f1)
+from agmem.bench.locomo import (
+    answer,
+    bleu1,
+    evidence_sessions,
+    iter_turns,
+    select_questions,
+    token_f1,
+)
 from agmem.embed.fake import FakeEmbedder
 
 
@@ -41,7 +47,7 @@ def test_select_questions_respects_session_prefix():
     qs = select_questions(SAMPLE, max_sessions=1)
     ids = [q["question"] for q in qs]
     assert "q1" in ids and "q2" not in ids  # q2 evidence in session 2
-    assert "q5" in ids                       # no evidence -> always eligible
+    assert "q5" in ids  # no evidence -> always eligible
 
 
 def test_evidence_sessions_parsing():
@@ -63,8 +69,7 @@ class _StubStructured:
 
 def test_keyword_queries_rewrite_the_search_query():
     """A-Mem official eval: the LLM keyword string replaces the raw question."""
-    mem = AgenticMemory(namespace="t", organizers=["passthrough"],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
     try:
         mem.llm = _StubLLM()
         mem.structured = _StubStructured("paris, museums, travel")
@@ -86,8 +91,7 @@ def test_keyword_queries_rewrite_the_search_query():
 
 
 def test_keyword_queries_fall_back_to_question_on_llm_failure():
-    mem = AgenticMemory(namespace="t", organizers=["passthrough"],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
     try:
         mem.llm = _StubLLM()
         failing = _StubStructured("")

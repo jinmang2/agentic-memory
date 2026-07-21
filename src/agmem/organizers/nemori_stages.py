@@ -187,9 +187,7 @@ class BatchPartitioner:
             return [buffer]
         return self._partition(buffer, ctx)
 
-    def _partition(
-        self, buffer: list[Episode], ctx: OrganizerContext
-    ) -> list[list[Episode]]:
+    def _partition(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
         segments: list[list[Episode]] = []
         for start in range(0, len(buffer), self.chunk_max):
             chunk = buffer[start : start + self.chunk_max]
@@ -341,9 +339,7 @@ class EpisodeMerger:
         ]
         if not candidates:
             return None
-        gap_rule = (
-            TIME_GAP_RULE.format(hours=self.time_gap_hours) if self.time_gap_hours else ""
-        )
+        gap_rule = TIME_GAP_RULE.format(hours=self.time_gap_hours) if self.time_gap_hours else ""
         candidate_text = "\n".join(
             f"[{i}] title: {c.get('title', '')} | timestamp: {c.get('timestamp', '')}\n"
             f"    narrative: {c.get('content', '')}"

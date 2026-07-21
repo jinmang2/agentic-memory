@@ -184,7 +184,7 @@ class PostgresDocStore:
             return []
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
-                "SELECT id, data FROM items WHERE memory_type = %s" " AND id = ANY(%s)",
+                "SELECT id, data FROM items WHERE memory_type = %s AND id = ANY(%s)",
                 (memory_type, ids),
             )
             rows = cur.fetchall()

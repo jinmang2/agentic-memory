@@ -12,8 +12,7 @@ from helpers import StubLLM
 
 
 def make_mem(organizer, llm):
-    mem = AgenticMemory(namespace="t", organizers=[organizer],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(namespace="t", organizers=[organizer], embedder=FakeEmbedder(dim=128))
     mem.structured = llm
     mem._ctx.llm = llm
     return mem
@@ -25,19 +24,25 @@ def ops_of(mem, ttype):
 
 # ---------------- Nemori ----------------
 
+
 def test_nemori_boundary_flush_and_calibrate():
-    llm = StubLLM({
-        "extract": [  # boundary checks (from 2nd message on)
-            {"boundary": False, "confidence": 0.9},
-            {"boundary": True, "confidence": 0.95},
-        ],
-        "distill": [
-            {"title": "Paris trip planning", "narrative": "On 1 May 2023, the user planned a trip.",
-             "timestamp": "2023-05-01"},
-            # cold start (no prior semantic memory) -> direct extraction, one call
-            {"facts": ["The user's trip budget is 3,000,000 KRW."]},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "extract": [  # boundary checks (from 2nd message on)
+                {"boundary": False, "confidence": 0.9},
+                {"boundary": True, "confidence": 0.95},
+            ],
+            "distill": [
+                {
+                    "title": "Paris trip planning",
+                    "narrative": "On 1 May 2023, the user planned a trip.",
+                    "timestamp": "2023-05-01",
+                },
+                # cold start (no prior semantic memory) -> direct extraction, one call
+                {"facts": ["The user's trip budget is 3,000,000 KRW."]},
+            ],
+        }
+    )
     mem = make_mem(NemoriOrganizer(buffer_min=2), llm)
     try:
         mem.add_message("파리 여행 계획을 세우자")
@@ -55,10 +60,12 @@ def test_nemori_boundary_flush_and_calibrate():
 
 
 def test_nemori_mechanical_fallback_on_generation_failure():
-    llm = StubLLM({
-        "extract": [{"boundary": True, "confidence": 0.9}],
-        "distill": [],  # episode generation returns None -> fallback
-    })
+    llm = StubLLM(
+        {
+            "extract": [{"boundary": True, "confidence": 0.9}],
+            "distill": [],  # episode generation returns None -> fallback
+        }
+    )
     mem = make_mem(NemoriOrganizer(buffer_min=2), llm)
     try:
         mem.add_message("first message about topic A here")
@@ -71,8 +78,9 @@ def test_nemori_mechanical_fallback_on_generation_failure():
 
 
 def test_nemori_no_llm_degrades_quietly():
-    mem = AgenticMemory(namespace="t", organizers=[NemoriOrganizer()],
-                        embedder=FakeEmbedder(dim=128))
+    mem = AgenticMemory(
+        namespace="t", organizers=[NemoriOrganizer()], embedder=FakeEmbedder(dim=128)
+    )
     try:
         mem.add_message("hello")
         assert not ops_of(mem, "episodes")
@@ -82,14 +90,24 @@ def test_nemori_no_llm_degrades_quietly():
 
 # ---------------- MemoryOS ----------------
 
+
 def test_memoryos_eviction_creates_segment_and_promotes():
-    llm = StubLLM({
-        "distill": [
-            {"groups": [{"topic": "travel", "summary": "User plans a Paris trip.",
-                         "message_indexes": [0, 1, 2]}]},
-            {"profile_facts": ["User is planning a Paris trip."]},  # heat trigger
-        ],
-    })
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "groups": [
+                        {
+                            "topic": "travel",
+                            "summary": "User plans a Paris trip.",
+                            "message_indexes": [0, 1, 2],
+                        }
+                    ]
+                },
+                {"profile_facts": ["User is planning a Paris trip."]},  # heat trigger
+            ],
+        }
+    )
     org = MemoryOSOrganizer(stm_capacity=3, heat_threshold=1.0)  # trigger promotion
     mem = make_mem(org, llm)
     try:
@@ -120,20 +138,47 @@ def test_memoryos_no_llm_mechanical_segment():
 
 # ---------------- Zep-graph ----------------
 
+
 def test_zep_graph_entities_facts_and_invalidation():
-    llm = StubLLM({
-        "extract": [
-            {"entities": [{"name": "Caroline", "type": "Person", "summary": "a user"},
-                          {"name": "Seoul", "type": "Place", "summary": "a city"}]},
-            {"facts": [{"subject": "Caroline", "predicate": "lives_in",
-                        "object": "Seoul", "statement": "Caroline lives in Seoul."}]},
-            {"entities": [{"name": "Caroline", "type": "Person", "summary": "a user"},
-                          {"name": "Busan", "type": "Place", "summary": "a city"}]},
-            {"facts": [{"subject": "Caroline", "predicate": "lives_in",
-                        "object": "Busan", "statement": "Caroline lives in Busan."}]},
-        ],
-        "distill": [],  # no edges between Caroline-Busan yet -> no contradiction call
-    })
+    llm = StubLLM(
+        {
+            "extract": [
+                {
+                    "entities": [
+                        {"name": "Caroline", "type": "Person", "summary": "a user"},
+                        {"name": "Seoul", "type": "Place", "summary": "a city"},
+                    ]
+                },
+                {
+                    "facts": [
+                        {
+                            "subject": "Caroline",
+                            "predicate": "lives_in",
+                            "object": "Seoul",
+                            "statement": "Caroline lives in Seoul.",
+                        }
+                    ]
+                },
+                {
+                    "entities": [
+                        {"name": "Caroline", "type": "Person", "summary": "a user"},
+                        {"name": "Busan", "type": "Place", "summary": "a city"},
+                    ]
+                },
+                {
+                    "facts": [
+                        {
+                            "subject": "Caroline",
+                            "predicate": "lives_in",
+                            "object": "Busan",
+                            "statement": "Caroline lives in Busan.",
+                        }
+                    ]
+                },
+            ],
+            "distill": [],  # no edges between Caroline-Busan yet -> no contradiction call
+        }
+    )
     org = ZepGraphOrganizer()
     mem = make_mem(org, llm)
     try:
@@ -149,17 +194,35 @@ def test_zep_graph_entities_facts_and_invalidation():
 
 
 def test_zep_graph_contradiction_invalidates():
-    llm = StubLLM({
-        "extract": [
-            {"entities": [{"name": "A", "summary": "s"}, {"name": "B", "summary": "s"}]},
-            {"facts": [{"subject": "A", "predicate": "likes", "object": "B",
-                        "statement": "A likes B."}]},
-            {"entities": [{"name": "A", "summary": "s"}, {"name": "B", "summary": "s"}]},
-            {"facts": [{"subject": "A", "predicate": "dislikes", "object": "B",
-                        "statement": "A dislikes B."}]},
-        ],
-        "distill": [{"contradicts": ["__EDGE__"]}],
-    })
+    llm = StubLLM(
+        {
+            "extract": [
+                {"entities": [{"name": "A", "summary": "s"}, {"name": "B", "summary": "s"}]},
+                {
+                    "facts": [
+                        {
+                            "subject": "A",
+                            "predicate": "likes",
+                            "object": "B",
+                            "statement": "A likes B.",
+                        }
+                    ]
+                },
+                {"entities": [{"name": "A", "summary": "s"}, {"name": "B", "summary": "s"}]},
+                {
+                    "facts": [
+                        {
+                            "subject": "A",
+                            "predicate": "dislikes",
+                            "object": "B",
+                            "statement": "A dislikes B.",
+                        }
+                    ]
+                },
+            ],
+            "distill": [{"contradicts": ["__EDGE__"]}],
+        }
+    )
     org = ZepGraphOrganizer()
     mem = make_mem(org, llm)
     try:
@@ -182,17 +245,22 @@ def test_zep_graph_contradiction_invalidates():
 
 # ---------------- G-Memory ----------------
 
+
 def test_gmemory_trajectory_and_insight_finetune():
-    llm = StubLLM({
-        "distill": [
-            {"key_steps": ["searched", "clicked"], "mistakes": []},
-            {"key_steps": ["opened settings"], "mistakes": ["wrong tab first"]},
-            {"operations": [
-                {"op": "ADD", "rule": "Always open settings from the sidebar."},
-                {"op": "EDIT", "id": "fake-id", "rule": "ignored"},  # hallucinated
-            ]},
-        ],
-    })
+    llm = StubLLM(
+        {
+            "distill": [
+                {"key_steps": ["searched", "clicked"], "mistakes": []},
+                {"key_steps": ["opened settings"], "mistakes": ["wrong tab first"]},
+                {
+                    "operations": [
+                        {"op": "ADD", "rule": "Always open settings from the sidebar."},
+                        {"op": "EDIT", "id": "fake-id", "rule": "ignored"},  # hallucinated
+                    ]
+                },
+            ],
+        }
+    )
     org = GMemoryOrganizer(finetune_every=2)
     mem = make_mem(org, llm)
     try:
