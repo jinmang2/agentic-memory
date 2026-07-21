@@ -41,8 +41,9 @@
 > 대응물이 없는 **크로스-organizer 합성**을 `organizers/experimental/`로 격리 — 충실
 > organizer(amem/memoryos)에서 구 `input="episodes"` chained-manager 코드를 제거하고
 > `experimental.ChainedConsumer` 어댑터로 추출(`nemori_amem`/`nemori_memoryos`). Nemori의
-> our-mixing 스테이지(`llm3way` ThreeWayIntegrator, `semantic_offline`
-> SemanticOfflineConsolidator)도 `experimental/nemori_mixing.py`로 이동. **전 과정 동작
+> 유예/오프라인 스케줄링(`semantic_offline` SemanticOfflineConsolidator)만
+> `experimental/nemori_mixing.py`로 이동 — 그것이 재사용하는 `ThreeWayIntegrator`(v4
+> §3.3.3 논문 메커니즘)는 충실 코어(`nemori_stages.py`)에 유지([N1 수정]). **전 과정 동작
 > 보존**(125 passed/1 skipped 불변). 충실 코어 등급 무변경 — 논문 그대로의 로직은 온전.
 > A-Mem 논문 재독은 docs/13(스터디 가이드)로 별도 정리. experimental 항목의 격상은 LoCoMo
 > E2E 실측 후.
