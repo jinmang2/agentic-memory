@@ -18,11 +18,18 @@
 
 ### 2.1 리포 3벌 체제 (혼동 주의)
 
-| 리포 | 용도 | 상태 (2026-07) |
-|---|---|---|
-| `WujiangXu/A-mem` | **논문 재현 전용** (README 명시) | ★919, 2026-03 마지막 push |
-| `agiresearch/A-mem` | 라이브러리판 | ★1,113, 2025-12 이후 정체 (#16 "Is this project dead?") |
-| `WujiangXu/A-mem-sys` | 시스템판 (openai/ollama/sglang) | ★371, 실사용 권장 |
+> **소유(저자) 관계** (2026-07-21 확인): A-Mem 저자는 1저자 **Wujiang Xu** … 마지막
+> 저자 **Yongfeng Zhang** (Rutgers + AIOS Foundation). 공개 코드는 두 저자가 각자 냄 —
+> 1저자 개인 계정 2벌(`WujiangXu/A-mem`, `WujiangXu/A-mem-sys`) + 마지막 저자 랩 org
+> `agiresearch`(=AIOS Foundation) 1벌(`agiresearch/A-mem`). **arXiv 논문이 공식 링크로
+> 거는 건 agiresearch판**(가장 많은 별 + 가장 많은 버그·정체). `WujiangXu/A-mem`은
+> 옛 이름 `WujiangXu/AgenticMemory`에서 **리네임된 동일 repo**(GitHub redirect).
+
+| 리포 | 소유 | 용도 | 상태 (2026-07-21) |
+|---|---|---|---|
+| `WujiangXu/A-mem` (구 `AgenticMemory`) | 1저자 Wujiang Xu 개인 | **논문 재현 전용** (README 명시); 논문 LoCoMo 수치를 낸 판본 (robust 경로 = in-memory cosine + BM25 hybrid) | ★921, main, 2026-03-05 push, 6 issues |
+| `agiresearch/A-mem` | 마지막 저자 Yongfeng Zhang 랩 org (AIOS) | 라이브러리판 (ChromaDB); **arXiv 공식 링크** | ★1,116, 2025-12-12 정체 (#16 "Is this project dead?"), 18 issues |
+| `WujiangXu/A-mem-sys` | 1저자 Wujiang Xu 개인 | 시스템판 (openai/ollama/sglang); 3벌 중 최소 버그(#32·Ps1 수정, #23/#24 잔존) | ★373, main, 2026-03-15 push, 3 issues |
 
 ### 2.2 실제 코드 스펙 (agiresearch판 실측)
 
