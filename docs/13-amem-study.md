@@ -162,9 +162,13 @@ dense top-k(식10) → 검색된 노트의 링크 이웃 1-hop 확장(`find_rela
 | 빈 actions | upstream no-op | **양 효과 폴백**(소형모델) | 우리 고유 |
 | in-place replace | 식7 교체 | **MemoryOp 반환**(replay 가능) | 설계 차별점 |
 
-**미감사 잔여** ⚠️: `AMemOrganizer(input="episodes")` chained-manager 모드
-(`amem.py:127-186`, config `nemori_amem`)는 round-3/4 포렌식 **이후** 추가(commit
-e44e300). 논문/공식코드에 없는 우리 확장 — 다음 감사에서 편차 항목화 필요.
+**experimental 격리** (2026-07-21, spec `organizer-experimental-split`): 논문/공식코드에
+대응물이 없는 크로스-organizer 합성을 `organizers/experimental/`로 분리했다. A-Mem·MemoryOS의
+구 `input="episodes"` chained-manager 모드는 제거되고, `experimental.ChainedConsumer(AMem(),
+"episodes")` 어댑터로만 표현된다(config `nemori_amem`/`nemori_memoryos`). 충실 organizer는
+messages-only 순수체로 남는다. Nemori의 our-mixing 스테이지(`llm3way`, `semantic_offline`)도
+`experimental/nemori_mixing.py`로 이동. **동작 보존**(125 tests green). 격상 조건: LoCoMo
+E2E 실측으로 이득 확인 시 seam 고쳐 core 승격(§같이 볼 포인트 ①의 text-seam 문제 해소 포함).
 
 ---
 
@@ -188,7 +192,7 @@ bash scripts/serve-llm.sh                 # 로컬 LLM 서버
 uv run python scripts/exp_locomo_conv0.py --configs passthrough amem
 # amem = notes-only, k=10, keyword_queries, write온도 0.7/0.7, Chroma(cosine)
 # amem_mixed = raw episodic 혼입(ablation용, 논문 재현 아님)
-# nemori_amem = Nemori 에피소드 → A-Mem 노트 체이닝(미감사 모드)
+# nemori_amem = Nemori 에피소드 → A-Mem 노트 체이닝 (experimental: ChainedConsumer)
 ```
 테스트: `tests/test_organizers.py` — `test_amem_note_link_and_evolution`,
 `test_amem_hallucinated_neighbor_ids_ignored`, `test_amem_degrades_without_llm`.

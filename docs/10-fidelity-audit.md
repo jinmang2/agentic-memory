@@ -1,5 +1,16 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-21 experimental 경계 분리** (spec
+> `docs/superpowers/specs/2026-07-21-organizer-experimental-split-design.md`): 논문·공식코드에
+> 대응물이 없는 **크로스-organizer 합성**을 `organizers/experimental/`로 격리 — 충실
+> organizer(amem/memoryos)에서 구 `input="episodes"` chained-manager 코드를 제거하고
+> `experimental.ChainedConsumer` 어댑터로 추출(`nemori_amem`/`nemori_memoryos`). Nemori의
+> our-mixing 스테이지(`llm3way` ThreeWayIntegrator, `semantic_offline`
+> SemanticOfflineConsolidator)도 `experimental/nemori_mixing.py`로 이동. **전 과정 동작
+> 보존**(125 passed/1 skipped 불변). 충실 코어 등급 무변경 — 논문 그대로의 로직은 온전.
+> A-Mem 논문 재독은 docs/13(스터디 가이드)로 별도 정리. experimental 항목의 격상은 LoCoMo
+> E2E 실측 후.
+
 > **2026-07-18 Nemori 라이프사이클 재설계** (스펙:
 > `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`): 아래 표 Nemori 행의
 > "episode merging, 배치 세그멘테이션 모드" 누락은 `fidelity="v4"|"upstream"` 스위치
