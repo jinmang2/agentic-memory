@@ -5,12 +5,15 @@ the online, per-message boundary detector (the paper's v1 f_theta formalism)
 that decides whether the newest buffered message opens a new episode. It is
 v1-equivalent with the logic previously inlined in ``NemoriOrganizer.on_message``
 — same prompt, same schema, same thresholds, same buffer-splitting semantics.
-``BatchPartitioner``, ``EpisodeMerger``, and the baseline semantic integrators
-(``AppendIntegrator``/``DedupIdReuseIntegrator``) round out the remaining
-stages so the organizer becomes a thin composition of independently testable
-stages. The our-mixing stages (``ThreeWayIntegrator``,
-``SemanticOfflineConsolidator``) live in ``organizers.experimental.nemori_mixing``
-so the fidelity boundary stays explicit.
+``BatchPartitioner``, ``EpisodeMerger``, and the semantic integrators
+(``AppendIntegrator``/``DedupIdReuseIntegrator``/``ThreeWayIntegrator``) round
+out the remaining stages so the organizer becomes a thin composition of
+independently testable stages. ``ThreeWayIntegrator`` is the v4 §3.3.3 P_con
+consolidation (new/merge/conflict) — a paper mechanism, so it belongs in the
+faithful core even though the upstream *code* ships only append + PR#19 dedup.
+The one genuinely non-paper stage (``SemanticOfflineConsolidator`` — a deferred
+cursor-resumed pass with no paper or upstream counterpart) lives in
+``organizers.experimental.nemori_mixing`` so the fidelity boundary stays explicit.
 """
 
 from __future__ import annotations
@@ -444,6 +447,157 @@ class AppendIntegrator:
                     "embedding_text": fact,
                 },
             )
+        ]
+
+
+INTEGRATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["new", "merge", "conflict"]},
+        "target_indexes": {"type": "array", "items": {"type": "integer"}},
+        "statement": {"type": "string"},
+    },
+    "required": ["decision"],
+}
+
+# v4 §3.3.3 P_con condensed: new=distinct, merge=supersede with unified
+# statement, conflict=the new insight invalidates the old entries.
+INTEGRATE_PROMPT = """A new knowledge statement arrived. Compare it with the
+existing similar statements and decide:
+- "new": genuinely distinct knowledge -> keep all
+- "merge": same knowledge (possibly partial overlaps) -> produce ONE unified
+  statement superseding the indexed existing ones
+- "conflict": the new statement invalidates/corrects the indexed existing
+  ones -> they must be replaced
+
+New statement: {fact}
+
+Existing (indexed):
+{existing}
+
+Return JSON: {{"decision": "new"|"merge"|"conflict",
+"target_indexes": [affected indexes],
+"statement": "unified or corrected statement (merge/conflict only)"}}"""
+
+
+class ThreeWayIntegrator:
+    """Nemori v4 §3.3.3 P_con semantic consolidation — paper-faithful.
+
+    tau-filter the vector neighborhood, then ask the LLM to decide
+    new/merge/conflict over the top-K survivors (paper: K_m=5, tau=0.70). Any
+    failure path (no candidates past tau, LLM call fails, decision=new, no
+    valid target indexes) falls back to a plain AppendIntegrator ADD — a fact
+    is never lost to a failed integration attempt.
+
+    This is the v4 preset's ``semantic_integration="llm3way"`` stage. It lives
+    in the faithful core (not experimental/) because it implements a paper
+    mechanism: the upstream *code* ships append-only + PR#19 id-reuse dedup and
+    has no three-way path, but the v4 *paper* §3.3.3 defines exactly this
+    new/merge/conflict decision. The genuinely non-paper deferred variant
+    (``SemanticOfflineConsolidator``) stays in experimental/nemori_mixing.py.
+    """
+
+    def __init__(self, top_k: int = 5, tau: float = 0.70) -> None:
+        """``top_k`` bounds the vector-neighborhood search; ``tau`` is the
+        minimum cosine similarity a hit must clear to become an LLM
+        candidate at all (v4 §3.3.3)."""
+        self.top_k = top_k
+        self.tau = tau
+
+    def integrate(
+        self,
+        fact: str,
+        episode_id: str,
+        source_ids: list[str],
+        ctx: OrganizerContext,
+        exclude_ids: set[str] | None = None,
+        phase: str = "integrate",
+    ) -> list[MemoryOp]:
+        """Returns a plain ADD (`AppendIntegrator` fallback) on every failure
+        path (see class docstring). On "merge"/"conflict", returns a list
+        starting with the new head op (MERGE or ADD respectively) followed
+        by one INVALIDATE per superseded target. ``phase`` is passed through
+        to `ctx.llm.call` only to distinguish inline calls from
+        `SemanticOfflineConsolidator`'s deferred reuse of this method in
+        budget/logging breakdowns — it does not change the decision logic.
+        ``exclude_ids`` removes ids from the candidate search."""
+        # ``phase`` distinguishes the same integration code running inline
+        # (llm3way, phase="integrate") from SemanticOfflineConsolidator's
+        # deferred pass over the shared implementation (phase="consolidate").
+        query_embedding = ctx.embedder.embed([fact])[0]
+        hits = [
+            (hit_id, s)
+            for hit_id, s in ctx.vector_store.search(
+                query_embedding,
+                k=self.top_k,
+                memory_type="semantic",
+                namespace=ctx.namespace,
+            )
+            if s >= self.tau and (exclude_ids is None or hit_id not in exclude_ids)
+        ]
+        candidates = [
+            c
+            for c in ctx.doc_store.get_items([h[0] for h in hits], "semantic")
+            if not c.get("invalid_at")
+        ]
+        add = AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
+        if not candidates:
+            return add
+        existing = "\n".join(f"[{i}] {c.get('content', '')}" for i, c in enumerate(candidates))
+        verdict = ctx.llm.call(
+            "distill",
+            INTEGRATE_PROMPT.format(fact=fact, existing=existing),
+            INTEGRATE_SCHEMA,
+            required_keys=("decision",),
+            phase=phase,
+        )
+        if verdict is None or verdict.get("decision") == "new":
+            return add
+        indexes = [
+            i
+            for i in verdict.get("target_indexes", [])
+            if isinstance(i, int) and 0 <= i < len(candidates)
+        ]
+        if not indexes:
+            return add
+        statement = str(verdict.get("statement", "")).strip() or fact
+        targets = [candidates[i]["id"] for i in indexes]
+        fact_id = new_id()
+        if verdict["decision"] == "merge":
+            head = MemoryOp(
+                op=OpType.MERGE,
+                target_type="semantic",
+                target_id=fact_id,
+                payload={
+                    "id": fact_id,
+                    "content": statement,
+                    "episode_id": episode_id,
+                    "source_episode_ids": list(source_ids),
+                    "supersedes": targets,
+                    "embedding_text": statement,
+                },
+            )
+        else:  # conflict — 신규가 구 항목들을 대체 (v4 §3.3.3)
+            head = MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id=fact_id,
+                payload={
+                    "id": fact_id,
+                    "content": statement,
+                    "episode_id": episode_id,
+                    "source_episode_ids": list(source_ids),
+                    "embedding_text": statement,
+                },
+            )
+        return [head] + [
+            MemoryOp(
+                op=OpType.INVALIDATE,
+                target_type="semantic",
+                target_id=target_id,
+                payload={"reason": verdict["decision"], "superseded_by": fact_id},
+            )
+            for target_id in targets
         ]
 
 

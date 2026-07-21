@@ -16,6 +16,12 @@
 > `nemori_upstream` / `nemori_mix` / `nemori_memoryos` / `nemori_amem` 5개 config가
 > `scripts/exp_locomo_conv0.py`에 추가됨(기존 `nemori`=v1 동치는 불변) — **아직 실측 대기**,
 > 이 표에는 반영되지 않았다.
+> **⚠️ 2026-07-21 충실도 리뷰 재현 캐비앗** (docs/10 동일자 항목): 어떤 수치도 아래 없이
+> "논문 재현"으로 인용 금지 — (1) A-Mem은 eq.(3) 메타데이터 임베딩(발표 수치를 낸 공식
+> 코드의 content-only 임베딩과 다름), (2) empty-actions→양효과 폴백이 소형 모델에서
+> evolution을 과다 유발, (3) read 링크확장이 전역 캡5(upstream per-hit와 상이),
+> (4) MemoryOS recency τ=24h(논문 μ≈1e7s 아님), N_visit 되먹임은 배선돼 있으나
+> ingest-후-eval 구조라 무효과, LPM은 append-only(upstream 프로필 문서 교체 미구현).
 
 | config | Overall F1 | BLEU-1 | ingest | organizer LLM calls | drops |
 |---|---|---|---|---|---|

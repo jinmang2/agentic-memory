@@ -211,7 +211,11 @@ class AMemOrganizer(Organizer):
         actions = {str(a).lower() for a in evolution_verdict.get("actions") or []}
         if not actions:  # small models may omit the field; keep both effects
             actions = {"strengthen", "update_neighbor"}
-        valid_ids = set(neighbor_ids)  # bug fix #32: only real note IDs
+        # bug fix #32: only real note IDs — keyed off notes actually returned by
+        # the doc store (not raw search hits), so a hit missing from the store
+        # can't pass the gate and later KeyError on by_id lookup (2026-07-21 review A1)
+        by_id = {n["id"]: n for n in neighbors}
+        valid_ids = set(by_id)
 
         if "strengthen" in actions:
             connections = [c for c in evolution_verdict.get("connections", []) if c in valid_ids]
@@ -249,7 +253,6 @@ class AMemOrganizer(Organizer):
                 )
 
         if "update_neighbor" in actions:
-            by_id = {n["id"]: n for n in neighbors}
             for upd in evolution_verdict.get("neighbor_updates", []):
                 note_id = upd.get("id")
                 if note_id not in valid_ids:

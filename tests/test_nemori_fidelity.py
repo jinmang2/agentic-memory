@@ -4,7 +4,7 @@ from agmem import AgenticMemory
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.embed.fake import FakeEmbedder
-from agmem.organizers.experimental.nemori_mixing import ThreeWayIntegrator
+from agmem.organizers.nemori_stages import ThreeWayIntegrator
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.nemori_stages import (
     AppendIntegrator,

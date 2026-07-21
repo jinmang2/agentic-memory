@@ -47,10 +47,6 @@ import logging
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
-from agmem.organizers.experimental.nemori_mixing import (
-    SemanticOfflineConsolidator,
-    ThreeWayIntegrator,
-)
 from agmem.organizers.nemori_stages import (
     AppendIntegrator,
     BOUNDARY_PROMPT,  # noqa: F401 — re-exported for train/distill_data.py (nemori.BOUNDARY_PROMPT)
@@ -59,6 +55,7 @@ from agmem.organizers.nemori_stages import (
     DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
+    ThreeWayIntegrator,
     _fmt,
 )
 
@@ -319,15 +316,20 @@ class NemoriOrganizer(Organizer):
             ),
         }[params["semantic_integration"]]()
         # Task 11: cursor-resumed deferred three-way consolidation (our
-        # mixing — absent from both the paper and upstream, spec §2.3).
-        self._consolidator = (
-            SemanticOfflineConsolidator(
+        # mixing — absent from both the paper and upstream, spec §2.3). The
+        # consolidator lives in ``organizers.experimental``; import it lazily
+        # so the faithful core (v1/v4/upstream) never drags the experimental
+        # package into sys.modules unless this preset is selected (spec §61).
+        self._consolidator = None
+        if params["consolidation"] == "semantic_offline":
+            from agmem.organizers.experimental.nemori_mixing import (
+                SemanticOfflineConsolidator,
+            )
+
+            self._consolidator = SemanticOfflineConsolidator(
                 top_k=params.get("integrate_top_k", 5),
                 tau=params.get("integrate_tau", 0.70),
             )
-            if params["consolidation"] == "semantic_offline"
-            else None
-        )
         self.fidelity = fidelity
         self.params = params  # stats/stamping surface
 

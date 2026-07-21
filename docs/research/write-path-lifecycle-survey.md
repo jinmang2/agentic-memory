@@ -37,10 +37,13 @@ Distillation for LLM Agents"로 개제 — arXiv에 ACL'26 표기는 없음)
 | semantic 통합 | append-only (merge/conflict/dedup/evict/decay 언급 0건) | **§3.3.3**: τ=0.70 필터 후 top-K_m=5 대상 LLM 3분기 δ∈{new, merge, conflict} (P_con). merge=통합문으로 대체, conflict=구 항목 purge 후 대체 | **append-only** (fresh uuid4라 ON CONFLICT 불발). PR #19(2026-06-03, 미병합·리뷰 0건): top-1 0.85 임베딩 유사도 ID 재사용 dedup만 — LLM 분기 없음, `enable_semantic_dedup=True` 플래그, `_on_episode_created` 내 인라인 |
 | 저장소 | (명세 없음, dual vector store) | (명세 없음) | PR #13(2026-03-25 병합, 33커밋): **PostgreSQL 16**(episodes/semantic_memories/message_buffer 테이블, tsvector/GIN, agent_id 멀티테넌트) + **Qdrant**(gRPC, pgvector 대체). 전부 async |
 
-**미해결**: >1h 갭 병합 금지의 소재 — "논문에 없다"와 "코드에 없다" 클레임이 **둘 다 기각**되어
-소재가 진짜 열린 상태. docs/11(3차 감사)은 upstream MERGE_DECISION 프롬프트에 있다고
-기록했으므로, 구현 시 upstream `llm/prompts.py`에서 직접 재확인할 것. 0.85도 논문엔 없고
-코드 생성자 기본값으로만 확인됨 (논문의 유일한 유사도 임계는 τ=0.70).
+**[해소 2026-07-21]** >1h 갭 병합 금지의 소재 — upstream `nemori/llm/prompts.py`의
+`MERGE_DECISION_PROMPT`에 **실제로 존재**함을 raw 파일 직접 대조로 확인("Do NOT merge
+if: They are separated by significant time gaps (>1 hour)"). 따라서 docs/11(3차 감사)
+기록이 옳았고, upstream 프리셋의 `merge_time_gap_hours=1.0`은 충실하다. (병합
+로직은 `merger.py`에 시간갭 코드가 없어 프롬프트-레벨 룰만으로 작동 — merger.py만 보면
+놓치는 지점.) 0.85도 논문엔 없고 코드 생성자 기본값으로만 확인됨 (논문의 유일한 유사도
+임계는 τ=0.70).
 
 ## 2. 타깃 논문들의 write-path (미검증 ○, 1차 소스 인용; MemoryOS STM 항목만 ✓)
 
@@ -119,7 +122,7 @@ Distillation for LLM Agents"로 개제 — arXiv에 ACL'26 표기는 없음)
 
 ## 6. 남은 열린 질문
 
-1. >1h 갭 병합 금지의 정확한 소재 (구현 시 upstream prompts.py 직접 확인).
+1. ~~>1h 갭 병합 금지의 정확한 소재~~ **[해소 2026-07-21: upstream MERGE_DECISION_PROMPT에 존재, §1.2 참조]**
 2. G-Memory/MemOS/MIRIX 등 미커버 시스템의 라이프사이클 (후속 조사 필요 시).
 3. PR #19 병합 여부 추적 (2026-07-18 기준 open, 리뷰 0).
 

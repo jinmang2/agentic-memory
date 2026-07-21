@@ -9,17 +9,16 @@ package only when an E2E measurement justifies promotion (docs/13 §5, spec
 
 - ``ChainedConsumer``: feed one organizer another organizer's episodes
   (cross-organizer stacking, e.g. Nemori episodes -> A-Mem notes).
-- ``ThreeWayIntegrator`` / ``SemanticOfflineConsolidator``: Nemori's
-  ``semantic_integration="llm3way"`` / ``consolidation="semantic_offline"``
-  our-mixing stages (absent from the Nemori paper and upstream).
+- ``SemanticOfflineConsolidator``: Nemori's ``consolidation="semantic_offline"``
+  deferred/offline consolidation pass (absent from the Nemori paper and
+  upstream — v4 §3.3.3 consolidation is inline). The three-way decision it
+  reuses (``ThreeWayIntegrator``) is paper-faithful and lives in the core
+  ``nemori_stages`` (corrected 2026-07-21 fidelity review).
 """
 
 from __future__ import annotations
 
 from agmem.organizers.experimental.chained import ChainedConsumer
-from agmem.organizers.experimental.nemori_mixing import (
-    SemanticOfflineConsolidator,
-    ThreeWayIntegrator,
-)
+from agmem.organizers.experimental.nemori_mixing import SemanticOfflineConsolidator
 
-__all__ = ["ChainedConsumer", "SemanticOfflineConsolidator", "ThreeWayIntegrator"]
+__all__ = ["ChainedConsumer", "SemanticOfflineConsolidator"]

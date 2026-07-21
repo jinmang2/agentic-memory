@@ -1,5 +1,41 @@
 # 구현 충실도 감사 (2026-07-16, 자기 감사)
 
+> **2026-07-21 머지 전 충실도 리뷰** (refactor/organizer-experimental-split 대상):
+> 병렬 독립 에이전트 3종이 nemori/memoryos/amem을 **논문(arXiv)+공식 레포 실시간
+> 대조+인용 이슈 원문**으로 재검증, 우리 코드에 닿는 주장은 전부 재확인. 기준선
+> **125 passed/1 skipped 불변**(리팩터는 동작 보존). 판정 요약:
+>
+> - **A-Mem ● 확정.** docstring이 근거로 든 버그픽스 이슈(#32 인덱스→ID, #23 score
+>   반전, #24 L2 vs cosine)를 **이슈 원문과 대조해 전부 CONFIRMED**. eq.(3) 메타데이터
+>   임베딩은 공식 코드(content-only)보다 논문에 더 충실. **[A1 수정]** `_ingest`의
+>   neighbor 업데이트에서 doc_store 미반환 히트가 게이트를 통과해 `by_id` KeyError를
+>   낼 수 있던 엣지를 `valid_ids = {실제 반환 노트}` 로 차단.
+> - **Nemori v1/v4 ● · upstream ◑.** **[N1 수정]** `ThreeWayIntegrator`는 v4 §3.3.3
+>   P_con(new/merge/conflict) **논문 메커니즘**이므로 experimental이 아니라 충실 코어
+>   (`nemori_stages.py`)에 있어야 맞다 — 이전 커밋(2164acb)이 이를 "논문 밖"으로
+>   오분류했던 것을 바로잡아 코어로 되돌리고, 진짜 우리 발명인 `SemanticOfflineConsolidator`
+>   (유예/오프라인 스케줄링)만 experimental에 남김. v4 프리셋이 더 이상 experimental을
+>   import하지 않음. **[N2 해소]** upstream 프리셋의 `merge_time_gap_hours=1.0`(">1h 병합
+>   금지")은 **upstream `nemori/llm/prompts.py`의 `MERGE_DECISION_PROMPT`에 실제로 존재**
+>   함을 raw 파일 직접 대조로 확인("Do NOT merge if: ... separated by significant time
+>   gaps (>1 hour)"). 즉 docs/11(3차 감사) 기록이 옳았고, write-path-survey §1.2의
+>   "미해결"과 리뷰 에이전트의 merger.py-only 확인(프롬프트 미확인)은 **모두
+>   상위 소스로 정정**. 코드 무변경(테스트 `time_gap_hours == 1.0` 유지).
+> - **MemoryOS ◑ 확정(정직한 ◑).** MTM/heat/F_score 층은 ●급 — 상수(cap 10/2000, θ=0.6,
+>   τ=5, heat 계수 1/1/1)가 pypi 코어와 일치, Jaccard F_score 정확, 논문 충실 최저-heat
+>   축출을 코드의 실제 access-count LFU와 올바르게 구분. **[M2 수정]** "read-path
+>   feedback 부재로 N_visit=0" docstring은 낡음 — `on_retrieval`은 배선돼 있고
+>   memoryos config가 `pages`를 조회하므로 루프는 **살아 있으며**, LoCoMo conv0가
+>   ingest-후-eval 구조라 회수 시점 갱신이 이미 끝난 승격/축출에 되먹임되지 않아
+>   *효과만* 무해함을 명확화. **[M1 기록·미구현]** LPM이 append-only semantic facts로,
+>   upstream의 단일 진화형 프로필 **문서 교체**(`update_user_profile(merge=False)`) +
+>   FIFO(100) 지식 deque를 결여 — 논문 간판 메커니즘의 실제 갭. 이는 동작을 바꾸는
+>   **충실도 격상**이라 이 리팩터(동작 보존)에서 구현하지 않고 E2E 실측 후 별건으로
+>   추적. (부수: recency τ가 논문 μ≈1e7s가 아닌 코드값 24h — 저영향, 미문서였던 점 명기.)
+> - **재현 캐비앗(docs/09에 병기 대상):** A-Mem eq.(3) 임베딩≠발표수치의 content-only,
+>   empty-actions→양효과 폴백(소형모델 evolution 과다), read 링크확장 전역캡5 vs
+>   upstream per-hit. 어떤 수치도 이 캐비앗 없이 "논문 재현"으로 인용 금지.
+
 > **2026-07-21 experimental 경계 분리** (spec
 > `docs/superpowers/specs/2026-07-21-organizer-experimental-split-design.md`): 논문·공식코드에
 > 대응물이 없는 **크로스-organizer 합성**을 `organizers/experimental/`로 격리 — 충실
@@ -70,7 +106,7 @@
 | A-Mem | ● | 2콜 write(Ps1/Ps3), metadata-concat 임베딩, top-k링크, 이웃 배치 진화 + 버그수정 | k스윕 실험용 옵션 일부 | ✔ (측정됨) |
 | ReasoningBank | ● | self-judge, 성공/실패 프롬프트, ≤3 items, k=1 | **MaTTS**(parallel self-contrast/sequential) — 훅만 존재 | ✔ (LoCoMo엔 해당無) |
 | Nemori | ◑ | boundary(σ=0.7)/서사/시간절대화/predict-calibrate 3단계 | episode merging, 배치 세그멘테이션 모드 | ✔ (측정됨, merging 부재 명기) |
-| MemoryOS | ◑ | STM/MTM/heat 공식·상수(pypi판 기준)/최저-heat 축출(논문 준수; 코드의 access-count LFU와 상이)/profile 승격 | **F_score의 Jaccard 항**(keyword 파이프라인 전무), **read-path heat 피드백(N_visit)**, **STM recency 주입**(배치 flush로 소실), dialogue chain meta, 90-dim trait/프로필 문서 교체형 갱신, agent persona, user-KB cap 100 (round-5) | ✔ (캐비앗 확장 — round5/memoryos §3) |
+| MemoryOS | ◑ | STM/MTM/heat 공식·상수(pypi판 기준)/최저-heat 축출(논문 준수; 코드의 access-count LFU와 상이)/F_score cos+Jaccard(round-5 P0 구현)/profile 승격 | **read-path heat 피드백(N_visit)**(배선됨, ingest-후-eval에선 무효 — M2), **STM recency 주입**(배치 flush로 소실), dialogue chain meta, 90-dim trait/프로필 문서 교체형 갱신(M1), agent persona, user-KB cap 100 (round-5) | ✔ (캐비앗 확장 — round5/memoryos §3) |
 | ACE | ◑ | reflect→curate ADD(upstream도 ADD-only 확인), helpful/harmful, dedup 0.90 상시 | **read 계약: playbook 전체 주입**(get_playbook full-scan화 필요), **curator 전체-뷰**(현 top-30 부분 뷰), multi-round reflection(코드 3/논문 ablation 5), offline 모드(train/val+multi-epoch+val 기반 best 선택), token budget 80k (round-5) | ✔ 단 read 계약 고정 전 측정 보류 권고 |
 | **Zep-graph** | **○** | entity 추출, bi-temporal fact(expired_at은 round-5 ⑨ 수정으로 기록됨), LLM invalidation(same-pair 한정) | **① community subgraph(label propagation+동적 확장) ② resolution LLM 판정**(현 upstream: cosine 15/0.6 후보+exact/fuzzy MinHash+LLM; 우리 0.85 자동병합은 논문·코드에 없는 경로) **③ 시간표현 파싱**(현 upstream은 fact 추출 프롬프트 통합) **④ GraphRecall(BFS)+hybrid read-path ⑤ fact dedup ⑥ previous-episodes 컨텍스트(n=4~10) ⑦ resolution 시 name/summary 갱신** (round-5) | **✘ 측정 금지 유지** (해금 조건: round5/zep §4) |
 | G-Memory | ○ | 궤적 sparsify, insight ADD/EDIT/REMOVE+reward(값 일치), projection/backward | **query graph k-hop, FINCH merge, StateChain**, + round-5 추가: 검색 의미론 전체(성공/실패 분리 채널·LLM rating·support-set 투표), 점수 의미론(AGREE/soft REMOVE/score≤0 프루닝/Ω_k), _detect_mistakes, reward 폐루프(read-path 미반영) | ✘ MAS 벤치 자체가 미구축. 논문 §4.3↔공식코드 불일치 — 우리는 코드 계보 |

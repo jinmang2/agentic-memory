@@ -9,12 +9,24 @@ produced the paper's LoCoMo numbers differs: heat 0.8/0.8/1e-4, Dice
 keyword term, STM cap=1; see docs/research/round5/memoryos).
 
 Deviations: single vector index instead of FAISS-per-tier; eviction is
-lowest-heat (paper-faithful) rather than the code's access-count LFU —
-we have no read-path visit feedback, so N_visit stays 0 (round-5 N1);
-STM flushes as a 10-message batch instead of upstream's 1-page FIFO
-rolling window (round-5 N2); eviction emits DELETE ops through the
-evolution log (auditable; upstream's old silent-loss issue #65 has since
-been fixed upstream too).
+lowest-heat (paper-faithful) rather than the code's access-count LFU. The
+read-path N_visit feedback (paper §3.4) IS wired — ``on_retrieval`` bumps
+n_visit/last_access on served ``pages`` hits, and the memoryos retrieval
+config queries ``pages`` — so the heat loop is live, not missing (round-5
+N1 restored it). It is merely *inert on ingest-then-eval benchmarks* such
+as LoCoMo conv0: all writes (hence all promotion/eviction) complete during
+ingest, so the retrieval-time bumps never feed back — N_visit effectively
+stays 0 for the graded numbers, but by run *shape*, not by a missing
+mechanism (2026-07-21 fidelity review, docs/10). STM flushes as a
+10-message batch instead of upstream's 1-page FIFO rolling window (round-5
+N2); eviction emits DELETE ops through the evolution log (auditable;
+upstream's old silent-loss issue #65 has since been fixed upstream too).
+
+Known fidelity gap (tracked, not yet implemented — 2026-07-21 review, docs/10
+M1): LPM here is append-only semantic facts, whereas upstream LPM maintains a
+single evolving user-profile *document* replaced via ``update_user_profile
+(merge=False)`` plus FIFO(100) knowledge deques. Implementing that is a
+behavior-changing fidelity upgrade deferred to after E2E measurement.
 """
 
 from __future__ import annotations
@@ -330,8 +342,9 @@ class MemoryOSOrganizer(Organizer):
                 ops.extend(self._promote_to_lpm(segment_id, content, members, ctx))
 
         # Lowest-heat eviction when MTM over capacity (paper-faithful; the
-        # code's access-count LFU needs read-path visit feedback we lack —
-        # round-5 C5/N1)
+        # code's access-count LFU would need read-path visit feedback, which
+        # IS wired via on_retrieval but is inert on ingest-then-eval runs —
+        # round-5 C5/N1, 2026-07-21 review)
         while len(self._heat) > self.mtm_capacity:
             coldest = min(self._heat, key=self._segment_heat)
             self._heat.pop(coldest)
