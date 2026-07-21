@@ -201,7 +201,7 @@ class AMemOrganizer(Organizer):
             required_keys=("should_evolve", "connections"),
         )
         if evolution_verdict is None:
-            return ops  # drop counted; note itself is still stored
+            return ops  # explicit drop (verdict None) — the note ADD still stands
 
         # Upstream gating: nothing happens unless should_evolve, and each
         # effect belongs to an action ("strengthen" -> links + new-note tags,
@@ -229,8 +229,11 @@ class AMemOrganizer(Organizer):
                         payload={"links": connections},
                     )
                 )
-            # the evolution call may refine the NEW note's tags
-            # (upstream tags_to_update — audit P1-5)
+            # Evolution refines the NEW note's own tags in a SECOND op. This
+            # deliberately mirrors upstream's post-add ``tags_to_update`` write
+            # (audit P1-5) — it is not accidental redundancy, so keep it split
+            # from the ADD above rather than folding the tags into it: the op
+            # stream then matches upstream's add-then-evolve two phases.
             new_tags = [str(t) for t in evolution_verdict.get("new_note_tags") or []]
             if new_tags and new_tags != note.tags:
                 refreshed_self = Note(

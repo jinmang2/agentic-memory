@@ -1,5 +1,11 @@
 # Organizer Experimental Split — 설계 (2026-07-21)
 
+> **부분 대체 (2026-07-21 머지 전 충실도 리뷰, docs/10 N1):** 아래 §2·§3.4·§4 표는
+> `ThreeWayIntegrator`도 `experimental/nemori_mixing.py`로 옮긴다고 기술하나, 이후
+> 리뷰가 이를 **코어(`nemori_stages.py`) 잔류**로 되돌렸다 — v4 §3.3.3 P_con 자체가
+> 논문 메커니즘이기 때문. experimental엔 `SemanticOfflineConsolidator`만 남는다.
+> ThreeWay 배치에 관한 한 이 스펙보다 docs/10을 따를 것.
+
 브랜치: `refactor/organizer-experimental-split`. 베이스라인: **125 passed, 1 skipped**.
 
 ## 목표
