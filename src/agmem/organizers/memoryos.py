@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
-from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
+from agmem.organizers.base import Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.memoryos")
 
@@ -88,18 +88,13 @@ class MemoryOSOrganizer(Organizer):
         heat_threshold: float = 5.0,
         similarity_threshold: float = 0.6,
         recency_tau_hours: float = 24.0,
-        input: str = "messages",
     ) -> None:
         """``stm_capacity``: STM batch size that triggers a flush to MTM.
         ``mtm_capacity``: max MTM segments before lowest-heat eviction.
         ``heat_threshold``: heat (τ) at which a segment promotes to LPM.
         ``similarity_threshold``: F_score (θ) merge threshold — cosine +
         keyword Jaccard, paper eq.(3). ``recency_tau_hours``: heat's
-        recency-decay time constant. ``input="episodes"`` switches to
-        chained-manager mode (Task 12): ``on_message`` becomes a no-op and
-        ``_page_sources``/``_unit_pages`` track which STM units back which
-        MTM pages so a later supersede can retire units and invalidate
-        fully-absorbed pages."""
+        recency-decay time constant."""
         # mtm_capacity 2000 = upstream default (round-5 N6 fixed 200->2000)
         self.stm_capacity = stm_capacity
         self.mtm_capacity = mtm_capacity
@@ -108,18 +103,12 @@ class MemoryOSOrganizer(Organizer):
         self.recency_tau_hours = recency_tau_hours
         self._stm: list[Episode] = []
         self._heat: dict[str, dict] = {}  # segment_id -> {n_visit, length, last_access}
-        # input="episodes": chained-manager mode (Task 12) — subscribe to
-        # another organizer's episodes instead of the raw message stream.
-        # on_memory_event does the STM append/capacity cascade; on_message
-        # becomes a no-op. Reverse indexes below track which units back
-        # which pages so a supersedes chain (e.g. Nemori episode merges)
-        # can retire STM units and invalidate pages whose sources are all
-        # gone. Registered for both input modes (kept common for
-        # simplicity) though only the episodes mode ever consumes them.
-        # In-memory only — volatile across restarts, same as ``_heat``.
-        self.input_mode = input
-        if input == "episodes":
-            self.consumes = ("episodes",)
+        # Reverse indexes track which STM units back which MTM pages. Heat
+        # eviction uses them to drop dead index entries; ``retire``/``patch_unit``
+        # use them when this organizer is driven by ChainedConsumer over another
+        # organizer's episodes (experimental) so a supersedes chain can retire
+        # units and invalidate fully-absorbed pages. In-memory only — volatile
+        # across restarts, same as ``_heat``.
         self._page_sources: dict[str, set[str]] = {}  # page_id -> {unit_id, ...}
         self._unit_pages: dict[str, set[str]] = {}  # unit_id -> {page_id, ...}
 
@@ -152,53 +141,35 @@ class MemoryOSOrganizer(Organizer):
         return []
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
-        """No-op in ``input="episodes"`` mode (fed via ``on_memory_event``
-        instead). Otherwise appends to the STM buffer; once it reaches
-        ``stm_capacity``, flushes the whole batch to MTM via
-        ``_evict_to_mtm`` and returns those ops (empty list otherwise)."""
-        if self.input_mode == "episodes":
-            return []  # input is fed via on_memory_event only (spec §3)
+        """Appends to the STM buffer; once it reaches ``stm_capacity``, flushes
+        the whole batch to MTM via ``_evict_to_mtm`` and returns those ops
+        (empty list otherwise).
+
+        Chained use (driving this from another organizer's episodes) is an
+        experimental composition handled by
+        ``organizers.experimental.ChainedConsumer``, which calls this same
+        entry point plus ``retire``/``patch_unit`` — keeping this organizer
+        messages-only and paper-faithful."""
         self._stm.append(episode)
         if len(self._stm) < self.stm_capacity:
             return []
         batch, self._stm = self._stm, []
         return self._evict_to_mtm(batch, ctx)
 
-    def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
-        """No-op unless ``input="episodes"``. Retires STM/page-index entries
-        for superseded unit ids first; a plain UPDATE event patches the STM
-        copy in place without re-paging (documented staleness once already
-        paged, spec §3); ADD/MERGE units are appended to STM, flushing to
-        MTM via ``_evict_to_mtm`` when capacity is reached."""
-        if self.input_mode != "episodes":
-            return []
-        ops: list[MemoryOp] = []
-        if ev.supersedes:
-            ops.extend(self._retire(set(ev.supersedes)))
-        content = str(ev.payload.get("content", ""))
-        unit = Episode(
-            content=content,
-            role="episode",
-            id=ev.target_id,
-            namespace=ctx.namespace,
-            meta={"date": ev.payload.get("timestamp", "")},
-        )
-        if ev.op is OpType.UPDATE:
-            if any(e.id == ev.target_id for e in self._stm):
-                self._stm = [unit if e.id == ev.target_id else e for e in self._stm]
-            return ops  # already paged: documented staleness allowed (spec §3)
-        self._stm.append(unit)  # ADD / MERGE
-        if len(self._stm) >= self.stm_capacity:
-            batch, self._stm = self._stm, []
-            ops.extend(self._evict_to_mtm(batch, ctx))
-        return ops
+    def patch_unit(self, unit: Episode) -> None:
+        """In-place UPDATE of a unit still buffered in STM (used by
+        ``ChainedConsumer`` when an upstream episode is revised before it has
+        been paged). Once the unit has been paged, the update is ignored —
+        documented staleness (spec §3)."""
+        if any(e.id == unit.id for e in self._stm):
+            self._stm = [unit if e.id == unit.id else e for e in self._stm]
 
     def _drop_page_index(self, page_id: str) -> None:
         """Remove page_id from the _page_sources/_unit_pages reverse
         indexes entirely — shared by heat-eviction (page gone, all its
-        source links are dead) and _retire (page invalidated, same
+        source links are dead) and retire (page invalidated, same
         thing). Without this, evicted/invalidated pages leak index
-        entries and a later supersedes can make _retire re-emit a stale
+        entries and a later supersedes can make retire re-emit a stale
         INVALIDATE for a page that's already gone (review finding)."""
         for unit_id in self._page_sources.pop(page_id, ()):
             pages = self._unit_pages.get(unit_id)
@@ -208,10 +179,12 @@ class MemoryOSOrganizer(Organizer):
             if not pages:
                 self._unit_pages.pop(unit_id, None)
 
-    def _retire(self, superseded: set[str]) -> list[MemoryOp]:
+    def retire(self, superseded: set[str]) -> list[MemoryOp]:
         """Clean up derived state for absorbed units: drop them from STM;
         invalidate a page only once ALL of its sources are superseded
-        (partial absorption leaves the page intact, spec §3)."""
+        (partial absorption leaves the page intact, spec §3). Called by
+        ``ChainedConsumer`` when an upstream supersedes chain retires the
+        episodes this organizer paged (experimental composition)."""
         ops: list[MemoryOp] = []
         self._stm = [e for e in self._stm if e.id not in superseded]
         for unit_id in superseded:

@@ -33,7 +33,7 @@ import logging
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, Note
-from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
+from agmem.organizers.base import Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.amem")
 
@@ -124,66 +124,20 @@ class AMemOrganizer(Organizer):
 
     name = "amem"
 
-    def __init__(self, top_k: int = 5, input: str = "messages") -> None:
-        """``input="episodes"`` switches this organizer into chained-manager
-        mode (Task 12 pattern): ``on_message`` becomes a no-op and notes are
-        instead produced from another organizer's episodes via
-        ``on_memory_event``, with ``_episode_notes`` tracking which note an
-        episode produced so a later supersede can invalidate it (spec §3)."""
+    def __init__(self, top_k: int = 5) -> None:
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
-        # input="episodes": chained-manager mode (Task 12 pattern) —
-        # subscribe to another organizer's episodes instead of the raw
-        # message stream. on_memory_event feeds episodes into the same
-        # note pipeline (_ingest); on_message becomes a no-op.
-        # ``_episode_notes`` maps episode id -> the ADD note it produced,
-        # so a later supersedes can INVALIDATE the note (spec §3).
-        self.input_mode = input
-        if input == "episodes":
-            self.consumes = ("episodes",)
-        self._episode_notes: dict[str, str] = {}
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
-        """No-op in ``input="episodes"`` mode (fed via ``on_memory_event``
-        instead); otherwise runs the full note pipeline via ``_ingest``."""
-        if self.input_mode == "episodes":
-            return []  # input is fed via on_memory_event only (spec §3)
-        return self._ingest(episode, ctx)
+        """Runs the full note pipeline (Ps1 construction -> neighbor retrieval
+        -> one batched evolution call) for one message via ``_ingest``.
 
-    def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
-        """No-op unless ``input="episodes"``. Invalidates notes tied to any
-        superseded episode ids; for a plain UPDATE event, leaves the
-        existing note stale rather than re-ingesting (documented staleness,
-        spec §3); for ADD/MERGE, ingests the episode via ``_ingest`` and
-        records the produced note id for future supersede invalidation."""
-        if self.input_mode != "episodes":
-            return []
-        ops: list[MemoryOp] = []
-        for superseded_id in ev.supersedes:
-            note_id = self._episode_notes.pop(superseded_id, None)
-            if note_id:
-                ops.append(
-                    MemoryOp(
-                        op=OpType.INVALIDATE,
-                        target_type="notes",
-                        target_id=note_id,
-                        payload={"reason": "episode_superseded"},
-                    )
-                )
-        if ev.op is OpType.UPDATE:
-            return ops  # note 재작성은 하지 않음 — 문서화된 staleness (spec §3)
-        unit = Episode(
-            content=str(ev.payload.get("content", "")),
-            role="episode",
-            id=ev.target_id,
-            namespace=ctx.namespace,
-            meta={"date": ev.payload.get("timestamp", "")},
-        )
-        note_ops = self._ingest(unit, ctx)
-        if note_ops:
-            self._episode_notes[ev.target_id] = note_ops[0].target_id  # 첫 op = ADD note
-        return ops + note_ops
+        Chained use (feeding this organizer another organizer's episodes) is an
+        experimental composition and lives in
+        ``organizers.experimental.ChainedConsumer``, not here — this organizer
+        stays messages-only and paper-faithful."""
+        return self._ingest(episode, ctx)
 
     def _ingest(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         # upstream "talk start time": the conversation date when known,

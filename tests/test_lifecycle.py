@@ -171,7 +171,7 @@ def test_consolidate_drains_async_queue_first():
         mem.close()
 
 
-# ---------------- MemoryOS input="episodes" consumer (Task 12) --------------
+# ---------------- MemoryOS via ChainedConsumer (Task 12, experimental) ------
 
 
 def test_memoryos_consumes_nemori_episodes():
@@ -191,7 +191,9 @@ def test_memoryos_consumes_nemori_episodes():
             ],
         }
     )
-    mos = MemoryOSOrganizer(stm_capacity=1, input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=1), "episodes")
     mem = make_mem_multi([NemoriOrganizer(fidelity="v1", buffer_min=1), mos], llm)
     mem.add_message("hello", meta={"date": "2026-01-01"})
     mem.add_message("new topic", meta={"date": "2026-01-01"})  # boundary -> episode flush
@@ -209,7 +211,9 @@ def test_memoryos_consumes_nemori_episodes():
 def test_memoryos_retires_superseded_units():
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = MemoryOSOrganizer(stm_capacity=1, input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=1), "episodes")
     mem = _mk(organizers=[mos])
     # page화 유도: LLM 없음 → mechanical segment (explicit degradation 경로)
     mem._propagate_events(
@@ -257,7 +261,10 @@ def test_memoryos_heat_eviction_drops_reverse_index():
             ]
         }
     )
-    mos = MemoryOSOrganizer(stm_capacity=1, mtm_capacity=1, input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    inner = MemoryOSOrganizer(stm_capacity=1, mtm_capacity=1)
+    mos = ChainedConsumer(inner, "episodes")
     mem = make_mem_multi([mos], llm)
 
     mem._propagate_events(
@@ -290,8 +297,8 @@ def test_memoryos_heat_eviction_drops_reverse_index():
     evicted_id = deletes[0].target_id
 
     # 축출된 page의 역인덱스 엔트리가 남아있으면 안 됨 (누수 재현)
-    assert evicted_id not in mos._page_sources
-    assert all(evicted_id not in pages for pages in mos._unit_pages.values())
+    assert evicted_id not in inner._page_sources
+    assert all(evicted_id not in pages for pages in inner._unit_pages.values())
 
     evicted_add = next(o for o in pages_add if o.target_id == evicted_id)
     evicted_source = evicted_add.payload["source_episode_ids"][0]
@@ -313,13 +320,15 @@ def test_memoryos_heat_eviction_drops_reverse_index():
     assert inv == []
 
 
-# ---------------- A-Mem input="episodes" consumer (Task 13) -----------------
+# ---------------- A-Mem via ChainedConsumer (Task 13, experimental) ---------
 
 
 def test_amem_consumes_episodes_and_retires_notes():
     from agmem.organizers.amem import AMemOrganizer
 
-    org = AMemOrganizer(input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    org = ChainedConsumer(AMemOrganizer(), "episodes")
     mem = _mk(organizers=[org])  # LLM 없음 → bare note 경로 (explicit degradation)
     mem._propagate_events(
         [
@@ -364,7 +373,9 @@ def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
     once the last source is superseded does the page INVALIDATE fire."""
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = MemoryOSOrganizer(stm_capacity=2, input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=2), "episodes")
     mem = _mk(organizers=[mos])  # no LLM -> one mechanical page over the batch
     mem._propagate_events(
         [_ev(OpType.ADD, "e1", content="one"), _ev(OpType.ADD, "e2", content="two")],
@@ -393,16 +404,19 @@ def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
     no-op once the unit has been paged (documented staleness, spec §3)."""
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = MemoryOSOrganizer(stm_capacity=2, input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    inner = MemoryOSOrganizer(stm_capacity=2)
+    mos = ChainedConsumer(inner, "episodes")
     mem = _mk(organizers=[mos])
     mem._propagate_events([_ev(OpType.ADD, "e1", content="v1")], actor="src")
-    assert [e.content for e in mos._stm] == ["v1"]
+    assert [e.content for e in inner._stm] == ["v1"]
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v2")], actor="src")
-    assert [e.content for e in mos._stm] == ["v2"]  # replaced in place
+    assert [e.content for e in inner._stm] == ["v2"]  # replaced in place
 
     # fill capacity -> e1(v2)+e2 evicted into a page; STM drains
     mem._propagate_events([_ev(OpType.ADD, "e2", content="w1")], actor="src")
-    assert mos._stm == []
+    assert inner._stm == []
     pages_before = [o for o in mem.log.tail(30) if o.target_type == "pages"]
     # UPDATE for the now-paged e1 must be ignored -> no new page op
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v3")], actor="src")
@@ -414,7 +428,9 @@ def test_amem_update_does_not_rewrite_note():
     """M3(b): A-Mem consuming episodes does not re-distill a note on UPDATE."""
     from agmem.organizers.amem import AMemOrganizer
 
-    org = AMemOrganizer(input="episodes")
+    from agmem.organizers.experimental import ChainedConsumer
+
+    org = ChainedConsumer(AMemOrganizer(), "episodes")
     mem = _mk(organizers=[org])  # no LLM -> bare note
     mem._propagate_events(
         [_ev(OpType.ADD, "e1", content="narrative", timestamp="2026-01-01")], actor="src"

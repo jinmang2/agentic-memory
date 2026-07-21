@@ -23,6 +23,7 @@ from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
 from agmem.organizers.amem import AMemOrganizer
+from agmem.organizers.experimental import ChainedConsumer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 
@@ -259,10 +260,13 @@ def main() -> None:
             NEMORI_TEMPS,
             NEMORI_STORE,
         ),
+        # --- experimental: cross-organizer chained compositions (not paper
+        # reproductions — an upstream organizer's episodes feed a second
+        # organizer via ChainedConsumer; docs/13 §5, experimental-split spec).
         "nemori_memoryos": (
             [
                 lambda: NemoriOrganizer(fidelity="v1"),
-                lambda: MemoryOSOrganizer(input="episodes"),
+                lambda: ChainedConsumer(MemoryOSOrganizer(), "episodes"),
             ],
             ("episodes", "semantic", "pages"),
             {"episodes": 10, "semantic": 20, "pages": 10},
@@ -271,7 +275,10 @@ def main() -> None:
             None,
         ),
         "nemori_amem": (
-            [lambda: NemoriOrganizer(fidelity="v1"), lambda: AMemOrganizer(input="episodes")],
+            [
+                lambda: NemoriOrganizer(fidelity="v1"),
+                lambda: ChainedConsumer(AMemOrganizer(), "episodes"),
+            ],
             ("episodes", "semantic", "notes"),
             {"episodes": 10, "semantic": 20, "notes": 10},
             False,
