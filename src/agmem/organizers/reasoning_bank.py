@@ -23,7 +23,7 @@ import json
 import logging
 
 from agmem.core.ops import MemoryOp, OpType
-from agmem.core.types import Episode, StrategyItem, new_id
+from agmem.core.types import StrategyItem, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.reasoning_bank")

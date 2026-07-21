@@ -1,6 +1,5 @@
 """Phase 1 exit criterion: MemoryOp abstraction holds for RB + A-Mem."""
 
-import pytest
 
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig

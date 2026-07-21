@@ -4,7 +4,6 @@ import pytest
 
 from agmem import AgenticMemory
 from agmem.core.ops import MemoryOp, OpType
-from agmem.core.types import Episode
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.base import Organizer, OrganizerContext
 

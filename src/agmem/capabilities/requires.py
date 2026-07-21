@@ -7,7 +7,7 @@ adapters are skipped with an explicit warning, never silently.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from agmem.capabilities.detect import HostCapabilities
 

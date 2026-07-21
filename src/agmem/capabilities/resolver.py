@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Any, Sequence
+from typing import Sequence
 
 from agmem.capabilities.detect import HostCapabilities
 

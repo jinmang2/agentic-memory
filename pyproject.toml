@@ -51,3 +51,10 @@ train = [
 
 [tool.black]
 line-length = 100
+
+# Ruff is the project's lint + format tool (policy: ruff format, line-length 100,
+# comments exempt from length). Pinned here so `ruff` picks up 100 instead of its
+# 88 default — previously line-length lived only under [tool.black], so bare
+# `ruff` ran at 88 and reported spurious drift.
+[tool.ruff]
+line-length = 100

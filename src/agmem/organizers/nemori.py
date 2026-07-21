@@ -53,8 +53,8 @@ from agmem.organizers.experimental.nemori_mixing import (
 )
 from agmem.organizers.nemori_stages import (
     AppendIntegrator,
-    BOUNDARY_PROMPT,
-    BOUNDARY_SCHEMA,
+    BOUNDARY_PROMPT,  # noqa: F401 — re-exported for train/distill_data.py (nemori.BOUNDARY_PROMPT)
+    BOUNDARY_SCHEMA,  # noqa: F401 — re-exported for train/distill_data.py (nemori.BOUNDARY_SCHEMA)
     BatchPartitioner,
     DedupIdReuseIntegrator,
     EpisodeMerger,

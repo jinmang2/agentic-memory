@@ -106,9 +106,13 @@ def test_no_self_delivery_and_consumes_filter():
     class SelfSub(Emitter):
         name = "selfsub"
         consumes = ("episodes",)
-        def __init__(self): self.seen = []
+
+        def __init__(self):
+            self.seen = []
+
         def on_memory_event(self, ev, ctx):
-            self.seen.append(ev); return []
+            self.seen.append(ev)
+            return []
     org = SelfSub()
     mem = _mk(organizers=[org])
     mem.add_message("hi")
