@@ -47,6 +47,10 @@ import logging
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.experimental.nemori_mixing import (
+    SemanticOfflineConsolidator,
+    ThreeWayIntegrator,
+)
 from agmem.organizers.nemori_stages import (
     AppendIntegrator,
     BOUNDARY_PROMPT,
@@ -55,8 +59,6 @@ from agmem.organizers.nemori_stages import (
     DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
-    SemanticOfflineConsolidator,
-    ThreeWayIntegrator,
     _fmt,
 )
 

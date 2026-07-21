@@ -17,5 +17,9 @@ package only when an E2E measurement justifies promotion (docs/13 §5, spec
 from __future__ import annotations
 
 from agmem.organizers.experimental.chained import ChainedConsumer
+from agmem.organizers.experimental.nemori_mixing import (
+    SemanticOfflineConsolidator,
+    ThreeWayIntegrator,
+)
 
-__all__ = ["ChainedConsumer"]
+__all__ = ["ChainedConsumer", "SemanticOfflineConsolidator", "ThreeWayIntegrator"]
