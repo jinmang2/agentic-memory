@@ -1,0 +1,29 @@
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:  55%|█████▌    | 57/103 [00:00<00:00, 567.82it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 707.05it/s]
+[conv0] ingested 419 turns, notes persisted under results/repro/stores/smoke_conv0
+[ingest-only] done (conv0); reload with --eval-only
+[done] wrote results/repro/stores/smoke_conv0/.ingest_complete.json (ingest-completion sentinel)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest.memory.jsonl (memory snapshot)
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:  15%|█▍        | 15/103 [00:00<00:00, 123.01it/s]Loading weights:  36%|███▌      | 37/103 [00:00<00:00, 172.68it/s]Loading weights:  88%|████████▊ | 91/103 [00:00<00:00, 330.96it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 315.11it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[run 1/1] conv0 overall={'f1': 35.39, 'bleu1': 32.79, 'n': 199}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.records.jsonl (199 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.memory.jsonl (memory snapshot)
+[cost] ~$0.044046 (gpt-4o-mini rates in stamp)
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 1323.50it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[run 1/1] conv0 overall={'f1': 34.91, 'bleu1': 30.56, 'n': 199, 'j_score': 51.97, 'j_n': 152}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_ours_expand-off_run1.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_ours_expand-off_run1.records.jsonl (199 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_ours_expand-off_run1.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_ours_expand-off_run1.memory.jsonl (memory snapshot)
+[cost] ~$0.049404 (gpt-4o-mini rates in stamp)
