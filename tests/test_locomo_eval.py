@@ -232,3 +232,96 @@ def test_answer_ours_cat5_still_uses_no_abstain_prompt():
         assert _NO_INFO not in mem.llm.last_prompt  # cat5 drops abstention
     finally:
         mem.close()
+
+
+# ---- I) exp_amem_repro records sidecar: nothing lost (data-loss guard) --------
+# The reproduction harness must durably persist the per-question audit trail
+# (docs/14 "Artifacts & persistence"). These exercise the JSONL-writing helper
+# directly with a synthetic evaluate() result so no LLM/API is needed.
+
+import importlib.util as _ilu  # noqa: E402
+import json as _json  # noqa: E402
+import sys as _sys  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+_REPRO_PATH = _Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
+
+
+def _load_repro():
+    """Import scripts/exp_amem_repro.py as a module (not a package) so its helper
+    is testable without an OPENAI_API_KEY (module-level does imports only)."""
+    if str(_REPRO_PATH.parent) not in _sys.path:
+        _sys.path.insert(0, str(_REPRO_PATH.parent))
+    spec = _ilu.spec_from_file_location("exp_amem_repro", _REPRO_PATH)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_write_records_sidecar_one_line_per_question(tmp_path):
+    repro = _load_repro()
+    # two runs, two conversations each carrying one evaluate() record; the helper
+    # must emit one JSONL line per (run, conv, question) with the audit fields.
+    runs_out = [
+        {
+            "run": 1,
+            "records": [
+                {"conv": 0, "q": "q0", "gold": "g0", "pred": "p0", "cat": "single-hop", "f1": 1.0},
+                {"conv": 1, "q": "q1", "gold": "g1", "pred": "p1", "cat": "multi-hop", "f1": 0.0},
+            ],
+        },
+        {
+            "run": 2,
+            "records": [
+                {"conv": 0, "q": "q0", "gold": "g0", "pred": "p0b", "cat": "single-hop", "f1": 0.5},
+            ],
+        },
+    ]
+    path = tmp_path / "tag.records.jsonl"
+    n = repro.write_records_sidecar(path, runs_out)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert n == 3
+    assert len(lines) == 3  # one line per question of every conv AND every run
+    rows = [_json.loads(ln) for ln in lines]
+    # every row carries run + conv tags plus the evaluate() audit fields
+    for r in rows:
+        assert set(r) >= {"run", "conv", "q", "gold", "pred", "cat", "f1"}
+    assert [r["run"] for r in rows] == [1, 1, 2]
+    assert [r["conv"] for r in rows] == [0, 1, 0]
+
+
+def test_records_sidecar_from_real_evaluate(tmp_path):
+    """End-to-end: feed a real locomo.evaluate() result (fake LLM, no API) into
+    the sidecar writer and assert one line per question with q/gold/pred/cat/f1."""
+    from agmem import AgenticMemory
+    from agmem.bench import locomo
+
+    repro = _load_repro()
+
+    class _StubLLM:
+        def chat(self, role, messages, **kwargs):
+            return "stub answer"
+
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
+    try:
+        mem.llm = _StubLLM()
+        questions = [
+            {"question": "q1", "answer": "a1", "category": 4},
+            {"question": "q2", "answer": "a2", "category": 2},
+        ]
+        res = locomo.evaluate(mem, questions, memory_types=("episodic",))
+    finally:
+        mem.close()
+
+    assert len(res["records"]) == 2
+    # mirror eval_conversations: tag each record with its conv index, wrap as a run
+    tagged = [{"conv": 0, **rec} for rec in res["records"]]
+    runs_out = [{"run": 1, "records": tagged}]
+    path = tmp_path / "e2e.records.jsonl"
+    n = repro.write_records_sidecar(path, runs_out)
+    lines = [_json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines()]
+    assert n == 2 and len(lines) == 2
+    for row, q in zip(lines, questions):
+        assert row["q"] == q["question"]
+        assert row["cat"] in {"single-hop", "temporal"}
+        assert {"gold", "pred", "f1", "run", "conv"} <= set(row)

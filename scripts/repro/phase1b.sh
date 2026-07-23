@@ -12,6 +12,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
+# Durable, in-repo run log: tee all output to results/repro/logs/ (git-tracked,
+# see .gitignore un-ignore) so nothing is lost to an ephemeral scratchpad. The
+# exec redirect keeps set -euo pipefail intact (tee runs async, never masking a
+# command's exit status).
+LOG_DIR="results/repro/logs"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
+exec > >(tee -a "$LOG") 2>&1
+
 uv run python scripts/exp_amem_repro.py \
     --conv all \
     --k 10 \

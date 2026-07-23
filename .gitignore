@@ -19,3 +19,8 @@ wheels/
 *.log
 nohup.out
 .pytest_cache/
+
+# Reproduction run logs are a durable, git-tracked record (docs/14): un-ignore
+# them despite the global *.log above so nothing from a run is volatile.
+!results/repro/logs/
+!results/repro/logs/*.log

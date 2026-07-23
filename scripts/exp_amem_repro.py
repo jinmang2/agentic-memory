@@ -143,11 +143,29 @@ def micro_average(results: list[dict]) -> dict:
     return {"overall": overall, "by_category": by_category}
 
 
+def write_records_sidecar(path: Path, runs_out: list[dict]) -> int:
+    """Persist the per-question audit trail to a JSONL sidecar — one JSON object
+    per line, each tagged with ``run`` (run number) and ``conv`` (conversation
+    index) plus the ``locomo.evaluate()`` record fields (q/gold/pred/cat/f1, and
+    ``j`` when judged). JSONL keeps it appendable/streamable/greppable. Every
+    question of every conversation and every run is written. Returns the number
+    of lines written."""
+    n = 0
+    with path.open("w", encoding="utf-8") as f:
+        for r in runs_out:
+            run_no = r.get("run")
+            for rec in r.get("records", []):
+                f.write(json.dumps({"run": run_no, **rec}, ensure_ascii=False) + "\n")
+                n += 1
+    return n
+
+
 def eval_conversations(args, embedder, roles, conv_indices: list[int]) -> dict:
     """Ingest (unless --eval-only) + QA over the selected conversations, then
     micro-average. Returns the combined result plus a merged LLM budget."""
     samples = locomo.load_locomo(DATA)
     per_conv = []
+    all_records: list[dict] = []
     merged_budget: dict = {}
     total_questions = 0
     for idx in conv_indices:
@@ -182,6 +200,10 @@ def eval_conversations(args, embedder, roles, conv_indices: list[int]) -> dict:
             )
             res["conv"] = idx
             per_conv.append(res)
+            # keep the per-question audit trail (records) for the durable sidecar,
+            # tagged with the conversation index; the summary JSON stays lean.
+            for rec in res.get("records", []):
+                all_records.append({"conv": idx, **rec})
             # merge budget across convs (sum calls/tokens per role)
             for role, stats in mem.budget.summary().items():
                 agg = merged_budget.setdefault(
@@ -205,6 +227,9 @@ def eval_conversations(args, embedder, roles, conv_indices: list[int]) -> dict:
     ]
     combined["llm_budget"] = merged_budget
     combined["n_questions"] = total_questions
+    # carried internally to the sidecar writer in main(); NOT inlined into the
+    # summary JSON (which selects a lean set of keys).
+    combined["records"] = all_records
     return combined
 
 
@@ -309,9 +334,17 @@ def main() -> None:
         f"{model_safe}_{conv_tag}_k{args.k}_{args.eval_mode}"
         f"_expand-{args.expand_links}_run{args.runs}"
     )
+    # durable per-question audit trail (every question, every conv, every run),
+    # written next to the summary as an appendable/greppable JSONL sidecar. The
+    # summary only POINTS to it via records_file — records are not inlined here.
+    records_name = f"{tag}.records.jsonl"
+    n_records = write_records_sidecar(OUT / records_name, runs_out)
+    result["records_file"] = records_name
+
     out_path = OUT / f"{tag}.json"
     out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
     print(f"[done] wrote {out_path}", flush=True)
+    print(f"[done] wrote {OUT / records_name} ({n_records} question records)", flush=True)
     if run_summary:
         print(f"[mean±std] {run_summary}", flush=True)
 

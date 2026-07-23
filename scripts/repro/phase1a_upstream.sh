@@ -40,6 +40,16 @@
 #   - Scoring is utils.calculate_metrics (set-based token F1 + ROUGE/BLEU/BERT).
 #     Our --eval-mode wujiang mirrors ONLY its set-based token F1.
 #   - Cost on gpt-4o-mini for the full 1,986-QA run: ~$1.5–2.0.
+
+# Durable, in-repo run log: even this doc-only wrapper tees its printed
+# instructions to results/repro/logs/ (git-tracked, see .gitignore un-ignore)
+# so the reproduction record is complete. Nothing upstream is executed here.
+cd "$(dirname "$0")/../.."
+LOG_DIR="results/repro/logs"
+mkdir -p "$LOG_DIR"
+LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
+exec > >(tee -a "$LOG") 2>&1
+
 echo "This is a documentation-only wrapper. Read the comments and run upstream" \
      "test_advanced.py in its own environment. Nothing is executed here."
 exit 0
