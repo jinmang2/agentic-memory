@@ -10,6 +10,7 @@ available (opt-in via ``evaluate(judge=True)``) for cat 1-4. Categories:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import string
@@ -209,6 +210,105 @@ def gold_for(q: dict[str, Any]) -> str:
     return gold
 
 
+# ------------- WujiangXu/A-Mem faithful eval (eval_mode="wujiang") -------------
+# Mirrors the official A-Mem reproduction repo (WujiangXu/AgenticMemory, cloned
+# to scratchpad). All file:line citations below reference that clone. This path
+# is DISTINCT from the snap-research-style `ours` metrics above (which stem +
+# strip articles); nothing here alters the `ours` functions.
+
+CAT5_NOT_MENTIONED = "Not mentioned in the conversation"
+
+# cat5 adversarial MCQ prompt — verbatim shape of test_advanced.py
+# advancedMemAgent.answer_question (:155-159): a 2-option choice between the
+# gold answer and the "Not mentioned" distractor, scored by set-based F1
+# against the gold. Kept as one f-string with the same wording/spacing.
+CAT5_MCQ_PROMPT = """Based on the context: {context}, answer the following \
+question. {question}
+
+Select the correct answer: {opt_a} or {opt_b}  Short answer:"""
+
+
+def _tok_wujiang(text: str) -> list[str]:
+    """Upstream ``simple_tokenize`` (utils.py:34-38): to-str, lowercase, replace
+    each of ``. , ! ?`` with a space, whitespace-split. NO Porter stemming, NO
+    article/stopword removal — this is the *only* normalization upstream F1
+    applies."""
+    text = str(text)
+    return (
+        text.lower().replace(".", " ").replace(",", " ").replace("!", " ").replace("?", " ").split()
+    )
+
+
+def token_f1_wujiang(pred: str, gold: str) -> float:
+    """Set-based token F1 mirroring ``utils.calculate_metrics`` (utils.py:129-145):
+    both sides ``.strip()``-ed, tokenized, then de-duplicated into SETS;
+    ``precision = |inter| / |pred_set|``, ``recall = |inter| / |gold_set|``,
+    F1 = harmonic mean. An empty prediction or reference yields 0.0 (utils.py's
+    top-level empty guard :112 and the ``not pred_tokens or not ref_tokens``
+    guard :140). Repeated tokens do NOT inflate the score (set semantics)."""
+    pred = str(pred).strip()
+    gold = str(gold).strip()
+    if not pred or not gold:
+        return 0.0
+    pred_set = set(_tok_wujiang(pred))
+    gold_set = set(_tok_wujiang(gold))
+    if not pred_set or not gold_set:
+        return 0.0
+    common = pred_set & gold_set
+    precision = len(common) / len(pred_set)
+    recall = len(common) / len(gold_set)
+    if precision + recall == 0:
+        return 0.0
+    return 2 * precision * recall / (precision + recall)
+
+
+def gold_for_wujiang(q: dict[str, Any]) -> str:
+    """Upstream gold = ``QA.final_answer`` (load_dataset.py:17-21):
+    ``adversarial_answer`` for cat5, else ``answer``. NO cat3 semicolon
+    truncation — neither load_dataset.py nor utils.py splits gold on ``;``
+    (verified against the clone), so unlike ``gold_for`` we keep cat3 gold
+    whole here."""
+    if q.get("category") == 5:
+        raw = q.get("adversarial_answer")
+        if raw is None:
+            raw = q.get("answer", "")
+    else:
+        raw = q.get("answer")
+        if raw is None:
+            raw = q.get("adversarial_answer", "")
+    return str(raw if raw is not None else "")
+
+
+def cat5_options(question: str, gold: str) -> tuple[str, str]:
+    """Deterministic 2-option order for the cat5 MCQ. Upstream randomizes the
+    order with an UNSEEDED ``random.random() < 0.5`` (test_advanced.py:149-154),
+    making re-runs non-reproducible. We derive the coin from an md5 of the
+    question so the option order is byte-stable across runs (the intentional,
+    documented deviation): even coin -> (distractor, gold); odd -> (gold,
+    distractor). Options are the gold answer and the literal "Not mentioned in
+    the conversation" distractor, exactly as upstream."""
+    coin = int(hashlib.md5(question.encode("utf-8")).hexdigest(), 16) & 1
+    if coin == 0:
+        return (CAT5_NOT_MENTIONED, gold)
+    return (gold, CAT5_NOT_MENTIONED)
+
+
+def resolve_cat5_reply(reply: str, options: tuple[str, str]) -> str:
+    """Map a cat5 MCQ reply back to one option's text. Upstream scores the raw
+    reply text directly against gold (test_advanced.py parses the JSON ``answer``
+    field then calls ``calculate_metrics``), so the raw reply IS the resolved
+    answer. We additionally resolve a bare ``(a)``/``(b)``/``a``/``b`` letter to
+    the corresponding option so a model that replies by letter is scored on the
+    option it actually chose rather than on the literal letter."""
+    r = reply.strip()
+    low = r.lower().strip("() .")
+    if low in ("a", "opt_a", "option a", "first"):
+        return options[0]
+    if low in ("b", "opt_b", "option b", "second"):
+        return options[1]
+    return r
+
+
 def judge_answer(mem: AgenticMemory, question: str, gold: str, pred: str) -> bool | None:
     """Mem0-style binary LLM judge. Returns True/False, or None if no judge
     client (``mem.structured``) is configured or the call yields nothing."""
@@ -252,6 +352,9 @@ def answer(
     budget_tokens: int = 6000,
     keyword_queries: bool = False,
     category: int | None = None,
+    eval_mode: str = "ours",
+    gold: str | None = None,
+    cat5_temperature: float | None = None,
 ) -> str:
     """One QA turn: optionally rewrite `question` into keywords (A-Mem's
     upstream eval query style) before `mem.search`, inject the MemoryOS
@@ -285,17 +388,30 @@ def answer(
             context = "User Profile:\n" + "\n".join(f"- {p}" for p in profile) + "\n\n" + context
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
-    prompt = ANSWER_PROMPT_NO_ABSTAIN if category == 5 else ANSWER_PROMPT
+    # wujiang cat5: 2-option MCQ (gold vs "Not mentioned") in a deterministic
+    # order at the upstream cat5 temperature (0.5). Every other case keeps the
+    # `ours` prompts unchanged.
+    wujiang_cat5 = eval_mode == "wujiang" and category == 5
+    if wujiang_cat5:
+        options = cat5_options(question, str(gold if gold is not None else ""))
+        prompt_text = CAT5_MCQ_PROMPT.format(
+            context=context, question=question, opt_a=options[0], opt_b=options[1]
+        )
+    else:
+        prompt = ANSWER_PROMPT_NO_ABSTAIN if category == 5 else ANSWER_PROMPT
+        prompt_text = prompt.format(context=context, question=question)
+    chat_overrides: dict[str, Any] = {}
+    if wujiang_cat5 and cat5_temperature is not None:
+        chat_overrides["temperature"] = cat5_temperature
     reply = mem.llm.chat(
         "generate",
-        [
-            {
-                "role": "user",
-                "content": prompt.format(context=context, question=question),
-            },
-        ],
+        [{"role": "user", "content": prompt_text}],
+        **chat_overrides,
     )
-    return reply.strip().splitlines()[0] if reply.strip() else ""
+    reply = reply.strip().splitlines()[0] if reply.strip() else ""
+    if wujiang_cat5:
+        return resolve_cat5_reply(reply, options)
+    return reply
 
 
 def evaluate(
@@ -306,6 +422,8 @@ def evaluate(
     budget_tokens: int = 6000,
     keyword_queries: bool = False,
     judge: bool = False,
+    eval_mode: str = "ours",
+    cat5_temperature: float | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
@@ -314,11 +432,19 @@ def evaluate(
     for error inspection, not just the aggregates. When `judge=True`, a
     Mem0-style binary LLM judge (`judge_answer`) also scores cat 1-4 (cat5
     adversarial is excluded, matching Mem0), adding `j_score`/`j_n` to each
-    aggregate bucket that has judged rows and a `j` bool to those `records`."""
+    aggregate bucket that has judged rows and a `j` bool to those `records`.
+
+    ``eval_mode="wujiang"`` swaps in the WujiangXu/A-Mem faithful path: gold via
+    ``gold_for_wujiang`` (no cat3 truncation), F1 via ``token_f1_wujiang``
+    (set-based, no stemming), and the cat5 2-option MCQ generation. Upstream
+    ``utils.py`` has NO LLM judge, so ``judge`` is forced off in this mode."""
+    wujiang = eval_mode == "wujiang"
+    if wujiang:
+        judge = False  # upstream utils.calculate_metrics has no J-score judge
     per_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
-        gold = gold_for(q)
+        gold = gold_for_wujiang(q) if wujiang else gold_for(q)
         cat_num = q.get("category")
         pred = answer(
             mem,
@@ -328,8 +454,14 @@ def evaluate(
             budget_tokens=budget_tokens,
             keyword_queries=keyword_queries,
             category=cat_num,
+            eval_mode=eval_mode,
+            gold=gold,
+            cat5_temperature=cat5_temperature,
         )
-        f1, b1 = token_f1(pred, gold), bleu1(pred, gold)
+        if wujiang:
+            f1, b1 = token_f1_wujiang(pred, gold), bleu1(pred, gold)
+        else:
+            f1, b1 = token_f1(pred, gold), bleu1(pred, gold)
         j = (
             judge_answer(mem, q["question"], gold, pred)
             if judge and cat_num in (1, 2, 3, 4)

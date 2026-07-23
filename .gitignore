@@ -9,6 +9,11 @@ wheels/
 # Virtual environments
 .venv
 
+# Secrets / local env (never commit API keys)
+.env
+.env.local
+.env.*.local
+
 # local/session state
 .omc/
 *.log
