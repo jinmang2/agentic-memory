@@ -1,9 +1,11 @@
 """LoCoMo benchmark pipeline (snap-research/locomo, 10 conversations).
 
-Metrics are string-based (token F1 + BLEU-1, SQuAD-style normalization) so
-no judge LLM is needed — the cheapest reproduction entry point (docs/06
-Phase 2). Categories: 1=multi-hop, 2=temporal, 3=open-domain, 4=single-hop,
-5=adversarial (gold in ``adversarial_answer``).
+The primary metrics are string-based (token F1 + BLEU-1, SQuAD-style
+normalization with Porter stemming) — the cheapest reproduction entry point
+(docs/06 Phase 2). A Mem0-style binary J-score LLM judge is additionally
+available (opt-in via ``evaluate(judge=True)``) for cat 1-4. Categories:
+1=multi-hop, 2=temporal, 3=open-domain, 4=single-hop, 5=adversarial (gold in
+``adversarial_answer``).
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable
 
+from agmem.bench._porter import PorterStemmer
 from agmem.memory import AgenticMemory
 
 CATEGORY_NAMES = {
@@ -60,6 +63,43 @@ Memories:
 
 Question: {question}
 Short answer:"""
+
+# cat5 (adversarial) upstream drops the abstention option: the answer is
+# expected to be produced, not refused, so ANSWER_PROMPT minus the
+# "No information available" sentence (everything else identical).
+ANSWER_PROMPT_NO_ABSTAIN = """Answer the question using ONLY the retrieved memories below.
+If the question asks when something happened, compute the absolute date from
+the timestamps shown with the memories (e.g. "last year" in a memory dated
+4 May 2022 means 2021). If memories conflict, prefer the most recent one.
+Reply with the shortest span that answers the question — a name, phrase, or \
+date — with no explanation.
+
+Memories:
+{context}
+
+Question: {question}
+Short answer:"""
+
+# Mem0-standard binary LLM judge (cat 1-4 only). Grades the generated answer
+# CORRECT/WRONG relative to gold with the same generous rubric Mem0 uses.
+JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {"label": {"type": "string", "enum": ["CORRECT", "WRONG"]}},
+    "required": ["label"],
+}
+
+JUDGE_PROMPT = """Label the generated answer as CORRECT or WRONG relative to the gold answer. Grade generously:
+- Paraphrases and differently-worded answers that convey the same meaning are CORRECT.
+- If the gold answer has multiple items, getting at least one right is CORRECT.
+- Extra detail is fine as long as it does not contradict the gold answer.
+- Dates within ~14 days of the gold, or durations within ~50%, are CORRECT; relative dates that resolve into the gold's time window are CORRECT.
+Otherwise label WRONG.
+
+Question: {question}
+Gold answer: {gold}
+Generated answer: {pred}
+
+Respond with a JSON object: {{"label": "CORRECT"}} or {{"label": "WRONG"}}."""
 
 
 # ---------------- data loading ----------------
@@ -115,16 +155,18 @@ def select_questions(
 
 # ---------------- metrics (SQuAD-style) ----------------
 
-_ARTICLES = re.compile(r"\b(a|an|the)\b")
+_ARTICLES = re.compile(r"\b(a|an|the|and)\b")
+_STEMMER = PorterStemmer()
 
 
 def normalize(text: str) -> list[str]:
-    """Tokens, not text: lowercased, punctuation stripped, articles (a/an/the)
-    removed, whitespace-split (SQuAD-style normalization for F1/BLEU-1)."""
+    """Tokens, not text: lowercased, punctuation stripped, stopwords
+    (a/an/the/and) removed, whitespace-split, then Porter-stemmed — matching
+    the official snap-research/locomo ``normalize_answer`` used for F1/BLEU-1."""
     text = str(text).lower()
     text = text.translate(str.maketrans("", "", string.punctuation))
     text = _ARTICLES.sub(" ", text)
-    return text.split()
+    return [_STEMMER.stem(tok) for tok in text.split()]
 
 
 def token_f1(pred: str, gold: str) -> float:
@@ -153,6 +195,36 @@ def bleu1(pred: str, gold: str) -> float:
     return brevity * precision
 
 
+def gold_for(q: dict[str, Any]) -> str:
+    """Gold answer for a question: ``answer`` (falling back to
+    ``adversarial_answer`` for cat5). For cat3 (open-domain) the upstream
+    gold packs multiple aliases as ``"A; B; C"`` — take the first, matching
+    snap-research/locomo scoring which keys on the primary answer."""
+    raw = q.get("answer")
+    if raw is None:
+        raw = q.get("adversarial_answer", "")
+    gold = str(raw)
+    if q.get("category") == 3 and ";" in gold:
+        gold = gold.split(";")[0].strip()
+    return gold
+
+
+def judge_answer(mem: AgenticMemory, question: str, gold: str, pred: str) -> bool | None:
+    """Mem0-style binary LLM judge. Returns True/False, or None if no judge
+    client (``mem.structured``) is configured or the call yields nothing."""
+    if mem.structured is None:
+        return None
+    res = mem.structured.call(
+        "judge",
+        JUDGE_PROMPT.format(question=question, gold=gold, pred=pred),
+        JUDGE_SCHEMA,
+        required_keys=("label",),
+    )
+    if not res:
+        return None
+    return str(res.get("label", "")).strip().upper() == "CORRECT"
+
+
 # ---------------- pipeline ----------------
 
 
@@ -179,6 +251,7 @@ def answer(
     memory_types: tuple[str, ...] = ("episodic",),
     budget_tokens: int = 6000,
     keyword_queries: bool = False,
+    category: int | None = None,
 ) -> str:
     """One QA turn: optionally rewrite `question` into keywords (A-Mem's
     upstream eval query style) before `mem.search`, inject the MemoryOS
@@ -212,12 +285,13 @@ def answer(
             context = "User Profile:\n" + "\n".join(f"- {p}" for p in profile) + "\n\n" + context
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
+    prompt = ANSWER_PROMPT_NO_ABSTAIN if category == 5 else ANSWER_PROMPT
     reply = mem.llm.chat(
         "generate",
         [
             {
                 "role": "user",
-                "content": ANSWER_PROMPT.format(context=context, question=question),
+                "content": prompt.format(context=context, question=question),
             },
         ],
     )
@@ -231,16 +305,21 @@ def evaluate(
     memory_types: tuple[str, ...] = ("episodic",),
     budget_tokens: int = 6000,
     keyword_queries: bool = False,
+    judge: bool = False,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
     per category; `progress(i, total)` (1-indexed `i`) fires after each
     question if given. `records` in the result carries one row per question
-    for error inspection, not just the aggregates."""
-    per_cat: dict[str, list[tuple[float, float]]] = defaultdict(list)
+    for error inspection, not just the aggregates. When `judge=True`, a
+    Mem0-style binary LLM judge (`judge_answer`) also scores cat 1-4 (cat5
+    adversarial is excluded, matching Mem0), adding `j_score`/`j_n` to each
+    aggregate bucket that has judged rows and a `j` bool to those `records`."""
+    per_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
     records = []
     for i, q in enumerate(questions):
-        gold = q.get("answer") or q.get("adversarial_answer") or ""
+        gold = gold_for(q)
+        cat_num = q.get("category")
         pred = answer(
             mem,
             q["question"],
@@ -248,33 +327,47 @@ def evaluate(
             memory_types=memory_types,
             budget_tokens=budget_tokens,
             keyword_queries=keyword_queries,
+            category=cat_num,
         )
-        f1, b1 = token_f1(pred, str(gold)), bleu1(pred, str(gold))
-        cat = CATEGORY_NAMES.get(q.get("category"), "?")
-        per_cat[cat].append((f1, b1))
-        records.append(
-            {
-                "q": q["question"],
-                "gold": str(gold),
-                "pred": pred,
-                "cat": cat,
-                "f1": round(f1, 3),
-            }
+        f1, b1 = token_f1(pred, gold), bleu1(pred, gold)
+        j = (
+            judge_answer(mem, q["question"], gold, pred)
+            if judge and cat_num in (1, 2, 3, 4)
+            else None
         )
+        cat = CATEGORY_NAMES.get(cat_num, "?")
+        per_cat[cat].append({"f1": f1, "b1": b1, "j": j})
+        row = {
+            "q": q["question"],
+            "gold": gold,
+            "pred": pred,
+            "cat": cat,
+            "f1": round(f1, 3),
+        }
+        if j is not None:
+            row["j"] = j
+        records.append(row)
         if progress:
             progress(i + 1, len(questions))
 
-    def agg(pairs: list[tuple[float, float]]) -> dict[str, float]:
-        """Mean F1/BLEU-1 as 0-100 percentages, plus the pair count."""
-        return {
-            "f1": round(100 * sum(p[0] for p in pairs) / len(pairs), 2),
-            "bleu1": round(100 * sum(p[1] for p in pairs) / len(pairs), 2),
-            "n": len(pairs),
+    def agg(rows: list[dict[str, Any]]) -> dict[str, float]:
+        """Mean F1/BLEU-1 as 0-100 percentages, plus the row count. When any
+        row carries a judge verdict, also emits `j_score` (mean of the judged
+        rows as a 0-100 percentage) and `j_n` (count of judged rows)."""
+        out = {
+            "f1": round(100 * sum(r["f1"] for r in rows) / len(rows), 2),
+            "bleu1": round(100 * sum(r["b1"] for r in rows) / len(rows), 2),
+            "n": len(rows),
         }
+        judged = [r["j"] for r in rows if r["j"] is not None]
+        if judged:
+            out["j_score"] = round(100 * sum(judged) / len(judged), 2)
+            out["j_n"] = len(judged)
+        return out
 
-    all_pairs = [p for pairs in per_cat.values() for p in pairs]
+    all_rows = [r for rows in per_cat.values() for r in rows]
     return {
-        "overall": agg(all_pairs) if all_pairs else {},
-        "by_category": {cat: agg(pairs) for cat, pairs in sorted(per_cat.items())},
+        "overall": agg(all_rows) if all_rows else {},
+        "by_category": {cat: agg(rows) for cat, rows in sorted(per_cat.items())},
         "records": records,
     }

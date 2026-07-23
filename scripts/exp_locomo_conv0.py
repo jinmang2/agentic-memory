@@ -75,6 +75,7 @@ def run(
     role_overrides: dict[str, dict] | None = None,
     slot_overrides: dict[str, str] | None = None,
     lexical_types: tuple[str, ...] = ("episodic",),
+    judge: bool = False,
 ) -> dict:
     """Run one config end-to-end: build a fresh `AgenticMemory`, ingest
     `sample` (flushing tail buffers and calling `consolidate()`), answer the
@@ -117,6 +118,7 @@ def run(
             k=k,
             memory_types=memory_types,
             keyword_queries=keyword_queries,
+            judge=judge,
             progress=lambda i, n: (
                 print(f"[{config_name}] {i}/{n}", flush=True) if i % 20 == 0 else None
             ),
@@ -165,8 +167,10 @@ def run(
         (OUT / f"locomo-conv0-{config_name}.json").write_text(
             json.dumps(result, indent=2, ensure_ascii=False)
         )
+        ov = res["overall"]
+        jtxt = f" j={ov['j_score']}" if "j_score" in ov else ""
         print(
-            f"[{config_name}] overall={res['overall']} ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
+            f"[{config_name}] overall={ov}{jtxt} ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
             flush=True,
         )
         return result
@@ -184,6 +188,7 @@ def main() -> None:
     ap.add_argument("--max-sessions", type=int, default=None)
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--configs", nargs="*", default=["passthrough", "amem"])
+    ap.add_argument("--judge", action="store_true", default=False)
     args = ap.parse_args()
 
     sample = locomo.load_locomo(DATA)[0]
@@ -344,6 +349,7 @@ def main() -> None:
             role_overrides=role_overrides,
             slot_overrides=slot_overrides,
             lexical_types=lexical_types,
+            judge=args.judge,
         )
 
 
