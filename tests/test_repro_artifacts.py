@@ -554,3 +554,125 @@ def test_headline_refuses_mismatched_config(tmp_path):
     except SystemExit:
         raised = True
     assert raised  # refuses to average k=10 and k=20 seeds into one headline
+
+
+# ---------------- 9) parallel-ingest orchestrator: pure helpers ----------------
+
+
+def _load_parallel():
+    path = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "ingest_parallel.py"
+    spec = _ilu.spec_from_file_location("ingest_parallel", path)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_parallel_parse_convs():
+    p = _load_parallel()
+    assert p.parse_convs("all") == list(range(10))
+    assert p.parse_convs("0-3") == [0, 1, 2, 3]
+    assert p.parse_convs("0,2,5") == [0, 2, 5]
+    assert p.parse_convs("0-2,7,9") == [0, 1, 2, 7, 9]
+    assert p.parse_convs("3,3,3") == [3]  # de-duplicated
+    for bad in ("10", "-1", "8-11", ""):
+        try:
+            p.parse_convs(bad)
+            raised = False
+        except SystemExit:
+            raised = True
+        assert raised, f"parse_convs({bad!r}) should reject out-of-range/empty"
+
+
+def test_parallel_conv_done_needs_summary_and_nonempty_store(tmp_path, monkeypatch):
+    p = _load_parallel()
+    monkeypatch.setattr(p.H, "OUT", tmp_path)  # per-conv summaries land here
+    data_dir = tmp_path / "store"
+    # nothing yet -> not done
+    assert not p.conv_is_done("gpt-4o-mini", str(data_dir), 0, "_seed1")
+    # summary present but store missing -> still not done (orphan summary)
+    p.per_conv_summary_path("gpt-4o-mini", 0, "_seed1").write_text("{}")
+    assert not p.conv_is_done("gpt-4o-mini", str(data_dir), 0, "_seed1")
+    # store present but EMPTY -> not done (crashed mid-ingest)
+    (data_dir / "repro-conv0").mkdir(parents=True)
+    assert not p.conv_is_done("gpt-4o-mini", str(data_dir), 0, "_seed1")
+    # summary + non-empty store -> done
+    (data_dir / "repro-conv0" / "db.sqlite").write_text("x")
+    assert p.conv_is_done("gpt-4o-mini", str(data_dir), 0, "_seed1")
+
+
+def _fake_conv_summary(n_turns, calls, tin, tout, cost, per_type):
+    """Shape one per-conv --ingest-only summary the way exp_amem_repro emits it."""
+    return {
+        "stamp": {"model": "gpt-4o-mini", "embedder": "all-MiniLM-L6-v2", "conv": "0"},
+        "ingest_only": True,
+        "per_conv": [{"conv": 0, "n_turns": n_turns}],
+        "llm_budget": {
+            "extract": {
+                "calls": calls,
+                "tokens_in": tin,
+                "tokens_out": tout,
+                "errors": 0,
+                "latency_ms_total": 100.0 * calls,
+                "latency_ms_avg": 100.0,
+            }
+        },
+        "drops": {},
+        "timing": {"ingest_s": 60.0, "total_s": 60.0},
+        "memory_capacity": {"per_type": per_type, "total_items": sum(per_type.values())},
+    }
+
+
+def test_parallel_merge_sums_budget_cost_and_capacity():
+    p = _load_parallel()
+    a = _fake_conv_summary(400, calls=800, tin=1000, tout=500, cost=0.0, per_type={"notes": 400})
+    b = _fake_conv_summary(600, calls=1200, tin=2000, tout=800, cost=0.0, per_type={"notes": 600})
+    merged = p.merge_ingest_summaries([a, b])
+    # tokens/calls summed across convs
+    assert merged["llm_budget"]["extract"]["calls"] == 2000
+    assert merged["llm_budget"]["extract"]["tokens_in"] == 3000
+    assert merged["llm_budget"]["extract"]["tokens_out"] == 1300
+    # cost recomputed from the SUMMED tokens (not summed per-conv costs) via the
+    # harness cost model -> single source of truth, matches sequential --conv all
+    assert merged["cost_usd"] == p.H.cost_usd(merged["llm_budget"])
+    # ingest seconds = summed compute time; memory per-type counts summed
+    assert merged["ingest_s"] == 120.0
+    assert merged["memory_capacity"]["per_type"]["notes"] == 1000
+    assert merged["memory_capacity"]["total_items"] == 1000
+
+
+def test_parallel_finalize_writes_combined_summary_and_sentinel(tmp_path, monkeypatch):
+    """The finalize step is a drop-in for the sequential --conv all ingest: given
+    each conv's per-conv summary, it must emit the SAME <model>_all_ingest<sfx>.json
+    (cost summed) + the SINGLE combined sentinel covering every conv, so --eval-only
+    and the headline aggregator work unchanged. No subprocess, no paid call."""
+    p = _load_parallel()
+    monkeypatch.setattr(p.H, "OUT", tmp_path)
+    data_dir = tmp_path / "store"
+    convs = [0, 1, 2]
+    # lay down each conv's per-conv summary + a non-empty store dir (as workers would)
+    for c in convs:
+        summ = _fake_conv_summary(
+            400 + c, calls=800, tin=1000, tout=500, cost=0.0, per_type={"notes": 400 + c}
+        )
+        p.per_conv_summary_path("gpt-4o-mini", c, "_seed1").write_text(json.dumps(summ))
+        sd = data_dir / f"repro-conv{c}"
+        sd.mkdir(parents=True)
+        (sd / "db.sqlite").write_text("x")
+
+    args = SimpleNamespace(
+        model="gpt-4o-mini", data_dir=str(data_dir), tag_suffix="_seed1", workers=3
+    )
+    out_path, sentinel, combined = p.finalize_combined(args, convs, wall_s=90.0)
+
+    # drop-in NAME: exactly what the sequential --conv all --ingest-only would write
+    assert out_path.name == "gpt-4o-mini_all_ingest_seed1.json"
+    assert out_path.exists() and combined["ingest_only"] is True
+    # cost summed across the 3 convs via the harness cost model
+    assert combined["cost_usd"] == p.H.cost_usd(combined["llm_budget"])
+    assert combined["llm_budget"]["extract"]["calls"] == 2400
+    # wall clock recorded separately from summed compute time (the speedup evidence)
+    assert combined["timing"]["wall_s"] == 90.0 and combined["timing"]["ingest_s"] == 180.0
+    # the SINGLE authoritative sentinel covers every conv -> --eval-only will accept
+    assert sentinel.name == p.H.SENTINEL_NAME
+    done = set(json.loads(sentinel.read_text())["conv_indices"])
+    assert done == set(convs)

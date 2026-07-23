@@ -21,21 +21,27 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
-K="${K:-3}"                 # number of independent ingests (note-graph draws)
-WORKERS="${WORKERS:-8}"     # concurrent QA workers (results identical to 1)
+K="${K:-3}"                       # number of independent ingests (note-graph draws)
+WORKERS="${WORKERS:-8}"           # concurrent QA workers (results identical to 1)
+INGEST_WORKERS="${INGEST_WORKERS:-4}"  # concurrent CONVERSATION ingests ≈ in-flight
+                                       # API calls (rate-limit knob; results identical
+                                       # to sequential — convs are independent). RAM ≈
+                                       # INGEST_WORKERS × ~1GB. Raise if no 429s.
 
 for SEED in $(seq 1 "$K"); do
     echo "=== seed ${SEED}/${K} ==="
     STORE="results/repro/stores/full_all_seed${SEED}"
 
-    # Fresh, independent ingest per seed (guarded on the completion sentinel;
-    # a partial/crashed store is wiped so the re-ingest is clean).
+    # Fresh, independent ingest per seed. Parallelized ACROSS conversations
+    # (byte-identical to sequential — each conv is an isolated store; only the
+    # network waits overlap). No rm -rf: the orchestrator resumes (skips convs
+    # already complete, wipes only partial per-conv stores) and writes ONE
+    # combined sentinel + <model>_all_ingest_seed${SEED}.json when every conv is done.
     if [ ! -f "$STORE/.ingest_complete.json" ]; then
-        rm -rf "$STORE"
-        uv run python scripts/exp_amem_repro.py \
-            --conv all --eval-mode wujiang \
+        uv run python scripts/repro/ingest_parallel.py \
+            --convs all --workers "$INGEST_WORKERS" \
             --tag-suffix "_seed${SEED}" \
-            --data-dir "$STORE" --ingest-only
+            --data-dir "$STORE"
     fi
 
     # Score this seed's store — WujiangXu-faithful metric, no re-ingest.

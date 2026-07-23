@@ -20,21 +20,25 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
-K="${K:-3}"                 # number of independent ingests (note-graph draws)
-WORKERS="${WORKERS:-8}"     # concurrent QA workers (results identical to 1)
+K="${K:-3}"                       # number of independent ingests (note-graph draws)
+WORKERS="${WORKERS:-8}"           # concurrent QA workers (results identical to 1)
+INGEST_WORKERS="${INGEST_WORKERS:-4}"  # concurrent CONVERSATION ingests ≈ in-flight
+                                       # API calls (rate-limit knob; identical to
+                                       # sequential). RAM ≈ INGEST_WORKERS × ~1GB.
 
 for SEED in $(seq 1 "$K"); do
     echo "=== seed ${SEED}/${K} ==="
     STORE="results/repro/stores/full_all_seed${SEED}"
 
     # Shared with phase1b_headline.sh — ingest only if this seed store is not
-    # already complete (a partial/crashed store is wiped and re-ingested).
+    # already complete. Conversation-parallel (byte-identical to sequential),
+    # resumable (skips completed convs, wipes only partial ones), and writes ONE
+    # combined sentinel when every conv is done.
     if [ ! -f "$STORE/.ingest_complete.json" ]; then
-        rm -rf "$STORE"
-        uv run python scripts/exp_amem_repro.py \
-            --conv all --eval-mode wujiang \
+        uv run python scripts/repro/ingest_parallel.py \
+            --convs all --workers "$INGEST_WORKERS" \
             --tag-suffix "_seed${SEED}" \
-            --data-dir "$STORE" --ingest-only
+            --data-dir "$STORE"
     fi
 
     # Score this seed's store — our-production metric + J-judge + link expansion.

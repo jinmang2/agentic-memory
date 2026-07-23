@@ -539,6 +539,14 @@ def main() -> None:
         "distinct stores don't overwrite each other's artifacts",
     )
     ap.add_argument("--ingest-only", action="store_true")
+    ap.add_argument(
+        "--no-sentinel",
+        action="store_true",
+        help="ingest-only: skip writing the .ingest_complete.json sentinel. Used by "
+        "scripts/repro/ingest_parallel.py, which fans out per-conv ingests and then "
+        "writes ONE authoritative combined sentinel after every worker finishes — so "
+        "concurrent workers never clobber the shared sentinel mid-run.",
+    )
     ap.add_argument("--eval-only", action="store_true")
     args = ap.parse_args()
     if args.workers < 1:
@@ -599,13 +607,18 @@ def main() -> None:
         # Mark the store COMPLETE for exactly the convs just ingested so a later
         # --eval-only (or the phase scripts) can trust it — a crashed ingest never
         # reaches this line, so a bare store dir without the sentinel is rejected.
-        sentinel = write_ingest_sentinel(
-            args.data_dir, conv_indices, combined.get("per_conv") or [], sha
-        )
+        # Under --no-sentinel the parallel orchestrator owns the (single, combined)
+        # sentinel instead, so per-conv workers skip it to avoid clobbering.
+        sentinel = None
+        if not args.no_sentinel:
+            sentinel = write_ingest_sentinel(
+                args.data_dir, conv_indices, combined.get("per_conv") or [], sha
+            )
         out_path = OUT / f"{tag}.json"
         out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
         print(f"[ingest-only] done ({conv_tag}); reload with --eval-only", flush=True)
-        print(f"[done] wrote {sentinel} (ingest-completion sentinel)", flush=True)
+        if sentinel is not None:
+            print(f"[done] wrote {sentinel} (ingest-completion sentinel)", flush=True)
         print(f"[done] wrote {out_path}", flush=True)
         print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
         print(f"[done] wrote {memory_path} (memory snapshot)", flush=True)
