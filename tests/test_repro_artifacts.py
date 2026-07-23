@@ -6,6 +6,7 @@ fake embedder + fake LLM throughout, no API/server, no paid calls."""
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util as _ilu
 import json
 import sys
@@ -286,3 +287,270 @@ def test_write_once_then_eval_only_issues_zero_write_calls(tmp_path):
         assert ev.calls.get("generate", 0) == len(questions)
     finally:
         mem2.close()
+
+
+# ---------------- 5) concurrent eval == sequential eval (bit-for-bit) ----------
+
+
+class _DetAnswerLLM:
+    """Deterministic, thread-safe fake: the reply is a hash of the full prompt,
+    so a given question over a fixed store yields the SAME pred no matter which
+    thread runs it. Any deterministic fake makes workers>1 and workers=1 produce
+    identical aggregates/records — that is exactly the invariant under test."""
+
+    def chat(self, role, messages, **kwargs):
+        prompt = " ".join(m.get("content", "") for m in messages)
+        return "resp-" + hashlib.md5(prompt.encode("utf-8")).hexdigest()[:8]
+
+
+def _seed_qa_mem():
+    mem = AgenticMemory(namespace="conc", organizers=["passthrough"], embedder=FakeEmbedder(dim=64))
+    mem.llm = _DetAnswerLLM()
+    for msg in [
+        "Alice moved to Berlin in 2021.",
+        "Bob started a new job at the museum.",
+        "Carol adopted a dog named Rex.",
+        "Dan visited Tokyo last spring.",
+        "Alice learned to play the cello.",
+        "Bob's museum job involves restoring paintings.",
+    ]:
+        mem.add_message(msg, role="user")
+    mem.flush()
+    return mem
+
+
+def test_concurrent_eval_matches_sequential(tmp_path):
+    questions = [
+        {"question": "Where did Alice move?", "answer": "Berlin", "category": 4},
+        {"question": "Where does Bob work?", "answer": "museum", "category": 4},
+        {"question": "What pet did Carol adopt?", "answer": "dog", "category": 1},
+        {"question": "Where did Dan visit?", "answer": "Tokyo", "category": 2},
+        {"question": "What instrument did Alice learn?", "answer": "cello", "category": 3},
+        {"question": "Is Alice a pilot?", "adversarial_answer": "No", "category": 5},
+        {"question": "What does Bob restore?", "answer": "paintings", "category": 4},
+    ]
+    mem = _seed_qa_mem()
+    try:
+        seq = locomo.evaluate(
+            mem, questions, memory_types=("episodic",), capture_retrieval=True, workers=1
+        )
+    finally:
+        mem.close()
+    mem2 = _seed_qa_mem()
+    try:
+        conc = locomo.evaluate(
+            mem2, questions, memory_types=("episodic",), capture_retrieval=True, workers=8
+        )
+    finally:
+        mem2.close()
+
+    # aggregates identical, and records in the SAME (question) order
+    assert conc["overall"] == seq["overall"]
+    assert conc["by_category"] == seq["by_category"]
+    assert [r["q"] for r in conc["records"]] == [r["q"] for r in seq["records"]]
+    assert [r["pred"] for r in conc["records"]] == [r["pred"] for r in seq["records"]]
+    assert [r["f1"] for r in conc["records"]] == [r["f1"] for r in seq["records"]]
+
+
+# ---------------- 6) budget merge: latency is call-weighted, cost sums ---------
+
+
+def _fake_mem(summary: dict, drops: dict | None = None):
+    """A stand-in exposing just what _merge_budget touches: a budget with a
+    summary() and an optional structured.drops."""
+    structured = None if drops is None else SimpleNamespace(drops=drops)
+    return SimpleNamespace(budget=SimpleNamespace(summary=lambda: summary), structured=structured)
+
+
+def test_merge_budget_latency_is_call_weighted_not_last(tmp_path):
+    repro = _load_repro()
+    merged: dict = {}
+    drops: dict = {}
+    # conv A: 2 generate calls @ 100ms avg (200ms total)
+    repro._merge_budget(
+        merged,
+        drops,
+        _fake_mem(
+            {
+                "generate": {
+                    "calls": 2,
+                    "tokens_in": 10,
+                    "tokens_out": 5,
+                    "latency_ms_avg": 100.0,
+                    "errors": 0,
+                }
+            }
+        ),
+    )
+    # conv B: 8 generate calls @ 200ms avg (1600ms total)
+    repro._merge_budget(
+        merged,
+        drops,
+        _fake_mem(
+            {
+                "generate": {
+                    "calls": 8,
+                    "tokens_in": 40,
+                    "tokens_out": 20,
+                    "latency_ms_avg": 200.0,
+                    "errors": 0,
+                }
+            }
+        ),
+    )
+    g = merged["generate"]
+    assert g["calls"] == 10 and g["tokens_in"] == 50 and g["tokens_out"] == 25
+    # correct call-weighted mean = 1800/10 = 180, NOT the last conv's 200
+    assert g["latency_ms_avg"] == 180.0
+    assert g["latency_ms_total"] == 1800.0
+
+
+def test_merge_run_budgets_sums_across_runs(tmp_path):
+    repro = _load_repro()
+    run1: dict = {}
+    repro._merge_budget(
+        run1,
+        {},
+        _fake_mem(
+            {
+                "generate": {
+                    "calls": 3,
+                    "tokens_in": 30,
+                    "tokens_out": 9,
+                    "latency_ms_avg": 100.0,
+                    "errors": 0,
+                }
+            }
+        ),
+    )
+    run2: dict = {}
+    repro._merge_budget(
+        run2,
+        {},
+        _fake_mem(
+            {
+                "generate": {
+                    "calls": 3,
+                    "tokens_in": 30,
+                    "tokens_out": 9,
+                    "latency_ms_avg": 100.0,
+                    "errors": 0,
+                }
+            }
+        ),
+    )
+    total = repro._merge_run_budgets([run1, run2])
+    # every credit across BOTH runs is counted, not just run 1
+    assert total["generate"]["calls"] == 6
+    assert total["generate"]["tokens_in"] == 60 and total["generate"]["tokens_out"] == 18
+    # cost of the summed budget == 2x a single run's cost
+    assert repro.cost_usd(total) == round(2 * repro.cost_usd(run1), 6)
+
+
+# ---------------- 7) ingest-completion sentinel: write + verify guard ----------
+
+
+def test_sentinel_roundtrip_and_partial_guard(tmp_path):
+    repro = _load_repro()
+    store = tmp_path / "store"
+    store.mkdir()
+    repro.write_ingest_sentinel(str(store), [0, 1, 2], [{"conv": 0}], "deadbeef")
+    assert (store / repro.SENTINEL_NAME).exists()
+    # subset of ingested convs -> OK (no raise)
+    repro.verify_ingest_sentinel(str(store), [0, 2])
+    # requesting a conv that was NOT ingested -> loud refusal
+    try:
+        repro.verify_ingest_sentinel(str(store), [0, 3])
+        raised = False
+    except SystemExit:
+        raised = True
+    assert raised
+
+
+def test_verify_sentinel_missing_refuses(tmp_path):
+    repro = _load_repro()
+    store = tmp_path / "empty"
+    store.mkdir()  # dir exists but ingest never completed (no sentinel)
+    try:
+        repro.verify_ingest_sentinel(str(store), [0])
+        raised = False
+    except SystemExit:
+        raised = True
+    assert raised  # a bare dir without the sentinel is rejected, not trusted
+
+
+# ---------------- 8) headline aggregator: mean±std over K summaries ------------
+
+
+def _load_aggregator():
+    path = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "aggregate_headline.py"
+    spec = _ilu.spec_from_file_location("aggregate_headline", path)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _write_eval_seed(path, f1, seed_i, k=10, eval_mode="wujiang", expand="off", cost=0.7):
+    path.write_text(
+        json.dumps(
+            {
+                "stamp": {
+                    "model": "gpt-4o-mini",
+                    "eval_mode": eval_mode,
+                    "k": k,
+                    "expand_links": expand,
+                    "git_sha": f"sha{seed_i}",
+                },
+                "overall": {"f1": f1, "bleu1": f1 - 5},
+                "by_category": {"temporal": {"f1": f1 + 10, "n": 100}},
+                "cost_usd": cost,
+            }
+        )
+    )
+    return path
+
+
+def test_headline_aggregator_mean_std(tmp_path):
+    agg_mod = _load_aggregator()
+    seeds = [
+        _write_eval_seed(tmp_path / f"seed{i}.json", f1, i)
+        for i, f1 in enumerate([30.0, 34.0, 32.0])  # overall F1 -> mean 32, std 2
+    ]
+    out = agg_mod.aggregate(seeds)
+    assert out["n_seeds"] == 3
+    ov = out["metrics"]["f1"]["overall"]
+    assert ov["mean"] == 32.0 and ov["std"] == 2.0 and ov["min"] == 30.0 and ov["max"] == 34.0
+    assert out["metrics"]["f1"]["temporal"]["mean"] == 42.0
+    # cost is HONEST: eval-only when no ingest supplied, and NOT mislabeled total
+    assert out["eval_cost_usd"] == round(3 * 0.7, 6)
+    assert out["ingest_cost_usd"] is None and out["campaign_cost_usd"] is None
+    assert "cost_usd_total" not in out  # the misleading field is gone
+    assert len(out["sources"]) == 3 and out["sources"][0]["git_sha"] == "sha0"
+
+
+def test_headline_cost_includes_ingest_when_supplied(tmp_path):
+    agg_mod = _load_aggregator()
+    evals = [_write_eval_seed(tmp_path / f"e{i}.json", f1, i) for i, f1 in enumerate([30.0, 32.0])]
+    ing = []
+    for i in range(2):
+        p = tmp_path / f"ing{i}.json"
+        p.write_text(json.dumps({"stamp": {"git_sha": f"i{i}"}, "cost_usd": 0.9}))
+        ing.append(p)
+    out = agg_mod.aggregate(evals, ing)
+    # eval and ingest reported separately, campaign = sum (no credit dropped)
+    assert out["eval_cost_usd"] == round(2 * 0.7, 6)
+    assert out["ingest_cost_usd"] == round(2 * 0.9, 6)
+    assert out["campaign_cost_usd"] == round(2 * 0.7 + 2 * 0.9, 6)
+    assert "do not sum" in out["ingest_note"].lower()
+
+
+def test_headline_refuses_mismatched_config(tmp_path):
+    agg_mod = _load_aggregator()
+    a = _write_eval_seed(tmp_path / "a.json", 30.0, 0, k=10)
+    b = _write_eval_seed(tmp_path / "b.json", 32.0, 1, k=20)  # different k -> incompatible
+    try:
+        agg_mod.aggregate([a, b])
+        raised = False
+    except SystemExit:
+        raised = True
+    assert raised  # refuses to average k=10 and k=20 seeds into one headline

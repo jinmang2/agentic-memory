@@ -25,20 +25,27 @@ LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
 STORE="results/repro/stores/smoke_conv0"
+WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
 
-# 1) Ingest conv0 ONCE — builds + persists the A-Mem notes/links.
-uv run python scripts/exp_amem_repro.py \
-    --conv 0 \
-    --eval-mode wujiang \
-    --data-dir "$STORE" \
-    --ingest-only
+# 1) Ingest conv0 ONCE — builds + persists the A-Mem notes/links. Guarded on the
+# completion sentinel (not a bare dir), and a partial/crashed store is wiped so
+# the re-ingest is clean (locomo.ingest is NOT idempotent — re-ingesting into a
+# populated store would duplicate notes).
+if [ ! -f "$STORE/.ingest_complete.json" ]; then
+    rm -rf "$STORE"
+    uv run python scripts/exp_amem_repro.py \
+        --conv 0 \
+        --eval-mode wujiang \
+        --data-dir "$STORE" \
+        --ingest-only
+fi
 
 # 2a) Reload the persisted store — WujiangXu-faithful metric (no re-ingest).
 uv run python scripts/exp_amem_repro.py \
-    --conv 0 --k 10 --eval-mode wujiang \
+    --conv 0 --k 10 --eval-mode wujiang --workers "$WORKERS" \
     --data-dir "$STORE" --eval-only
 
 # 2b) Reload the SAME store — our-production metric + J-score judge.
 uv run python scripts/exp_amem_repro.py \
-    --conv 0 --k 10 --eval-mode ours --judge \
+    --conv 0 --k 10 --eval-mode ours --judge --workers "$WORKERS" \
     --data-dir "$STORE" --eval-only

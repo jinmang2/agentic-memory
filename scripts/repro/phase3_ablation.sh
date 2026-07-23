@@ -27,12 +27,15 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
+WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
+
 # Full A-Mem (link generation + evolution) — this arm works today.
 uv run python scripts/exp_amem_repro.py \
     --conv all \
     --k 10 \
     --eval-mode wujiang \
-    --expand-links off
+    --expand-links off \
+    --workers "$WORKERS"
 
 # w/o-evolution arm — BLOCKED until an evolution-off switch is implemented.
 # echo "TODO: add AMemOrganizer(evolve=False) + --no-evolution flag, then:"

@@ -86,6 +86,62 @@ def git_sha() -> str | None:
         return None
 
 
+SENTINEL_NAME = ".ingest_complete.json"
+
+
+def write_ingest_sentinel(
+    data_dir: str, conv_indices: list[int], per_conv: list[dict], sha
+) -> Path:
+    """Stamp a completion marker at ``<data_dir>/.ingest_complete.json`` AFTER a
+    full ingest finishes. Its presence (and the conv list inside) is how
+    ``--eval-only`` and the phase scripts distinguish a COMPLETE persisted store
+    from a directory left behind by a crashed/partial ingest — a bare directory
+    check would silently evaluate an incomplete store and micro-average over
+    fewer conversations than intended."""
+    path = Path(data_dir).expanduser() / SENTINEL_NAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "conv_indices": conv_indices,
+                "n_convs": len(conv_indices),
+                "per_conv": per_conv,
+                "git_sha": sha,
+                "utc_finished": datetime.now(timezone.utc).isoformat(),
+            },
+            indent=2,
+            ensure_ascii=False,
+        )
+    )
+    return path
+
+
+def verify_ingest_sentinel(data_dir: str, conv_indices: list[int]) -> None:
+    """Refuse to eval a store whose ingest did not provably COMPLETE for the
+    requested conversations. Raises ``SystemExit`` (loud, actionable) when the
+    sentinel is missing (partial/crashed ingest, or a store from before this
+    guard existed) or does not cover every requested conv — never silently
+    scores a truncated store."""
+    path = Path(data_dir).expanduser() / SENTINEL_NAME
+    if not path.exists():
+        raise SystemExit(
+            f"No ingest-completion sentinel at {path}. The store is missing or its "
+            f"ingest did not complete. Re-run --ingest-only (delete the dir first "
+            f"to avoid duplicate notes) before --eval-only."
+        )
+    try:
+        done = set(json.loads(path.read_text()).get("conv_indices", []))
+    except Exception as exc:
+        raise SystemExit(f"Unreadable ingest sentinel {path}: {exc!r}") from exc
+    missing = sorted(set(conv_indices) - done)
+    if missing:
+        raise SystemExit(
+            f"Store {data_dir} was ingested for convs {sorted(done)} but eval "
+            f"requested {conv_indices} (missing {missing}). Re-ingest the missing "
+            f"conversations before --eval-only."
+        )
+
+
 def dir_size_bytes(path: Path) -> int:
     """Total bytes of every file under `path` (0 if missing) — for the persisted
     store's on-disk footprint in memory_capacity."""
@@ -200,6 +256,14 @@ def build_memory(
         llm_roles=roles,
         use_guided_json=False,
         lexical_types=("episodic",),
+        # Pin synchronous writes: the ingest-completion sentinel attests that the
+        # ingest LOOP finished, and that only implies every note was actually
+        # built+persisted if organizer writes run inline (a hard failure then
+        # propagates out of locomo.ingest BEFORE the sentinel is stamped). With
+        # async writes, organizer exceptions are log-only and a silently-failed
+        # note would still be marked complete. Kept explicit so a default change
+        # can't quietly weaken the sentinel guarantee.
+        sync_write=True,
     )
     mem = AgenticMemory(
         namespace=f"repro-conv{conv_idx}",
@@ -322,6 +386,7 @@ def eval_conversations(
                     eval_mode=args.eval_mode,
                     cat5_temperature=CAT5_TEMPERATURE,
                     capture_retrieval=True,
+                    workers=args.workers,
                     progress=lambda i, nq, _i=idx: (
                         print(f"[conv{_i}] {i}/{nq}", flush=True) if i % 40 == 0 else None
                     ),
@@ -382,21 +447,71 @@ def eval_conversations(
 
 def _merge_budget(merged_budget: dict, merged_drops: dict, mem: AgenticMemory) -> None:
     """Fold one conversation's per-role LLM budget and structured-output drops
-    into the run-level accumulators (summed across all conversations)."""
+    into the run-level accumulators (summed across all conversations). Latency is
+    accumulated as a true call-weighted total (``latency_ms_avg * calls`` per
+    conv, since ``BudgetTracker.summary`` exposes only the average) so the merged
+    ``latency_ms_avg`` is the correct mean over ALL calls of the run — not the
+    last conversation's average (the prior bug, which made the summary's latency
+    reflect only conv 9 under ``--conv all``)."""
     for role, stats in mem.budget.summary().items():
         agg = merged_budget.setdefault(
-            role, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "errors": 0, "latency_ms_avg": 0.0}
+            role,
+            {
+                "calls": 0,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "errors": 0,
+                "latency_ms_total": 0.0,
+                "latency_ms_avg": 0.0,
+            },
         )
-        agg["calls"] += stats.get("calls", 0)
+        calls = stats.get("calls", 0)
+        agg["calls"] += calls
         agg["tokens_in"] += stats.get("tokens_in", 0)
         agg["tokens_out"] += stats.get("tokens_out", 0)
         agg["errors"] += stats.get("errors", 0)
-        # keep the latest observed average latency per role (cheap, indicative)
-        if stats.get("latency_ms_avg"):
-            agg["latency_ms_avg"] = stats["latency_ms_avg"]
+        agg["latency_ms_total"] += stats.get("latency_ms_avg", 0.0) * calls
+        agg["latency_ms_avg"] = (
+            round(agg["latency_ms_total"] / agg["calls"], 1) if agg["calls"] else 0.0
+        )
     if mem.structured is not None:
         for role, n in mem.structured.drops.items():
             merged_drops[role] = merged_drops.get(role, 0) + n
+
+
+def _merge_run_budgets(budgets: list[dict]) -> dict:
+    """Sum a list of per-run (already per-conv-merged) budgets into one campaign
+    budget — calls/tokens/errors added, latency re-averaged from the summed
+    ``latency_ms_total``. Used so the top-level ``llm_budget``/``cost_usd``
+    reflect what was ACTUALLY paid across all ``--runs`` (each run re-issues the
+    answer calls), not just run 1 (the prior bug — runs 2..N were dropped from
+    the summary)."""
+    merged: dict = {}
+    for b in budgets:
+        for role, stats in b.items():
+            agg = merged.setdefault(
+                role,
+                {
+                    "calls": 0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "errors": 0,
+                    "latency_ms_total": 0.0,
+                    "latency_ms_avg": 0.0,
+                },
+            )
+            agg["calls"] += stats.get("calls", 0)
+            agg["tokens_in"] += stats.get("tokens_in", 0)
+            agg["tokens_out"] += stats.get("tokens_out", 0)
+            agg["errors"] += stats.get("errors", 0)
+            # per-run budgets come from _merge_budget, which carries the exact
+            # call-weighted latency_ms_total — re-average from that sum. .get with
+            # a 0.0 default so a budget from any other source can't KeyError here.
+            agg["latency_ms_total"] += stats.get("latency_ms_total", 0.0)
+            agg["latency_ms_avg"] = (
+                round(agg["latency_ms_total"] / agg["calls"], 1) if agg["calls"] else 0.0
+            )
+    return merged
 
 
 def main() -> None:
@@ -410,10 +525,24 @@ def main() -> None:
     ap.add_argument("--expand-links", choices=["off", "on"], default="off")
     ap.add_argument("--judge", action="store_true", help="J-score (ours mode only)")
     ap.add_argument("--runs", type=int, default=1, help="repeat QA for mean±std")
+    ap.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="concurrent QA workers (read-only store; results identical to 1)",
+    )
     ap.add_argument("--data-dir", default=None, help="persist stores here")
+    ap.add_argument(
+        "--tag-suffix",
+        default="",
+        help="append to the output tag (e.g. _seed1) so repeated full runs into "
+        "distinct stores don't overwrite each other's artifacts",
+    )
     ap.add_argument("--ingest-only", action="store_true")
     ap.add_argument("--eval-only", action="store_true")
     args = ap.parse_args()
+    if args.workers < 1:
+        ap.error("--workers must be >= 1")
 
     if args.ingest_only and not args.data_dir:
         ap.error("--ingest-only requires --data-dir (ephemeral stores would be lost)")
@@ -431,6 +560,10 @@ def main() -> None:
         )
 
     conv_indices = list(range(10)) if args.conv == "all" else [int(args.conv)]
+    # Fail loud if asked to score a store whose ingest didn't provably finish for
+    # these convs (partial/crashed ingest) — before spending any answer calls.
+    if args.eval_only:
+        verify_ingest_sentinel(args.data_dir, conv_indices)
     roles = make_roles(args.endpoint, args.model, api_key)
     embedder = SentenceTransformerEmbedder(args.embedder)
 
@@ -443,7 +576,7 @@ def main() -> None:
     sha = git_sha()
 
     if args.ingest_only:
-        tag = f"{model_safe}_{conv_tag}_ingest"
+        tag = f"{model_safe}_{conv_tag}_ingest{args.tag_suffix}"
         # five-artifact capture even for ingest: trace + memory snapshot land on
         # durable disk so the (paid) write path is never re-run to inspect it.
         trace_path = OUT / f"{tag}.llm-trace.jsonl"
@@ -463,9 +596,16 @@ def main() -> None:
             "llm_trace_file": trace_path.name,
             "memory_file": memory_path.name,
         }
+        # Mark the store COMPLETE for exactly the convs just ingested so a later
+        # --eval-only (or the phase scripts) can trust it — a crashed ingest never
+        # reaches this line, so a bare store dir without the sentinel is rejected.
+        sentinel = write_ingest_sentinel(
+            args.data_dir, conv_indices, combined.get("per_conv") or [], sha
+        )
         out_path = OUT / f"{tag}.json"
         out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
         print(f"[ingest-only] done ({conv_tag}); reload with --eval-only", flush=True)
+        print(f"[done] wrote {sentinel} (ingest-completion sentinel)", flush=True)
         print(f"[done] wrote {out_path}", flush=True)
         print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
         print(f"[done] wrote {memory_path} (memory snapshot)", flush=True)
@@ -473,7 +613,7 @@ def main() -> None:
 
     tag = (
         f"{model_safe}_{conv_tag}_k{args.k}_{args.eval_mode}"
-        f"_expand-{args.expand_links}_run{args.runs}"
+        f"_expand-{args.expand_links}_run{args.runs}{args.tag_suffix}"
     )
     trace_path = OUT / f"{tag}.llm-trace.jsonl"
     memory_path = OUT / f"{tag}.memory.jsonl"
@@ -510,7 +650,14 @@ def main() -> None:
         }
 
     first = runs_out[0]
-    budget = first.get("llm_budget", {})
+    # Top-level budget/cost reflect what was ACTUALLY paid across ALL runs (each
+    # run re-issues the answer calls), not just run 1 — every credit is recorded.
+    # Per-run budget + cost also land in each `runs[]` entry so nothing is lost.
+    budget = _merge_run_budgets([r.get("llm_budget", {}) for r in runs_out])
+    merged_drops: dict = {}
+    for r in runs_out:
+        for role, n in (r.get("drops") or {}).items():
+            merged_drops[role] = merged_drops.get(role, 0) + n
     # durable per-question audit trail (every question, every conv, every run),
     # written next to the summary as an appendable/greppable JSONL sidecar. The
     # summary only POINTS to it via records_file — records are not inlined here.
@@ -524,7 +671,7 @@ def main() -> None:
         "per_conv": first.get("per_conv"),
         "llm_budget": budget,
         "cost_usd": cost_usd(budget),
-        "drops": first.get("drops"),
+        "drops": merged_drops,
         "timing": {
             "ingest_s": first.get("ingest_s"),
             "eval_s": first.get("eval_s"),
@@ -533,7 +680,13 @@ def main() -> None:
         "memory_capacity": first.get("memory_capacity"),
         "run_summary": run_summary,
         "runs": [
-            {"run": r["run"], "overall": r["overall"], "run_seconds": r["run_seconds"]}
+            {
+                "run": r["run"],
+                "overall": r["overall"],
+                "run_seconds": r["run_seconds"],
+                "llm_budget": r.get("llm_budget", {}),
+                "cost_usd": cost_usd(r.get("llm_budget", {})),
+            }
             for r in runs_out
         ],
         # five-artifact pointers (docs/14 §Artifacts): summary + records are
@@ -568,6 +721,7 @@ def _stamp(args, sha: str | None, utc_started: str, utc_finished: str, n_questio
         "expand_links": args.expand_links,
         "conv": args.conv,
         "runs": args.runs,
+        "workers": args.workers,
         "n_questions": n_questions,
         "memory_types": list(MEMORY_TYPES),
         "keyword_queries": True,

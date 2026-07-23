@@ -25,13 +25,18 @@ LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
 DATA_DIR="results/repro/stores/ksweep_all"
+WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
 
 # 1) Ingest once — builds + persists the A-Mem notes/links for all 10 convs.
-uv run python scripts/exp_amem_repro.py \
-    --conv all \
-    --eval-mode wujiang \
-    --data-dir "$DATA_DIR" \
-    --ingest-only
+# Guarded on the completion sentinel; a partial/crashed store is wiped clean.
+if [ ! -f "$DATA_DIR/.ingest_complete.json" ]; then
+    rm -rf "$DATA_DIR"
+    uv run python scripts/exp_amem_repro.py \
+        --conv all \
+        --eval-mode wujiang \
+        --data-dir "$DATA_DIR" \
+        --ingest-only
+fi
 
 # 2) Reload the persisted store and answer at each k (no re-ingest).
 for K in 10 20 30 40 50; do
@@ -41,6 +46,7 @@ for K in 10 20 30 40 50; do
         --k "$K" \
         --eval-mode wujiang \
         --expand-links off \
+        --workers "$WORKERS" \
         --data-dir "$DATA_DIR" \
         --eval-only
 done

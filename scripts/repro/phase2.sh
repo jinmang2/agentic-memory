@@ -29,9 +29,12 @@ LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
 STORE="results/repro/stores/full_all"
+WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
 
-# 1) Ingest ONCE (shared with phase1b.sh) — skip if already persisted.
-if [ ! -d "$STORE" ]; then
+# 1) Ingest ONCE (shared with phase1b.sh) — skip only if a COMPLETE ingest is
+# proven by the sentinel; a partial/crashed store dir is wiped and re-ingested.
+if [ ! -f "$STORE/.ingest_complete.json" ]; then
+    rm -rf "$STORE"
     uv run python scripts/exp_amem_repro.py \
         --conv all --eval-mode wujiang \
         --data-dir "$STORE" --ingest-only
@@ -44,5 +47,6 @@ uv run python scripts/exp_amem_repro.py \
     --eval-mode ours \
     --judge \
     --expand-links on \
+    --workers "$WORKERS" \
     --data-dir "$STORE" \
     --eval-only

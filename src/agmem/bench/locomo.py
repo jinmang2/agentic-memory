@@ -15,6 +15,7 @@ import json
 import re
 import string
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
@@ -452,6 +453,7 @@ def evaluate(
     eval_mode: str = "ours",
     cat5_temperature: float | None = None,
     capture_retrieval: bool = False,
+    workers: int = 1,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
@@ -471,13 +473,24 @@ def evaluate(
     ``retrieval`` field (the raw+rewritten query and the retrieved chunks with
     their text) so the durable records sidecar preserves exactly what went into
     context for every question. Off by default — the non-capturing path and the
-    record schema are otherwise unchanged."""
+    record schema are otherwise unchanged.
+
+    ``workers`` > 1 answers/scores questions concurrently over a fixed, read-only
+    memory (every store read path is lock-guarded and A-Mem's ``on_retrieval`` is
+    a no-op, so QA is side-effect-free): each question is independent, results are
+    reassembled in the original question order, and the aggregates are therefore
+    IDENTICAL to the sequential path (``workers=1``, the default) — only wall-clock
+    and the interleaving of trace lines differ. This is a throughput knob for the
+    write-once/read-sweep eval passes, never a fidelity change."""
     wujiang = eval_mode == "wujiang"
     if wujiang:
         judge = False  # upstream utils.calculate_metrics has no J-score judge
-    per_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    records = []
-    for i, q in enumerate(questions):
+
+    def _answer_and_score(q: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        """Answer + score ONE question. Returns (cat_name, per_cat_cell, record).
+        Pure w.r.t. shared state — the memory read path and LLM client are all
+        thread-safe — so it is safe to run concurrently for `workers>1` and gives
+        the same cells/records as the sequential call."""
         gold = gold_for_wujiang(q) if wujiang else gold_for(q)
         cat_num = q.get("category")
         capture: dict[str, Any] | None = {} if capture_retrieval else None
@@ -504,7 +517,7 @@ def evaluate(
             else None
         )
         cat = CATEGORY_NAMES.get(cat_num, "?")
-        per_cat[cat].append({"f1": f1, "b1": b1, "j": j})
+        cell = {"f1": f1, "b1": b1, "j": j}
         row = {
             "q": q["question"],
             "gold": gold,
@@ -516,9 +529,33 @@ def evaluate(
             row["j"] = j
         if capture is not None:
             row["retrieval"] = capture
+        return cat, cell, row
+
+    # Compute one (cat, cell, row) triple per question, preserving question order.
+    # workers>1 dispatches the independent QA turns to a thread pool but writes
+    # results back by index, so downstream aggregation is order- and
+    # worker-count-invariant (asserted by test_repro_artifacts).
+    triples: list[tuple[str, dict[str, Any], dict[str, Any]] | None] = [None] * len(questions)
+    if workers > 1 and len(questions) > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_answer_and_score, q): i for i, q in enumerate(questions)}
+            done = 0
+            for fut in as_completed(futs):
+                triples[futs[fut]] = fut.result()
+                done += 1
+                if progress:
+                    progress(done, len(questions))
+    else:
+        for i, q in enumerate(questions):
+            triples[i] = _answer_and_score(q)
+            if progress:
+                progress(i + 1, len(questions))
+
+    per_cat: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    records = []
+    for cat, cell, row in triples:  # type: ignore[misc]
+        per_cat[cat].append(cell)
         records.append(row)
-        if progress:
-            progress(i + 1, len(questions))
 
     def agg(rows: list[dict[str, Any]]) -> dict[str, float]:
         """Mean F1/BLEU-1 as 0-100 percentages, plus the row count. When any
