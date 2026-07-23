@@ -7,11 +7,18 @@ an API model judges (docs/03 §6 model tiering).
 
 from __future__ import annotations
 
+import json
+import logging
+import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from agmem.llm.budget import BudgetTracker
+
+logger = logging.getLogger("agmem.llm")
 
 ROLES = ("extract", "distill", "judge", "rerank", "generate")
 
@@ -34,12 +41,26 @@ class LLMClient:
     """Routes each role to its own `RoleConfig` and OpenAI-compatible
     endpoint, and records every call (success or failure) into `budget`."""
 
-    def __init__(self, roles: dict[str, RoleConfig], budget: BudgetTracker | None = None) -> None:
+    def __init__(
+        self,
+        roles: dict[str, RoleConfig],
+        budget: BudgetTracker | None = None,
+        trace_path: Path | str | None = None,
+    ) -> None:
         """`budget` defaults to a fresh `BudgetTracker` when omitted; pass a
-        shared one to aggregate cost across multiple `LLMClient` instances."""
+        shared one to aggregate cost across multiple `LLMClient` instances.
+
+        `trace_path` (optional) turns on the full-I/O trace sink: when set,
+        every `chat()` appends ONE JSON line (the complete prompt + response,
+        never truncated) to that file — the re-spend insurance the benchmark
+        harness relies on. `None` (the default) keeps behavior unchanged and
+        writes nothing, so existing callers are unaffected. It may also be set
+        after construction (e.g. `client.trace_path = Path(...)`)."""
         self.roles = roles
         self.budget = budget or BudgetTracker()
         self._clients: dict[str, Any] = {}
+        self.trace_path: Path | None = Path(trace_path) if trace_path else None
+        self._trace_lock = threading.Lock()
 
     def _client_for(self, cfg: RoleConfig) -> Any:
         key = f"{cfg.endpoint}|{cfg.api_key}"
@@ -87,17 +108,58 @@ class LLMClient:
         start = time.perf_counter()
         try:
             resp = client.chat.completions.create(**kwargs)
-        except Exception:
-            self.budget.record(
-                budget_key or role, 0, 0, (time.perf_counter() - start) * 1000, error=True
+        except Exception as exc:
+            latency_ms = (time.perf_counter() - start) * 1000
+            self.budget.record(budget_key or role, 0, 0, latency_ms, error=True)
+            self._trace(
+                role, budget_key, cfg.model, messages, "", 0, 0, latency_ms, error=repr(exc)
             )
             raise
         latency_ms = (time.perf_counter() - start) * 1000
         usage = getattr(resp, "usage", None)
-        self.budget.record(
-            budget_key or role,
-            getattr(usage, "prompt_tokens", 0) or 0,
-            getattr(usage, "completion_tokens", 0) or 0,
-            latency_ms,
+        tokens_in = getattr(usage, "prompt_tokens", 0) or 0
+        tokens_out = getattr(usage, "completion_tokens", 0) or 0
+        self.budget.record(budget_key or role, tokens_in, tokens_out, latency_ms)
+        content = resp.choices[0].message.content or ""
+        self._trace(
+            role, budget_key, cfg.model, messages, content, tokens_in, tokens_out, latency_ms
         )
-        return resp.choices[0].message.content or ""
+        return content
+
+    def _trace(
+        self,
+        role: str,
+        budget_key: str | None,
+        model: str,
+        messages: list[dict[str, str]],
+        response_text: str,
+        tokens_in: int,
+        tokens_out: int,
+        latency_ms: float,
+        error: str | None = None,
+    ) -> None:
+        """Append one JSON line capturing the FULL prompt+response of a single
+        `chat()` call (success or failure) to `self.trace_path`. No-op when the
+        sink is unset. Prompt/response are never truncated — this file alone
+        must let us replay/re-score offline with zero new API calls. Trace-write
+        failures are logged, never raised, so they can't break a paid run."""
+        if self.trace_path is None:
+            return
+        line = {
+            "ts_iso": datetime.now(timezone.utc).isoformat(),
+            "role": role,
+            "budget_key": budget_key or role,
+            "model": model,
+            "messages": messages,
+            "response_text": response_text,
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "latency_ms": round(latency_ms, 3),
+            "error": error,
+        }
+        try:
+            payload = json.dumps(line, ensure_ascii=False, default=str) + "\n"
+            with self._trace_lock, self.trace_path.open("a", encoding="utf-8") as f:
+                f.write(payload)
+        except Exception:  # durability best-effort: never break the LLM call
+            logger.exception("failed to write LLM trace line (role=%s)", role)

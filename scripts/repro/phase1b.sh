@@ -7,7 +7,14 @@
 # (scripts/repro/phase1a_upstream.sh) which runs upstream's OWN code, and rung 0
 # (the paper's published A-Mem Table 1). Link expansion OFF here to match the
 # plain (non-robust) upstream read path.
-# Cost: ~$1.6 on gpt-4o-mini (1,986 QA, write + answer calls).
+#
+# WRITE-ONCE / READ-SWEEP: ingest all 10 convs ONCE into a shared persistent
+# store (guarded — skipped if it already exists, e.g. from a prior run or from
+# phase2.sh which reuses the SAME store), then score with --eval-only. The notes
+# are identical regardless of eval-mode/expand/k, so the (paid) write path is
+# spent once and re-scoring is free. Delete the store dir to force a fresh ingest.
+# Cost: ~$0.9 ingest (once) + ~$0.7 answers ≈ $1.6 on gpt-4o-mini (skips ingest
+# if the shared store already exists).
 # Prereq: repo-root .env.local with OPENAI_API_KEY; embedder downloaded.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -21,8 +28,20 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
+STORE="results/repro/stores/full_all"
+
+# 1) Ingest ONCE (shared with phase2.sh) — skip if already persisted.
+if [ ! -d "$STORE" ]; then
+    uv run python scripts/exp_amem_repro.py \
+        --conv all --eval-mode wujiang \
+        --data-dir "$STORE" --ingest-only
+fi
+
+# 2) Score the persisted store — WujiangXu-faithful metric, no re-ingest.
 uv run python scripts/exp_amem_repro.py \
     --conv all \
     --k 10 \
     --eval-mode wujiang \
-    --expand-links off
+    --expand-links off \
+    --data-dir "$STORE" \
+    --eval-only

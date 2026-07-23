@@ -6,7 +6,10 @@
 # Write-once/read-sweep: INGEST the A-Mem notes exactly ONCE into a persistent
 # store (--ingest-only --data-dir), then reload that store for each k with
 # --eval-only. This avoids re-paying the (expensive) write-path evolution calls
-# five times — only the answer calls repeat per k.
+# five times — only the answer calls repeat per k. NOTE: --k is a retrieval-time
+# parameter (locomo.evaluate(k=...) at search time), NOT baked at ingest, so
+# applying it only in the --eval-only passes is correct — the notes/links are
+# identical across k; only how many are retrieved per question changes.
 # Cost: 1x write (~$0.9) + 5x answer (~$0.9 each) ≈ $5.4 on gpt-4o-mini.
 # Prereq: repo-root .env.local with OPENAI_API_KEY; embedder downloaded.
 set -euo pipefail
@@ -21,7 +24,7 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
-DATA_DIR="results/repro/ksweep_store"
+DATA_DIR="results/repro/stores/ksweep_all"
 
 # 1) Ingest once — builds + persists the A-Mem notes/links for all 10 convs.
 uv run python scripts/exp_amem_repro.py \

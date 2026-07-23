@@ -24,3 +24,12 @@ nohup.out
 # them despite the global *.log above so nothing from a run is volatile.
 !results/repro/logs/
 !results/repro/logs/*.log
+
+# Heavy run artifacts (docs/14 §Artifacts): the full LLM I/O trace and the
+# per-item memory snapshot can be very large on full runs, and the persisted
+# stores are binary DB dirs. They are DURABLE on disk (never deleted, so nothing
+# is lost) but NOT git-committed, to avoid repo bloat. The SMALL artifacts —
+# summary `.json` and `.records.jsonl` — ARE committed and are not matched here.
+results/repro/*.llm-trace.jsonl
+results/repro/*.memory.jsonl
+results/repro/stores/

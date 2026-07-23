@@ -134,6 +134,29 @@ class SqliteDocStore:
         }
         return [by_id[i] for i in ids if i in by_id]  # preserve caller order
 
+    def list_episodes(self, namespace: str | None = None) -> list[Episode]:
+        """Full scan of raw episodes (oldest-first), optionally namespace-scoped.
+        Parallels `list_items` for derived types; used by the reproduction
+        harness's post-ingest memory snapshot to dump every ingested turn."""
+        sql = "SELECT id, namespace, role, content, timestamp, meta FROM episodes"
+        args: list[Any] = []
+        if namespace:
+            sql += " WHERE namespace = ?"
+            args.append(namespace)
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY timestamp", args).fetchall()
+        return [
+            Episode(
+                id=r[0],
+                namespace=r[1],
+                role=r[2],
+                content=r[3],
+                timestamp=datetime.fromisoformat(r[4]),
+                meta=json.loads(r[5]),
+            )
+            for r in rows
+        ]
+
     def count_episodes(self, namespace: str | None = None) -> int:
         with self._lock:
             if namespace:

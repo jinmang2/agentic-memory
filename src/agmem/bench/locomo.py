@@ -355,12 +355,20 @@ def answer(
     eval_mode: str = "ours",
     gold: str | None = None,
     cat5_temperature: float | None = None,
+    capture: dict[str, Any] | None = None,
 ) -> str:
     """One QA turn: optionally rewrite `question` into keywords (A-Mem's
     upstream eval query style) before `mem.search`, inject the MemoryOS
     profile section unconditionally when `"semantic"` is in `memory_types`,
     then generate. Raises `RuntimeError` if `mem.llm` is unset. Returns `""`
-    if the LLM reply is empty after stripping."""
+    if the LLM reply is empty after stripping.
+
+    When `capture` (a mutable dict) is passed, it is filled with the exact
+    retrieval detail for this question — the raw `query`, the keyword-rewritten
+    `rewritten_query`, `k`, `memory_types`, and `retrieved` (one
+    `{id, memory_type, score, text}` per bundle hit, where `text` is the chunk
+    actually rendered into context). Purely additive: the return value and the
+    non-capturing path are unchanged."""
     # budget default raised 1600->6000 per fidelity audit P0-3: the tight
     # budget structurally penalized long-item methodologies (Nemori).
     query = question
@@ -374,6 +382,25 @@ def answer(
         if keyword_result and str(keyword_result.get("keywords", "")).strip():
             query = str(keyword_result["keywords"]).strip()
     bundle = mem.search(query, memory_types=memory_types, k=k)
+    if capture is not None:
+        capture["query"] = question
+        capture["rewritten_query"] = query if query != question else None
+        capture["k"] = k
+        capture["memory_types"] = list(memory_types)
+        capture["retrieved"] = [
+            {
+                "id": getattr(s.item, "id", None)
+                or (s.item.data.get("id") if hasattr(s.item, "data") else None),
+                "memory_type": s.memory_type,
+                "score": s.score,
+                "text": (
+                    s.item.render()
+                    if hasattr(s.item, "render")
+                    else getattr(s.item, "content", str(s.item))
+                ),
+            }
+            for s in bundle.items
+        ]
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
     # MemoryOS injects the user profile UNCONDITIONALLY (upstream eval puts
     # the whole profile doc in every QA prompt — round-5 memoryos §3). Only
@@ -424,6 +451,7 @@ def evaluate(
     judge: bool = False,
     eval_mode: str = "ours",
     cat5_temperature: float | None = None,
+    capture_retrieval: bool = False,
     progress: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
@@ -437,7 +465,13 @@ def evaluate(
     ``eval_mode="wujiang"`` swaps in the WujiangXu/A-Mem faithful path: gold via
     ``gold_for_wujiang`` (no cat3 truncation), F1 via ``token_f1_wujiang``
     (set-based, no stemming), and the cat5 2-option MCQ generation. Upstream
-    ``utils.py`` has NO LLM judge, so ``judge`` is forced off in this mode."""
+    ``utils.py`` has NO LLM judge, so ``judge`` is forced off in this mode.
+
+    When ``capture_retrieval`` is set, each record additionally carries a
+    ``retrieval`` field (the raw+rewritten query and the retrieved chunks with
+    their text) so the durable records sidecar preserves exactly what went into
+    context for every question. Off by default — the non-capturing path and the
+    record schema are otherwise unchanged."""
     wujiang = eval_mode == "wujiang"
     if wujiang:
         judge = False  # upstream utils.calculate_metrics has no J-score judge
@@ -446,6 +480,7 @@ def evaluate(
     for i, q in enumerate(questions):
         gold = gold_for_wujiang(q) if wujiang else gold_for(q)
         cat_num = q.get("category")
+        capture: dict[str, Any] | None = {} if capture_retrieval else None
         pred = answer(
             mem,
             q["question"],
@@ -457,6 +492,7 @@ def evaluate(
             eval_mode=eval_mode,
             gold=gold,
             cat5_temperature=cat5_temperature,
+            capture=capture,
         )
         if wujiang:
             f1, b1 = token_f1_wujiang(pred, gold), bleu1(pred, gold)
@@ -478,6 +514,8 @@ def evaluate(
         }
         if j is not None:
             row["j"] = j
+        if capture is not None:
+            row["retrieval"] = capture
         records.append(row)
         if progress:
             progress(i + 1, len(questions))
