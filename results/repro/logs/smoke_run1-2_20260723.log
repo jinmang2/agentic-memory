@@ -1,0 +1,8 @@
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:  47%|████▋     | 48/103 [00:00<00:00, 479.24it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 883.16it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[run 1/1] conv0 overall={'f1': 35.57, 'bleu1': 32.55, 'n': 199}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.json
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:  48%|████▊     | 49/103 [00:00<00:00, 488.82it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 819.88it/s]
