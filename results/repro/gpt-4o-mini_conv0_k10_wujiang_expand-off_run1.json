@@ -22,9 +22,9 @@
     "eval_only": true,
     "dataset": "locomo10",
     "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
-    "git_sha": "d38c96e95d8cc30e74e51c60c29458512b682a4a",
-    "utc_started": "2026-07-23T07:50:20.358640+00:00",
-    "utc_finished": "2026-07-23T07:51:12.346777+00:00",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-23T14:34:52.646641+00:00",
+    "utc_finished": "2026-07-23T14:35:43.146562+00:00",
     "cost_rates": {
       "model": "gpt-4o-mini",
       "usd_per_1m_in": 0.15,
@@ -33,34 +33,34 @@
     "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
   },
   "overall": {
-    "f1": 35.39,
-    "bleu1": 32.79,
+    "f1": 35.62,
+    "bleu1": 32.02,
     "n": 199
   },
   "by_category": {
     "adversarial": {
-      "f1": 44.62,
-      "bleu1": 43.74,
+      "f1": 37.7,
+      "bleu1": 36.82,
       "n": 47
     },
     "multi-hop": {
-      "f1": 17.48,
-      "bleu1": 17.02,
+      "f1": 28.67,
+      "bleu1": 22.66,
       "n": 32
     },
     "open-domain": {
-      "f1": 13.59,
+      "f1": 13.22,
       "bleu1": 9.29,
       "n": 13
     },
     "single-hop": {
-      "f1": 34.71,
-      "bleu1": 31.13,
+      "f1": 36.68,
+      "bleu1": 33.02,
       "n": 70
     },
     "temporal": {
-      "f1": 48.11,
-      "bleu1": 43.94,
+      "f1": 44.83,
+      "bleu1": 40.08,
       "n": 37
     }
   },
@@ -68,34 +68,34 @@
     {
       "conv": 0,
       "overall": {
-        "f1": 35.39,
-        "bleu1": 32.79,
+        "f1": 35.62,
+        "bleu1": 32.02,
         "n": 199
       },
       "by_category": {
         "adversarial": {
-          "f1": 44.62,
-          "bleu1": 43.74,
+          "f1": 37.7,
+          "bleu1": 36.82,
           "n": 47
         },
         "multi-hop": {
-          "f1": 17.48,
-          "bleu1": 17.02,
+          "f1": 28.67,
+          "bleu1": 22.66,
           "n": 32
         },
         "open-domain": {
-          "f1": 13.59,
+          "f1": 13.22,
           "bleu1": 9.29,
           "n": 13
         },
         "single-hop": {
-          "f1": 34.71,
-          "bleu1": 31.13,
+          "f1": 36.68,
+          "bleu1": 33.02,
           "n": 70
         },
         "temporal": {
-          "f1": 48.11,
-          "bleu1": 43.94,
+          "f1": 44.83,
+          "bleu1": 40.08,
           "n": 37
         }
       }
@@ -105,26 +105,26 @@
     "extract": {
       "calls": 199,
       "tokens_in": 17495,
-      "tokens_out": 2792,
+      "tokens_out": 2789,
       "errors": 0,
-      "latency_ms_total": 170284.30000000002,
-      "latency_ms_avg": 855.7
+      "latency_ms_total": 189587.30000000002,
+      "latency_ms_avg": 952.7
     },
     "generate": {
       "calls": 199,
-      "tokens_in": 260401,
-      "tokens_out": 1144,
+      "tokens_in": 257382,
+      "tokens_out": 1193,
       "errors": 0,
-      "latency_ms_total": 159160.19999999998,
-      "latency_ms_avg": 799.8
+      "latency_ms_total": 173388.69999999998,
+      "latency_ms_avg": 871.3
     }
   },
-  "cost_usd": 0.044046,
+  "cost_usd": 0.043621,
   "drops": {},
   "timing": {
     "ingest_s": 0.0,
-    "eval_s": 51.2,
-    "total_s": 52.0
+    "eval_s": 49.8,
+    "total_s": 50.5
   },
   "memory_capacity": {
     "per_type": {
@@ -132,38 +132,38 @@
       "notes": 419
     },
     "total_items": 838,
-    "memory_jsonl_bytes": 759556,
-    "store_dir_bytes": 5374183
+    "memory_jsonl_bytes": 755717,
+    "store_dir_bytes": 5275879
   },
   "run_summary": {},
   "runs": [
     {
       "run": 1,
       "overall": {
-        "f1": 35.39,
-        "bleu1": 32.79,
+        "f1": 35.62,
+        "bleu1": 32.02,
         "n": 199
       },
-      "run_seconds": 52.0,
+      "run_seconds": 50.5,
       "llm_budget": {
         "extract": {
           "calls": 199,
           "tokens_in": 17495,
-          "tokens_out": 2792,
+          "tokens_out": 2789,
           "errors": 0,
-          "latency_ms_total": 170284.30000000002,
-          "latency_ms_avg": 855.7
+          "latency_ms_total": 189587.30000000002,
+          "latency_ms_avg": 952.7
         },
         "generate": {
           "calls": 199,
-          "tokens_in": 260401,
-          "tokens_out": 1144,
+          "tokens_in": 257382,
+          "tokens_out": 1193,
           "errors": 0,
-          "latency_ms_total": 159160.19999999998,
-          "latency_ms_avg": 799.8
+          "latency_ms_total": 173388.69999999998,
+          "latency_ms_avg": 871.3
         }
       },
-      "cost_usd": 0.044046
+      "cost_usd": 0.043621
     }
   ],
   "records_file": "gpt-4o-mini_conv0_k10_wujiang_expand-off_run1.records.jsonl",

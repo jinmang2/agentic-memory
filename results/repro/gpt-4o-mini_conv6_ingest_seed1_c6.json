@@ -1,0 +1,77 @@
+{
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": 10,
+    "eval_mode": "wujiang",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "expand_links": "off",
+    "conv": "6",
+    "runs": 1,
+    "workers": 1,
+    "n_questions": null,
+    "memory_types": [
+      "notes"
+    ],
+    "keyword_queries": true,
+    "eval_only": false,
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-23T15:48:31.740219+00:00",
+    "utc_finished": "2026-07-23T17:05:57.254105+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 6,
+      "n_turns": 689
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 689,
+      "tokens_in": 101161,
+      "tokens_out": 39931,
+      "errors": 0,
+      "latency_ms_total": 803649.6000000001,
+      "latency_ms_avg": 1166.4
+    },
+    "distill": {
+      "calls": 688,
+      "tokens_in": 740722,
+      "tokens_out": 181516,
+      "errors": 0,
+      "latency_ms_total": 2150550.4,
+      "latency_ms_avg": 3125.8
+    }
+  },
+  "cost_usd": 0.259151,
+  "drops": {},
+  "timing": {
+    "ingest_s": 4247.4,
+    "total_s": 4247.4
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 689,
+      "notes": 689
+    },
+    "total_items": 1378,
+    "memory_jsonl_bytes": 1162247,
+    "store_dir_bytes": 78675259
+  },
+  "llm_trace_file": "gpt-4o-mini_conv6_ingest_seed1_c6.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_conv6_ingest_seed1_c6.memory.jsonl"
+}

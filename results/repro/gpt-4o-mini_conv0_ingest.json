@@ -22,9 +22,9 @@
     "eval_only": false,
     "dataset": "locomo10",
     "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
-    "git_sha": "d38c96e95d8cc30e74e51c60c29458512b682a4a",
-    "utc_started": "2026-07-23T07:13:51.585526+00:00",
-    "utc_finished": "2026-07-23T07:49:39.594767+00:00",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-23T13:48:32.139707+00:00",
+    "utc_finished": "2026-07-23T14:34:07.865759+00:00",
     "cost_rates": {
       "model": "gpt-4o-mini",
       "usd_per_1m_in": 0.15,
@@ -43,25 +43,25 @@
     "extract": {
       "calls": 419,
       "tokens_in": 63242,
-      "tokens_out": 25262,
+      "tokens_out": 25242,
       "errors": 0,
-      "latency_ms_total": 541599.3999999999,
-      "latency_ms_avg": 1292.6
+      "latency_ms_total": 509923.0,
+      "latency_ms_avg": 1217.0
     },
     "distill": {
       "calls": 418,
-      "tokens_in": 471594,
-      "tokens_out": 129692,
+      "tokens_in": 468374,
+      "tokens_out": 125247,
       "errors": 0,
-      "latency_ms_total": 1499993.0,
-      "latency_ms_avg": 3588.5
+      "latency_ms_total": 1508603.8,
+      "latency_ms_avg": 3609.1
     }
   },
-  "cost_usd": 0.173198,
+  "cost_usd": 0.170036,
   "drops": {},
   "timing": {
-    "ingest_s": 2147.3,
-    "total_s": 2147.3
+    "ingest_s": 2511.8,
+    "total_s": 2511.8
   },
   "memory_capacity": {
     "per_type": {
@@ -69,8 +69,8 @@
       "notes": 419
     },
     "total_items": 838,
-    "memory_jsonl_bytes": 759556,
-    "store_dir_bytes": 5373952
+    "memory_jsonl_bytes": 755717,
+    "store_dir_bytes": 5275648
   },
   "llm_trace_file": "gpt-4o-mini_conv0_ingest.llm-trace.jsonl",
   "memory_file": "gpt-4o-mini_conv0_ingest.memory.jsonl"

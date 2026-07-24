@@ -1,0 +1,482 @@
+{
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": 10,
+    "eval_mode": "wujiang",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "runs": 1,
+    "workers": 8,
+    "n_questions": 1986,
+    "memory_types": [
+      "notes"
+    ],
+    "keyword_queries": true,
+    "eval_only": true,
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-24T00:20:26.488686+00:00",
+    "utc_finished": "2026-07-24T00:26:59.702093+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "overall": {
+    "f1": 35.19,
+    "bleu1": 32.33,
+    "n": 1986
+  },
+  "by_category": {
+    "adversarial": {
+      "f1": 32.05,
+      "bleu1": 30.08,
+      "n": 446
+    },
+    "multi-hop": {
+      "f1": 28.36,
+      "bleu1": 22.94,
+      "n": 282
+    },
+    "open-domain": {
+      "f1": 11.41,
+      "bleu1": 9.34,
+      "n": 96
+    },
+    "single-hop": {
+      "f1": 37.97,
+      "bleu1": 35.74,
+      "n": 841
+    },
+    "temporal": {
+      "f1": 45.35,
+      "bleu1": 41.67,
+      "n": 321
+    }
+  },
+  "per_conv": [
+    {
+      "conv": 0,
+      "overall": {
+        "f1": 35.65,
+        "bleu1": 32.83,
+        "n": 199
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 35.82,
+          "bleu1": 34.69,
+          "n": 47
+        },
+        "multi-hop": {
+          "f1": 26.25,
+          "bleu1": 23.97,
+          "n": 32
+        },
+        "open-domain": {
+          "f1": 13.5,
+          "bleu1": 10.55,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 35.83,
+          "bleu1": 32.29,
+          "n": 70
+        },
+        "temporal": {
+          "f1": 50.98,
+          "bleu1": 46.97,
+          "n": 37
+        }
+      }
+    },
+    {
+      "conv": 1,
+      "overall": {
+        "f1": 47.25,
+        "bleu1": 43.63,
+        "n": 105
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 53.47,
+          "bleu1": 50.0,
+          "n": 24
+        },
+        "multi-hop": {
+          "f1": 41.78,
+          "bleu1": 29.59,
+          "n": 11
+        },
+        "single-hop": {
+          "f1": 33.6,
+          "bleu1": 32.33,
+          "n": 44
+        },
+        "temporal": {
+          "f1": 66.92,
+          "bleu1": 62.82,
+          "n": 26
+        }
+      }
+    },
+    {
+      "conv": 2,
+      "overall": {
+        "f1": 33.69,
+        "bleu1": 29.49,
+        "n": 193
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 18.48,
+          "bleu1": 16.74,
+          "n": 41
+        },
+        "multi-hop": {
+          "f1": 33.6,
+          "bleu1": 25.69,
+          "n": 31
+        },
+        "open-domain": {
+          "f1": 26.32,
+          "bleu1": 26.93,
+          "n": 8
+        },
+        "single-hop": {
+          "f1": 39.7,
+          "bleu1": 35.5,
+          "n": 86
+        },
+        "temporal": {
+          "f1": 39.89,
+          "bleu1": 34.82,
+          "n": 27
+        }
+      }
+    },
+    {
+      "conv": 3,
+      "overall": {
+        "f1": 26.64,
+        "bleu1": 24.9,
+        "n": 260
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 27.57,
+          "bleu1": 26.12,
+          "n": 61
+        },
+        "multi-hop": {
+          "f1": 15.87,
+          "bleu1": 12.83,
+          "n": 37
+        },
+        "open-domain": {
+          "f1": 0.0,
+          "bleu1": 0.0,
+          "n": 11
+        },
+        "single-hop": {
+          "f1": 32.98,
+          "bleu1": 31.15,
+          "n": 111
+        },
+        "temporal": {
+          "f1": 24.93,
+          "bleu1": 23.72,
+          "n": 40
+        }
+      }
+    },
+    {
+      "conv": 4,
+      "overall": {
+        "f1": 40.51,
+        "bleu1": 38.3,
+        "n": 242
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 42.57,
+          "bleu1": 40.0,
+          "n": 64
+        },
+        "multi-hop": {
+          "f1": 32.91,
+          "bleu1": 26.15,
+          "n": 31
+        },
+        "open-domain": {
+          "f1": 3.57,
+          "bleu1": 2.38,
+          "n": 14
+        },
+        "single-hop": {
+          "f1": 42.78,
+          "bleu1": 42.11,
+          "n": 107
+        },
+        "temporal": {
+          "f1": 55.05,
+          "bleu1": 52.24,
+          "n": 26
+        }
+      }
+    },
+    {
+      "conv": 5,
+      "overall": {
+        "f1": 36.71,
+        "bleu1": 33.21,
+        "n": 158
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 32.83,
+          "bleu1": 30.63,
+          "n": 35
+        },
+        "multi-hop": {
+          "f1": 36.47,
+          "bleu1": 30.62,
+          "n": 30
+        },
+        "open-domain": {
+          "f1": 2.61,
+          "bleu1": 0.0,
+          "n": 7
+        },
+        "single-hop": {
+          "f1": 39.16,
+          "bleu1": 36.1,
+          "n": 62
+        },
+        "temporal": {
+          "f1": 46.28,
+          "bleu1": 42.46,
+          "n": 24
+        }
+      }
+    },
+    {
+      "conv": 6,
+      "overall": {
+        "f1": 40.28,
+        "bleu1": 38.36,
+        "n": 190
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 34.19,
+          "bleu1": 31.64,
+          "n": 40
+        },
+        "multi-hop": {
+          "f1": 29.4,
+          "bleu1": 29.8,
+          "n": 20
+        },
+        "open-domain": {
+          "f1": 3.75,
+          "bleu1": 1.92,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 47.73,
+          "bleu1": 46.49,
+          "n": 83
+        },
+        "temporal": {
+          "f1": 49.64,
+          "bleu1": 45.36,
+          "n": 34
+        }
+      }
+    },
+    {
+      "conv": 7,
+      "overall": {
+        "f1": 34.32,
+        "bleu1": 30.09,
+        "n": 239
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 27.94,
+          "bleu1": 25.93,
+          "n": 48
+        },
+        "multi-hop": {
+          "f1": 22.83,
+          "bleu1": 14.28,
+          "n": 21
+        },
+        "open-domain": {
+          "f1": 15.0,
+          "bleu1": 7.81,
+          "n": 10
+        },
+        "single-hop": {
+          "f1": 36.95,
+          "bleu1": 33.45,
+          "n": 118
+        },
+        "temporal": {
+          "f1": 44.58,
+          "bleu1": 38.63,
+          "n": 42
+        }
+      }
+    },
+    {
+      "conv": 8,
+      "overall": {
+        "f1": 31.39,
+        "bleu1": 27.76,
+        "n": 196
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 27.87,
+          "bleu1": 24.46,
+          "n": 40
+        },
+        "multi-hop": {
+          "f1": 25.39,
+          "bleu1": 18.38,
+          "n": 37
+        },
+        "open-domain": {
+          "f1": 18.67,
+          "bleu1": 15.97,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 33.64,
+          "bleu1": 31.37,
+          "n": 73
+        },
+        "temporal": {
+          "f1": 42.42,
+          "bleu1": 38.94,
+          "n": 33
+        }
+      }
+    },
+    {
+      "conv": 9,
+      "overall": {
+        "f1": 33.26,
+        "bleu1": 31.86,
+        "n": 204
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 25.92,
+          "bleu1": 25.75,
+          "n": 46
+        },
+        "multi-hop": {
+          "f1": 29.6,
+          "bleu1": 25.03,
+          "n": 32
+        },
+        "open-domain": {
+          "f1": 28.57,
+          "bleu1": 28.61,
+          "n": 7
+        },
+        "single-hop": {
+          "f1": 35.53,
+          "bleu1": 34.77,
+          "n": 87
+        },
+        "temporal": {
+          "f1": 42.34,
+          "bleu1": 40.29,
+          "n": 32
+        }
+      }
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 1986,
+      "tokens_in": 178711,
+      "tokens_out": 29681,
+      "errors": 0,
+      "latency_ms_total": 1558754.9999999998,
+      "latency_ms_avg": 784.9
+    },
+    "generate": {
+      "calls": 1986,
+      "tokens_in": 2540168,
+      "tokens_out": 10110,
+      "errors": 0,
+      "latency_ms_total": 1404895.9000000001,
+      "latency_ms_avg": 707.4
+    }
+  },
+  "cost_usd": 0.431706,
+  "drops": {},
+  "timing": {
+    "ingest_s": 0.0,
+    "eval_s": 385.3,
+    "total_s": 393.2
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 5882,
+      "notes": 5882
+    },
+    "total_items": 11764,
+    "memory_jsonl_bytes": 10179492,
+    "store_dir_bytes": 74760946
+  },
+  "run_summary": {},
+  "runs": [
+    {
+      "run": 1,
+      "overall": {
+        "f1": 35.19,
+        "bleu1": 32.33,
+        "n": 1986
+      },
+      "run_seconds": 393.2,
+      "llm_budget": {
+        "extract": {
+          "calls": 1986,
+          "tokens_in": 178711,
+          "tokens_out": 29681,
+          "errors": 0,
+          "latency_ms_total": 1558754.9999999998,
+          "latency_ms_avg": 784.9
+        },
+        "generate": {
+          "calls": 1986,
+          "tokens_in": 2540168,
+          "tokens_out": 10110,
+          "errors": 0,
+          "latency_ms_total": 1404895.9000000001,
+          "latency_ms_avg": 707.4
+        }
+      },
+      "cost_usd": 0.431706
+    }
+  ],
+  "records_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.records.jsonl",
+  "llm_trace_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.memory.jsonl"
+}

@@ -1,0 +1,145 @@
+{
+  "kind": "headline_mean_std",
+  "n_seeds": 3,
+  "config": {
+    "model": "gpt-4o-mini",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": 10,
+    "eval_mode": "wujiang",
+    "expand_links": "off",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "conv": "all"
+  },
+  "metrics": {
+    "f1": {
+      "overall": {
+        "mean": 34.84,
+        "std": 0.48,
+        "min": 34.29,
+        "max": 35.19,
+        "n_seeds": 3
+      },
+      "adversarial": {
+        "mean": 31.37,
+        "std": 0.92,
+        "min": 30.32,
+        "max": 32.05,
+        "n_seeds": 3
+      },
+      "multi-hop": {
+        "mean": 29.15,
+        "std": 0.84,
+        "min": 28.36,
+        "max": 30.03,
+        "n_seeds": 3
+      },
+      "open-domain": {
+        "mean": 10.77,
+        "std": 1.02,
+        "min": 9.59,
+        "max": 11.41,
+        "n_seeds": 3
+      },
+      "single-hop": {
+        "mean": 37.75,
+        "std": 0.39,
+        "min": 37.3,
+        "max": 37.99,
+        "n_seeds": 3
+      },
+      "temporal": {
+        "mean": 44.24,
+        "std": 0.98,
+        "min": 43.48,
+        "max": 45.35,
+        "n_seeds": 3
+      }
+    },
+    "bleu1": {
+      "overall": {
+        "mean": 31.86,
+        "std": 0.5,
+        "min": 31.33,
+        "max": 32.33,
+        "n_seeds": 3
+      },
+      "adversarial": {
+        "mean": 29.32,
+        "std": 0.84,
+        "min": 28.42,
+        "max": 30.08,
+        "n_seeds": 3
+      },
+      "multi-hop": {
+        "mean": 23.25,
+        "std": 1.22,
+        "min": 22.21,
+        "max": 24.6,
+        "n_seeds": 3
+      },
+      "open-domain": {
+        "mean": 9.07,
+        "std": 0.92,
+        "min": 8.05,
+        "max": 9.82,
+        "n_seeds": 3
+      },
+      "single-hop": {
+        "mean": 35.46,
+        "std": 0.27,
+        "min": 35.21,
+        "max": 35.74,
+        "n_seeds": 3
+      },
+      "temporal": {
+        "mean": 40.35,
+        "std": 1.23,
+        "min": 39.23,
+        "max": 41.67,
+        "n_seeds": 3
+      }
+    }
+  },
+  "eval_cost_usd": 1.290071,
+  "sources": [
+    {
+      "file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.json",
+      "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+      "cost_usd": 0.429213,
+      "overall_f1": 34.29
+    },
+    {
+      "file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2.json",
+      "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+      "cost_usd": 0.429152,
+      "overall_f1": 35.05
+    },
+    {
+      "file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.json",
+      "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+      "cost_usd": 0.431706,
+      "overall_f1": 35.19
+    }
+  ],
+  "ingest_cost_usd": 6.967405,
+  "campaign_cost_usd": 8.257476,
+  "ingest_sources": [
+    {
+      "file": "gpt-4o-mini_all_ingest_seed1.json",
+      "cost_usd": 2.322696
+    },
+    {
+      "file": "gpt-4o-mini_all_ingest_seed2.json",
+      "cost_usd": 2.33219
+    },
+    {
+      "file": "gpt-4o-mini_all_ingest_seed3.json",
+      "cost_usd": 2.312519
+    }
+  ],
+  "ingest_note": "campaign_cost_usd includes these seed stores' ingest. If a sibling headline (e.g. phase2) reuses the SAME seed stores, its ingest is this same spend — do not sum both headlines' campaign_cost_usd."
+}

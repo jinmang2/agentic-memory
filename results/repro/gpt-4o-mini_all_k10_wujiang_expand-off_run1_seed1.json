@@ -1,0 +1,482 @@
+{
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": 10,
+    "eval_mode": "wujiang",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "runs": 1,
+    "workers": 8,
+    "n_questions": 1986,
+    "memory_types": [
+      "notes"
+    ],
+    "keyword_queries": true,
+    "eval_only": true,
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-23T17:49:17.221115+00:00",
+    "utc_finished": "2026-07-23T17:56:27.120185+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "overall": {
+    "f1": 34.29,
+    "bleu1": 31.33,
+    "n": 1986
+  },
+  "by_category": {
+    "adversarial": {
+      "f1": 30.32,
+      "bleu1": 28.42,
+      "n": 446
+    },
+    "multi-hop": {
+      "f1": 29.06,
+      "bleu1": 22.21,
+      "n": 282
+    },
+    "open-domain": {
+      "f1": 9.59,
+      "bleu1": 8.05,
+      "n": 96
+    },
+    "single-hop": {
+      "f1": 37.3,
+      "bleu1": 35.21,
+      "n": 841
+    },
+    "temporal": {
+      "f1": 43.88,
+      "bleu1": 40.16,
+      "n": 321
+    }
+  },
+  "per_conv": [
+    {
+      "conv": 0,
+      "overall": {
+        "f1": 34.6,
+        "bleu1": 31.56,
+        "n": 199
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 33.25,
+          "bleu1": 32.57,
+          "n": 47
+        },
+        "multi-hop": {
+          "f1": 22.0,
+          "bleu1": 18.12,
+          "n": 32
+        },
+        "open-domain": {
+          "f1": 13.5,
+          "bleu1": 10.81,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 38.15,
+          "bleu1": 34.47,
+          "n": 70
+        },
+        "temporal": {
+          "f1": 47.93,
+          "bleu1": 43.69,
+          "n": 37
+        }
+      }
+    },
+    {
+      "conv": 1,
+      "overall": {
+        "f1": 46.21,
+        "bleu1": 43.0,
+        "n": 105
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 49.3,
+          "bleu1": 45.83,
+          "n": 24
+        },
+        "multi-hop": {
+          "f1": 42.51,
+          "bleu1": 29.69,
+          "n": 11
+        },
+        "single-hop": {
+          "f1": 31.85,
+          "bleu1": 31.54,
+          "n": 44
+        },
+        "temporal": {
+          "f1": 69.23,
+          "bleu1": 65.38,
+          "n": 26
+        }
+      }
+    },
+    {
+      "conv": 2,
+      "overall": {
+        "f1": 39.29,
+        "bleu1": 35.31,
+        "n": 193
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 25.8,
+          "bleu1": 24.05,
+          "n": 41
+        },
+        "multi-hop": {
+          "f1": 51.05,
+          "bleu1": 42.07,
+          "n": 31
+        },
+        "open-domain": {
+          "f1": 26.32,
+          "bleu1": 28.27,
+          "n": 8
+        },
+        "single-hop": {
+          "f1": 42.49,
+          "bleu1": 38.47,
+          "n": 86
+        },
+        "temporal": {
+          "f1": 39.89,
+          "bleu1": 36.67,
+          "n": 27
+        }
+      }
+    },
+    {
+      "conv": 3,
+      "overall": {
+        "f1": 25.93,
+        "bleu1": 24.12,
+        "n": 260
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 27.88,
+          "bleu1": 26.0,
+          "n": 61
+        },
+        "multi-hop": {
+          "f1": 14.47,
+          "bleu1": 8.05,
+          "n": 37
+        },
+        "open-domain": {
+          "f1": 0.0,
+          "bleu1": 0.0,
+          "n": 11
+        },
+        "single-hop": {
+          "f1": 30.49,
+          "bleu1": 30.06,
+          "n": 111
+        },
+        "temporal": {
+          "f1": 28.0,
+          "bleu1": 26.29,
+          "n": 40
+        }
+      }
+    },
+    {
+      "conv": 4,
+      "overall": {
+        "f1": 36.26,
+        "bleu1": 34.11,
+        "n": 242
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 34.81,
+          "bleu1": 32.19,
+          "n": 64
+        },
+        "multi-hop": {
+          "f1": 24.17,
+          "bleu1": 17.7,
+          "n": 31
+        },
+        "open-domain": {
+          "f1": 7.14,
+          "bleu1": 7.14,
+          "n": 14
+        },
+        "single-hop": {
+          "f1": 40.05,
+          "bleu1": 39.45,
+          "n": 107
+        },
+        "temporal": {
+          "f1": 54.28,
+          "bleu1": 50.96,
+          "n": 26
+        }
+      }
+    },
+    {
+      "conv": 5,
+      "overall": {
+        "f1": 37.78,
+        "bleu1": 34.33,
+        "n": 158
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 28.36,
+          "bleu1": 25.87,
+          "n": 35
+        },
+        "multi-hop": {
+          "f1": 38.43,
+          "bleu1": 31.56,
+          "n": 30
+        },
+        "open-domain": {
+          "f1": 0.0,
+          "bleu1": 0.0,
+          "n": 7
+        },
+        "single-hop": {
+          "f1": 46.52,
+          "bleu1": 43.97,
+          "n": 62
+        },
+        "temporal": {
+          "f1": 39.13,
+          "bleu1": 35.24,
+          "n": 24
+        }
+      }
+    },
+    {
+      "conv": 6,
+      "overall": {
+        "f1": 37.72,
+        "bleu1": 35.21,
+        "n": 190
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 26.76,
+          "bleu1": 25.62,
+          "n": 40
+        },
+        "multi-hop": {
+          "f1": 33.91,
+          "bleu1": 29.4,
+          "n": 20
+        },
+        "open-domain": {
+          "f1": 3.21,
+          "bleu1": 0.93,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 46.93,
+          "bleu1": 44.55,
+          "n": 83
+        },
+        "temporal": {
+          "f1": 43.57,
+          "bleu1": 40.18,
+          "n": 34
+        }
+      }
+    },
+    {
+      "conv": 7,
+      "overall": {
+        "f1": 30.97,
+        "bleu1": 26.81,
+        "n": 239
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 24.29,
+          "bleu1": 21.76,
+          "n": 48
+        },
+        "multi-hop": {
+          "f1": 27.2,
+          "bleu1": 18.41,
+          "n": 21
+        },
+        "open-domain": {
+          "f1": 25.0,
+          "bleu1": 17.81,
+          "n": 10
+        },
+        "single-hop": {
+          "f1": 31.15,
+          "bleu1": 27.64,
+          "n": 118
+        },
+        "temporal": {
+          "f1": 41.41,
+          "bleu1": 36.62,
+          "n": 42
+        }
+      }
+    },
+    {
+      "conv": 8,
+      "overall": {
+        "f1": 30.38,
+        "bleu1": 27.02,
+        "n": 196
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 29.39,
+          "bleu1": 26.55,
+          "n": 40
+        },
+        "multi-hop": {
+          "f1": 21.86,
+          "bleu1": 15.39,
+          "n": 37
+        },
+        "open-domain": {
+          "f1": 3.27,
+          "bleu1": 1.22,
+          "n": 13
+        },
+        "single-hop": {
+          "f1": 34.4,
+          "bleu1": 32.51,
+          "n": 73
+        },
+        "temporal": {
+          "f1": 42.92,
+          "bleu1": 38.65,
+          "n": 33
+        }
+      }
+    },
+    {
+      "conv": 9,
+      "overall": {
+        "f1": 33.18,
+        "bleu1": 30.68,
+        "n": 204
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 30.16,
+          "bleu1": 29.89,
+          "n": 46
+        },
+        "multi-hop": {
+          "f1": 29.56,
+          "bleu1": 22.33,
+          "n": 32
+        },
+        "open-domain": {
+          "f1": 14.29,
+          "bleu1": 14.32,
+          "n": 7
+        },
+        "single-hop": {
+          "f1": 34.58,
+          "bleu1": 33.19,
+          "n": 87
+        },
+        "temporal": {
+          "f1": 41.49,
+          "bleu1": 36.92,
+          "n": 32
+        }
+      }
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 1986,
+      "tokens_in": 178711,
+      "tokens_out": 29646,
+      "errors": 0,
+      "latency_ms_total": 1531250.4999999998,
+      "latency_ms_avg": 771.0
+    },
+    "generate": {
+      "calls": 1986,
+      "tokens_in": 2523902,
+      "tokens_out": 10055,
+      "errors": 0,
+      "latency_ms_total": 1367785.6,
+      "latency_ms_avg": 688.7
+    }
+  },
+  "cost_usd": 0.429213,
+  "drops": {},
+  "timing": {
+    "ingest_s": 0.0,
+    "eval_s": 383.6,
+    "total_s": 391.7
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 5882,
+      "notes": 5882
+    },
+    "total_items": 11764,
+    "memory_jsonl_bytes": 10179055,
+    "store_dir_bytes": 74998514
+  },
+  "run_summary": {},
+  "runs": [
+    {
+      "run": 1,
+      "overall": {
+        "f1": 34.29,
+        "bleu1": 31.33,
+        "n": 1986
+      },
+      "run_seconds": 391.7,
+      "llm_budget": {
+        "extract": {
+          "calls": 1986,
+          "tokens_in": 178711,
+          "tokens_out": 29646,
+          "errors": 0,
+          "latency_ms_total": 1531250.4999999998,
+          "latency_ms_avg": 771.0
+        },
+        "generate": {
+          "calls": 1986,
+          "tokens_in": 2523902,
+          "tokens_out": 10055,
+          "errors": 0,
+          "latency_ms_total": 1367785.6,
+          "latency_ms_avg": 688.7
+        }
+      },
+      "cost_usd": 0.429213
+    }
+  ],
+  "records_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.records.jsonl",
+  "llm_trace_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.memory.jsonl"
+}

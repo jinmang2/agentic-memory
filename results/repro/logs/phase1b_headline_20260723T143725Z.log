@@ -1,0 +1,208 @@
+=== seed 1/3 ===
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=4 (≈4 in-flight API calls) | data-dir=results/repro/stores/full_all_seed1
+[parallel-ingest] conv1: ok
+[parallel-ingest] conv0: ok
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv2: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: ok
+[parallel-ingest] conv7: ok
+[parallel-ingest] conv8: ok
+[parallel-ingest] conv9: ok
+[parallel-ingest] DONE 10 convs in 10516.0s wall (vs 37911.9s sequential compute ≈ 3.6x faster); cost $2.322696
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_ingest_seed1.json (combined ingest summary)
+[done] wrote results/repro/stores/full_all_seed1/.ingest_complete.json (ingest-completion sentinel)
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:   1%|          | 1/103 [00:00<00:10,  9.51it/s]Loading weights:  38%|███▊      | 39/103 [00:00<00:00, 192.92it/s]Loading weights:  83%|████████▎ | 85/103 [00:00<00:00, 288.81it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 292.46it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 34.29, 'bleu1': 31.33, 'n': 1986}
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.json
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1.memory.jsonl (memory snapshot)
+[cost] ~$0.429213 (gpt-4o-mini rates in stamp)
+=== seed 2/3 ===
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=4 (≈4 in-flight API calls) | data-dir=results/repro/stores/full_all_seed2
+[parallel-ingest] conv0: ok
+[parallel-ingest] conv1: ok
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv2: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: ok
+[parallel-ingest] conv7: ok
+[parallel-ingest] conv8: ok
+[parallel-ingest] conv9: ok
+[parallel-ingest] DONE 10 convs in 10560.1s wall (vs 38085.0s sequential compute ≈ 3.6x faster); cost $2.33219
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_ingest_seed2.json (combined ingest summary)
+[done] wrote results/repro/stores/full_all_seed2/.ingest_complete.json (ingest-completion sentinel)
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:   1%|          | 1/103 [00:00<00:11,  8.83it/s]Loading weights:  23%|██▎       | 24/103 [00:00<00:00, 127.15it/s]Loading weights:  52%|█████▏    | 54/103 [00:00<00:00, 150.08it/s]Loading weights:  74%|███████▍  | 76/103 [00:00<00:00, 161.54it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 190.46it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 35.05, 'bleu1': 31.93, 'n': 1986}
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2.json
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2.memory.jsonl (memory snapshot)
+[cost] ~$0.429152 (gpt-4o-mini rates in stamp)
+=== seed 3/3 ===
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=4 (≈4 in-flight API calls) | data-dir=results/repro/stores/full_all_seed3
+[parallel-ingest] conv1: ok
+[parallel-ingest] conv0: ok
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv2: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: ok
+[parallel-ingest] conv7: ok
+[parallel-ingest] conv8: ok
+[parallel-ingest] conv9: ok
+[parallel-ingest] DONE 10 convs in 10927.5s wall (vs 38596.6s sequential compute ≈ 3.5x faster); cost $2.312519
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_ingest_seed3.json (combined ingest summary)
+[done] wrote results/repro/stores/full_all_seed3/.ingest_complete.json (ingest-completion sentinel)
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights:   1%|          | 1/103 [00:00<00:12,  8.36it/s]Loading weights:  38%|███▊      | 39/103 [00:00<00:00, 172.93it/s]Loading weights:  79%|███████▊  | 81/103 [00:00<00:00, 246.69it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 263.08it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 35.19, 'bleu1': 32.33, 'n': 1986}
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.json
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic-memory/results/repro/gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3.memory.jsonl (memory snapshot)
+[cost] ~$0.431706 (gpt-4o-mini rates in stamp)
+
+=== headline F1 (mean±std over 3 ingests) ===
+  multi-hop      29.15 ±  0.84  (min 28.36, max 30.03)
+  temporal       44.24 ±  0.98  (min 43.48, max 45.35)
+  open-domain    10.77 ±  1.02  (min 9.59, max 11.41)
+  single-hop     37.75 ±  0.39  (min 37.30, max 37.99)
+  adversarial    31.37 ±  0.92  (min 30.32, max 32.05)
+  overall        34.84 ±  0.48  (min 34.29, max 35.19)
+  eval_cost_usd:     $1.290071
+  ingest_cost_usd:   $6.967405
+  campaign_cost_usd: $8.257476
+
+[done] wrote results/repro/gpt-4o-mini_all_wujiang_headline.json

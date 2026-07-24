@@ -22,9 +22,9 @@
     "eval_only": true,
     "dataset": "locomo10",
     "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
-    "git_sha": "d38c96e95d8cc30e74e51c60c29458512b682a4a",
-    "utc_started": "2026-07-23T07:51:36.653402+00:00",
-    "utc_finished": "2026-07-23T07:52:40.630333+00:00",
+    "git_sha": "e2e7ebe3fa541789ba329fbed9b2ede885c2ccac",
+    "utc_started": "2026-07-23T14:35:54.920658+00:00",
+    "utc_finished": "2026-07-23T14:36:57.090115+00:00",
     "cost_rates": {
       "model": "gpt-4o-mini",
       "usd_per_1m_in": 0.15,
@@ -33,23 +33,23 @@
     "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
   },
   "overall": {
-    "f1": 34.91,
-    "bleu1": 30.56,
+    "f1": 36.11,
+    "bleu1": 31.07,
     "n": 199,
-    "j_score": 51.97,
+    "j_score": 56.58,
     "j_n": 152
   },
   "by_category": {
     "adversarial": {
-      "f1": 30.54,
-      "bleu1": 27.66,
+      "f1": 28.62,
+      "bleu1": 25.98,
       "n": 47
     },
     "multi-hop": {
-      "f1": 22.18,
-      "bleu1": 18.02,
+      "f1": 29.15,
+      "bleu1": 21.63,
       "n": 32,
-      "j_score": 31.25,
+      "j_score": 50.0,
       "j_n": 32
     },
     "open-domain": {
@@ -60,17 +60,17 @@
       "j_n": 13
     },
     "single-hop": {
-      "f1": 35.93,
-      "bleu1": 32.04,
+      "f1": 37.76,
+      "bleu1": 33.75,
       "n": 70,
       "j_score": 55.71,
       "j_n": 70
     },
     "temporal": {
-      "f1": 52.15,
-      "bleu1": 45.64,
+      "f1": 51.57,
+      "bleu1": 44.17,
       "n": 37,
-      "j_score": 70.27,
+      "j_score": 72.97,
       "j_n": 37
     }
   },
@@ -78,23 +78,23 @@
     {
       "conv": 0,
       "overall": {
-        "f1": 34.91,
-        "bleu1": 30.56,
+        "f1": 36.11,
+        "bleu1": 31.07,
         "n": 199,
-        "j_score": 51.97,
+        "j_score": 56.58,
         "j_n": 152
       },
       "by_category": {
         "adversarial": {
-          "f1": 30.54,
-          "bleu1": 27.66,
+          "f1": 28.62,
+          "bleu1": 25.98,
           "n": 47
         },
         "multi-hop": {
-          "f1": 22.18,
-          "bleu1": 18.02,
+          "f1": 29.15,
+          "bleu1": 21.63,
           "n": 32,
-          "j_score": 31.25,
+          "j_score": 50.0,
           "j_n": 32
         },
         "open-domain": {
@@ -105,17 +105,17 @@
           "j_n": 13
         },
         "single-hop": {
-          "f1": 35.93,
-          "bleu1": 32.04,
+          "f1": 37.76,
+          "bleu1": 33.75,
           "n": 70,
           "j_score": 55.71,
           "j_n": 70
         },
         "temporal": {
-          "f1": 52.15,
-          "bleu1": 45.64,
+          "f1": 51.57,
+          "bleu1": 44.17,
           "n": 37,
-          "j_score": 70.27,
+          "j_score": 72.97,
           "j_n": 37
         }
       }
@@ -125,34 +125,34 @@
     "extract": {
       "calls": 199,
       "tokens_in": 17495,
-      "tokens_out": 2785,
+      "tokens_out": 2817,
       "errors": 0,
-      "latency_ms_total": 184751.6,
-      "latency_ms_avg": 928.4
+      "latency_ms_total": 159080.6,
+      "latency_ms_avg": 799.4
     },
     "generate": {
       "calls": 199,
-      "tokens_in": 263875,
-      "tokens_out": 1161,
+      "tokens_in": 261376,
+      "tokens_out": 1234,
       "errors": 0,
-      "latency_ms_total": 147100.80000000002,
-      "latency_ms_avg": 739.2
+      "latency_ms_total": 172632.5,
+      "latency_ms_avg": 867.5
     },
     "judge": {
       "calls": 152,
-      "tokens_in": 27951,
+      "tokens_in": 27956,
       "tokens_out": 1064,
       "errors": 0,
-      "latency_ms_total": 113285.59999999999,
-      "latency_ms_avg": 745.3
+      "latency_ms_total": 98678.40000000001,
+      "latency_ms_avg": 649.2
     }
   },
-  "cost_usd": 0.049404,
+  "cost_usd": 0.049093,
   "drops": {},
   "timing": {
     "ingest_s": 0.0,
-    "eval_s": 63.4,
-    "total_s": 64.0
+    "eval_s": 58.4,
+    "total_s": 59.2
   },
   "memory_capacity": {
     "per_type": {
@@ -160,48 +160,48 @@
       "notes": 419
     },
     "total_items": 838,
-    "memory_jsonl_bytes": 759556,
-    "store_dir_bytes": 5374183
+    "memory_jsonl_bytes": 755717,
+    "store_dir_bytes": 5275879
   },
   "run_summary": {},
   "runs": [
     {
       "run": 1,
       "overall": {
-        "f1": 34.91,
-        "bleu1": 30.56,
+        "f1": 36.11,
+        "bleu1": 31.07,
         "n": 199,
-        "j_score": 51.97,
+        "j_score": 56.58,
         "j_n": 152
       },
-      "run_seconds": 64.0,
+      "run_seconds": 59.2,
       "llm_budget": {
         "extract": {
           "calls": 199,
           "tokens_in": 17495,
-          "tokens_out": 2785,
+          "tokens_out": 2817,
           "errors": 0,
-          "latency_ms_total": 184751.6,
-          "latency_ms_avg": 928.4
+          "latency_ms_total": 159080.6,
+          "latency_ms_avg": 799.4
         },
         "generate": {
           "calls": 199,
-          "tokens_in": 263875,
-          "tokens_out": 1161,
+          "tokens_in": 261376,
+          "tokens_out": 1234,
           "errors": 0,
-          "latency_ms_total": 147100.80000000002,
-          "latency_ms_avg": 739.2
+          "latency_ms_total": 172632.5,
+          "latency_ms_avg": 867.5
         },
         "judge": {
           "calls": 152,
-          "tokens_in": 27951,
+          "tokens_in": 27956,
           "tokens_out": 1064,
           "errors": 0,
-          "latency_ms_total": 113285.59999999999,
-          "latency_ms_avg": 745.3
+          "latency_ms_total": 98678.40000000001,
+          "latency_ms_avg": 649.2
         }
       },
-      "cost_usd": 0.049404
+      "cost_usd": 0.049093
     }
   ],
   "records_file": "gpt-4o-mini_conv0_k10_ours_expand-off_run1.records.jsonl",
