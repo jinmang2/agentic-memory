@@ -1,0 +1,182 @@
+{
+  "kind": "headline_mean_std",
+  "n_seeds": 3,
+  "config": {
+    "model": "gpt-4o-mini",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": 10,
+    "eval_mode": "ours",
+    "expand_links": "on",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "conv": "all"
+  },
+  "metrics": {
+    "f1": {
+      "overall": {
+        "mean": 34.8,
+        "std": 0.57,
+        "min": 34.15,
+        "max": 35.21,
+        "n_seeds": 3
+      },
+      "adversarial": {
+        "mean": 23.62,
+        "std": 0.3,
+        "min": 23.34,
+        "max": 23.94,
+        "n_seeds": 3
+      },
+      "multi-hop": {
+        "mean": 32.04,
+        "std": 0.13,
+        "min": 31.92,
+        "max": 32.18,
+        "n_seeds": 3
+      },
+      "open-domain": {
+        "mean": 16.62,
+        "std": 1.22,
+        "min": 15.23,
+        "max": 17.53,
+        "n_seeds": 3
+      },
+      "single-hop": {
+        "mean": 39.84,
+        "std": 0.53,
+        "min": 39.25,
+        "max": 40.27,
+        "n_seeds": 3
+      },
+      "temporal": {
+        "mean": 44.93,
+        "std": 1.52,
+        "min": 43.31,
+        "max": 46.33,
+        "n_seeds": 3
+      }
+    },
+    "bleu1": {
+      "overall": {
+        "mean": 30.69,
+        "std": 0.65,
+        "min": 29.96,
+        "max": 31.21,
+        "n_seeds": 3
+      },
+      "adversarial": {
+        "mean": 20.83,
+        "std": 0.38,
+        "min": 20.42,
+        "max": 21.16,
+        "n_seeds": 3
+      },
+      "multi-hop": {
+        "mean": 24.59,
+        "std": 0.34,
+        "min": 24.28,
+        "max": 24.95,
+        "n_seeds": 3
+      },
+      "open-domain": {
+        "mean": 14.03,
+        "std": 1.43,
+        "min": 12.54,
+        "max": 15.4,
+        "n_seeds": 3
+      },
+      "single-hop": {
+        "mean": 36.21,
+        "std": 0.61,
+        "min": 35.51,
+        "max": 36.6,
+        "n_seeds": 3
+      },
+      "temporal": {
+        "mean": 40.29,
+        "std": 1.48,
+        "min": 38.89,
+        "max": 41.84,
+        "n_seeds": 3
+      }
+    },
+    "j_score": {
+      "overall": {
+        "mean": 50.67,
+        "std": 0.59,
+        "min": 50.0,
+        "max": 51.1,
+        "n_seeds": 3
+      },
+      "multi-hop": {
+        "mean": 51.66,
+        "std": 1.08,
+        "min": 50.71,
+        "max": 52.84,
+        "n_seeds": 3
+      },
+      "open-domain": {
+        "mean": 21.18,
+        "std": 0.6,
+        "min": 20.83,
+        "max": 21.87,
+        "n_seeds": 3
+      },
+      "single-hop": {
+        "mean": 52.24,
+        "std": 0.42,
+        "min": 51.84,
+        "max": 52.68,
+        "n_seeds": 3
+      },
+      "temporal": {
+        "mean": 54.52,
+        "std": 1.43,
+        "min": 52.96,
+        "max": 55.76,
+        "n_seeds": 3
+      }
+    }
+  },
+  "eval_cost_usd": 1.981011,
+  "sources": [
+    {
+      "file": "gpt-4o-mini_all_k10_ours_expand-on_run1_seed1.json",
+      "git_sha": "3f51e8ebe4052c0161a5f27cf58cf8cf713538c4",
+      "cost_usd": 0.661284,
+      "overall_f1": 34.15
+    },
+    {
+      "file": "gpt-4o-mini_all_k10_ours_expand-on_run1_seed2.json",
+      "git_sha": "3f51e8ebe4052c0161a5f27cf58cf8cf713538c4",
+      "cost_usd": 0.657505,
+      "overall_f1": 35.03
+    },
+    {
+      "file": "gpt-4o-mini_all_k10_ours_expand-on_run1_seed3.json",
+      "git_sha": "3f51e8ebe4052c0161a5f27cf58cf8cf713538c4",
+      "cost_usd": 0.662222,
+      "overall_f1": 35.21
+    }
+  ],
+  "ingest_cost_usd": 6.967405,
+  "campaign_cost_usd": 8.948416,
+  "ingest_sources": [
+    {
+      "file": "gpt-4o-mini_all_ingest_seed1.json",
+      "cost_usd": 2.322696
+    },
+    {
+      "file": "gpt-4o-mini_all_ingest_seed2.json",
+      "cost_usd": 2.33219
+    },
+    {
+      "file": "gpt-4o-mini_all_ingest_seed3.json",
+      "cost_usd": 2.312519
+    }
+  ],
+  "ingest_note": "campaign_cost_usd includes these seed stores' ingest. If a sibling headline (e.g. phase2) reuses the SAME seed stores, its ingest is this same spend — do not sum both headlines' campaign_cost_usd."
+}

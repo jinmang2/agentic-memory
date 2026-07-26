@@ -1,0 +1,166 @@
+=== seed 1/3 ===
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 1523.26it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 34.15, 'bleu1': 29.96, 'n': 1986, 'j_score': 50.0, 'j_n': 1540}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed1.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed1.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed1.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed1.memory.jsonl (memory snapshot)
+[cost] ~$0.661284 (gpt-4o-mini rates in stamp)
+=== seed 2/3 ===
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 1233.58it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 35.03, 'bleu1': 30.91, 'n': 1986, 'j_score': 50.91, 'j_n': 1540}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed2.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed2.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed2.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed2.memory.jsonl (memory snapshot)
+[cost] ~$0.657505 (gpt-4o-mini rates in stamp)
+=== seed 3/3 ===
+Loading weights:   0%|          | 0/103 [00:00<?, ?it/s]Loading weights: 100%|██████████| 103/103 [00:00<00:00, 14890.85it/s]
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 35.21, 'bleu1': 31.21, 'n': 1986, 'j_score': 51.1, 'j_n': 1540}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed3.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed3.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed3.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_seed3.memory.jsonl (memory snapshot)
+[cost] ~$0.662222 (gpt-4o-mini rates in stamp)
+
+=== headline F1 (mean±std over 3 ingests) ===
+  multi-hop      32.04 ±  0.13  (min 31.92, max 32.18)
+  temporal       44.93 ±  1.52  (min 43.31, max 46.33)
+  open-domain    16.62 ±  1.22  (min 15.23, max 17.53)
+  single-hop     39.84 ±  0.53  (min 39.25, max 40.27)
+  adversarial    23.62 ±  0.30  (min 23.34, max 23.94)
+  overall        34.80 ±  0.57  (min 34.15, max 35.21)
+  eval_cost_usd:     $1.981011
+  ingest_cost_usd:   $6.967405
+  campaign_cost_usd: $8.948416
+
+[done] wrote results/repro/gpt-4o-mini_all_ours_headline.json
