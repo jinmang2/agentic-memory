@@ -101,9 +101,14 @@ Fig.2 캡션: "linked memories … are also **automatically accessed**" = 1-hop 
 
 **어느 판이 실제로 뭘 하나 (원문 정독 결과):**
 - **논문 LoCoMo 수치 = `WujiangXu/A-mem`의 robust 경로** (`memory_layer_robust.py` +
-  `test_advanced_robust.py`). 저장소는 **ChromaDB가 아니라 in-memory cosine
-  `SimpleEmbeddingRetriever` + BM25 hybrid**. → **#23/#24(ChromaDB L2/distance 버그)는
+  `test_advanced_robust.py`). 저장소는 **ChromaDB가 아니라 in-memory
+  `SimpleEmbeddingRetriever`**. → **#23/#24(ChromaDB L2/distance 버그)는
   논문 수치에 무관** (그 버그는 agiresearch/A-mem-sys 계보에만 존재).
+  **2026-07-23 업스트림 코드 직독 교정 — read는 순수 cosine이고 hybrid가 아니다**:
+  `SimpleEmbeddingRetriever.search`(`memory_layer.py:588`)는 sklearn cosine
+  top-k 단일 채널이다. 파일에 `HybridRetriever`(BM25)가 **존재하지만 eval 경로에서
+  호출되지 않는 dead code**다. 이 문서와 `docs/08`의 종전 "cosine+BM25 hybrid" 서술은
+  오류였다.
 - plain `memory_layer.py`는 `import re` 누락으로 `analyze_content`가 매번 NameError →
   메타데이터 전량 폴백(빈 keywords/tags, context="General"). **robust판만 정상.**
 - `agiresearch/A-mem`: `add_note`가 `analyze_content`를 **아예 호출 안 함**(Ps1 사문,
@@ -132,10 +137,12 @@ Fig.2 캡션: "linked memories … are also **automatically accessed**" = 1-hop 
 append-only 로그로 **replay·audit 가능**. 원논문의 "evolution이 뭘 바꿨는지 추적 불가"
 문제를 구조적으로 해소 (원논문은 식7에서 m_j를 in-place replace).
 
-### 4.2 read 경로 — `RetrievalPipeline._expand_links` (`retrieval/pipeline.py:181`)
+### 4.2 read 경로 — `LinkExpansion` (`retrieval/steps.py`)
 dense top-k(식10) → 검색된 노트의 링크 이웃 1-hop 확장(`find_related_memories_raw` 대응).
-링크는 단방향(upstream 정합). **캡 의미 편차**: upstream은 per-hit, 우리는 **전역 cap=5**
-(`pipeline.py:181-210`).
+링크는 단방향(upstream 정합). **캡 의미 편차**: upstream은 per-hit, 우리는 **전역 cap=5**.
+캡은 `AgmemConfig.link_expansion_cap`으로 노출돼 ablation 가능하고, 0이면 스텝 자체가
+등록되지 않는다(종전엔 `pipeline.py`의 `_expand_links` 메서드 + 생성자 기본값이라
+호출자가 도달할 수 없었다).
 
 ### 4.3 우리 프롬프트 2종의 계보
 - `NOTE_PROMPT` (`amem.py:77`): B.1 의미충실 축약("nouns/verbs" 초점,
@@ -203,8 +210,12 @@ A-MEM이고 `K`는 그 입력일 뿐이다. write가 먹는 것만 다르다.
 
 1. **0.6B 로컬 LLM은 논문 검증 범위(최소 1B) 아래** → 절대치 비교 불가, 상대 비교만.
    링크 품질이 organizer 모델 능력에 종속(논문 ablation의 백본 의존성과 정합).
-2. **논문 수치를 "재현"으로 인용 금지**: 논문 수치는 in-memory cosine+BM25 hybrid 경로
-   산출. 우리 `amem` config는 notes dense-only(+keyword_queries) — read 채널이 다름.
+2. **논문 수치를 "재현"으로 인용 금지** — 단, 이유가 종전 서술과 다르다. 논문 수치는
+   in-memory **순수 cosine** 경로 산출이고 우리 `amem` config도 notes dense-only이므로
+   **채널 종류는 오히려 일치한다**(종전의 "read 채널이 다름"은 hybrid 오해에서 나온
+   잘못된 캐비앗). 실제 남는 차이는 두 가지다: ① 우리는 LLM `keyword_queries`로 질의를
+   재작성하고, ② 링크 확장 캡이 **per-hit이 아니라 global 5**다(`retrieval/steps.py`
+   `LinkExpansion`). 비교 시 이 둘을 명기할 것.
    (`exp:208 AMEM_STORE=ChromaVectorStore`는 "라이브러리판 저장소 계보"이지 논문 수치
    계보가 아님 — docs/03 §5 전제 정정 대상.)
 3. **강한 baseline 중요**: passthrough(raw + hybrid BM25+dense+RRF)만으로 F1 22.85 —

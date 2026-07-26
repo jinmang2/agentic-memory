@@ -52,9 +52,11 @@ set-based F1, cat5 MCQ)에서 돌린다. 두 수치의 차이 = 순수 재구현
 | J-score | **없음** | `utils.py` — LLM judge 미존재 |
 
 > ⚠️ 주의: 업스트림 클론의 `test_advanced.py`는 plain `memory_layer.py`를 쓴다. **논문
-> 수치는 `*_robust.py` 경로**(`memory_layer_robust.py` + `test_advanced_robust.py`,
-> BM25+semantic 하이브리드 `HybridRetriever` `memory_layer.py:403`)에서 나온다 —
-> docs/13 §3. rung 1a는 두 경로 모두 커맨드를 문서화한다.
+> 수치는 `*_robust.py` 경로**(`memory_layer_robust.py` + `test_advanced_robust.py`)에서
+> 나온다 — docs/13 §3. rung 1a는 두 경로 모두 커맨드를 문서화한다.
+> robust의 차이는 Ps1 live와 방어적 파싱이지 **retrieval 채널이 아니다**: 두 경로 모두
+> `SimpleEmbeddingRetriever` 순수 cosine이고, `HybridRetriever`(`memory_layer.py:403`)는
+> 어느 eval 경로에서도 호출되지 않는 dead code다(이 표 "read 경로" 행과 일치).
 
 ### cat5 MCQ 재현성 처리 (우리의 의도적 편차)
 
@@ -275,7 +277,8 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
 - **`--k`는 검색-시점 파라미터**다(`locomo.evaluate(k=...)`가 search에서 적용). ingest에
   baked되지 **않으므로** eval-only에서만 바꿔도 옳다(노트·링크는 k와 무관, 질문당 몇 개를
   가져오느냐만 달라짐). → phase3 k-sweep은 ingest 1회 + eval-only 5회.
-- **`--expand-links`도 read-시점**(`pipeline.link_expansion_cap`을 search에서 사용). 마찬가지로
+- **`--expand-links`도 read-시점**(`AgmemConfig.link_expansion_cap` → `LinkExpansion` 스텝
+  등록 여부/캡으로 반영). 마찬가지로
   eval-only에서 on/off 가능.
 - **`--eval-mode`/`--judge`도 채점-시점**. 따라서 같은 store 하나로 wujiang·ours 둘 다 평가
   가능 → smoke.sh는 ingest 1회 + eval-only 2회, phase1b/phase2는 같은
@@ -344,11 +347,12 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
    단위 등). 우리 `data/locomo10.json`은 **1,986 QA**(cat1=282/cat2=321/cat3=96/cat4=841/
    cat5=446). 절대 수치 인용 시 어느 카운트인지 명시.
 5. **read 채널 차이**: 업스트림 plain은 SimpleEmbeddingRetriever cosine + per-hit 1-hop
-   링크(캡 없음 → k=10이면 이웃 ~100). 우리 `_expand_links`(`pipeline.py:181`)는 **전역
+   링크(캡 없음 → k=10이면 이웃 ~100). 우리 `LinkExpansion`(`retrieval/steps.py`)은 **전역
    cap=5**. `--expand-links on/off`로 토글하되 캡 의미가 달라 multi-hop 수치는 편차.
-6. **robust vs plain**: 논문 수치는 robust(BM25+semantic hybrid, Ps1 live) 경로.
-   우리 rung 1b는 notes-only dense + keyword-query. read 채널이 달라 절대 재현이 아니라
-   **상대 gap 측정**이 목적(docs/13 §6 캐비앗).
+6. **robust vs plain**: 논문 수치는 robust(Ps1 live) 경로이고, 우리 rung 1b는 notes-only
+   dense + keyword-query다. **채널 종류 자체는 양쪽 다 순수 cosine으로 일치**하므로
+   (종전 서술의 "robust=BM25 hybrid"는 오류) 남는 차이는 keyword-query 재작성과 링크 캡
+   의미(위 5번)다. 그래도 절대 재현이 아니라 **상대 gap 측정**이 목적(docs/13 §6 캐비앗).
 7. **backbone**: 논문은 최소 1B. gpt-4o-mini는 재현 범위 안이지만 로컬 0.6B(exp_locomo_conv0)
    와는 다른 리그 — 두 실험을 섞어 비교 금지.
 

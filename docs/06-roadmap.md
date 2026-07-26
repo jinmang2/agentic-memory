@@ -89,7 +89,7 @@
 ## 즉시 다음 액션 (2026-07-26 갱신)
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
-> 브랜치: **`main` 단일** (`622a73f`). 테스트 184 passed / 1 skipped.
+> 브랜치: **`main` 단일** (`80bcb37`). 테스트 187 passed / 1 skipped.
 
 ### 미실측 — 배선은 끝났고 유료 실행만 남음
 1. **Nemori v4 Table 7 실측** (`docs/13-amem-study.md` §5.1). config 2종이 대기 중:
@@ -111,15 +111,27 @@
    그대로 들어간다. 코드 미공개라 anchor 3종 프롬프트는 자체 설계 필요.
 5. **RecMem recurrence gate** (3순위) — `consolidate()` 훅이 그 자리.
 
-### 별도 판단이 필요한 미수정 버그 2건 (코드에 문서화됨)
-6. `ChainedConsumer`가 `flush_buffer`를 wrapped에 전달하지 않아 체이닝된 MemoryOS의 부분 STM
+### 별도 판단이 필요한 미수정 버그 3건 (코드에 문서화됨)
+6. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
    tail이 영구 미방출 (`experimental/chained.py` "Known gap"). 고치면 `nemori_memoryos` 수치 변동.
+   (어댑터 자신의 `_pending` 배치는 정상 방출되므로 `nemori_amem_k_batched`의 마지막 배치는
+   안전하다 — 2026-07-26 확인.)
 7. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
    `memory.py:warm_start` docstring). 고치면 과거 run과 op 카운트 비교가 깨진다.
+8. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
+   `(id, memory_type)`인데 **모든 벡터 백엔드는 `item_id` 단독 upsert**(numpy/sqlite-vec의
+   `ON CONFLICT(item_id)`, chroma/qdrant/lance upsert-by-id)이고 `memory_type`은 필터 메타데이터로만
+   저장한다. 같은 id를 두 타입으로 쓰면 벡터 인덱스에서 나중 것이 앞의 것을 덮어써 한쪽이 조용히
+   검색 불가가 된다. 실 run의 id는 uuid4라 충돌 확률이 사실상 0이므로 **측정 리스크는 없다**;
+   고치려면 5개 백엔드 스키마를 모두 건드리고 재색인이 필요하므로 별도 결정으로 남긴다.
 
 ### 문서 교정 잔여
-8. `docs/13`·`08`·`03`의 "A-Mem read = cosine+BM25 hybrid" 서술은 **오류** — 실제 upstream은
-   순수 in-memory sklearn cosine(`SimpleEmbeddingRetriever.search`), `HybridRetriever`(BM25)는
-   eval 미사용 dead-code.
 9. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
    측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
+
+> **2026-07-26 처리 완료**: (구 8번) "A-Mem read = cosine+BM25 hybrid" 오류를 `docs/13`·`08`·
+> `03`·`14`에서 교정. `docs/14`는 같은 문서 안에서 자기모순(45행은 "BM25 없음", 349행은
+> "robust=BM25 hybrid")이었다. 부수 교정: 이 오해가 낳은 **잘못된 캐비앗**("우리 amem은 read 채널이
+> upstream과 다르다")도 뒤집었다 — 양쪽 다 순수 dense이므로 실제 차이는 keyword-query 재작성과
+> 링크 캡이 per-hit이 아니라 global 5라는 두 가지다. 3b39c7d로 사라진 심볼
+> (`_expand_links`/`_attach_sources` + `pipeline.py:181` 행 참조)도 함께 갱신.

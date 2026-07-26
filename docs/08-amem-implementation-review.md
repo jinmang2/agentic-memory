@@ -27,7 +27,7 @@
 
 | 리포 | 소유 | 용도 | 상태 (2026-07-21) |
 |---|---|---|---|
-| `WujiangXu/A-mem` (구 `AgenticMemory`) | 1저자 Wujiang Xu 개인 | **논문 재현 전용** (README 명시); 논문 LoCoMo 수치를 낸 판본 (robust 경로 = in-memory cosine + BM25 hybrid) | ★921, main, 2026-03-05 push, 6 issues |
+| `WujiangXu/A-mem` (구 `AgenticMemory`) | 1저자 Wujiang Xu 개인 | **논문 재현 전용** (README 명시); 논문 LoCoMo 수치를 낸 판본 (robust 경로 = in-memory **순수** cosine `SimpleEmbeddingRetriever`; 같은 파일의 `HybridRetriever`(BM25)는 eval 미사용 dead code — 종전 "cosine + BM25 hybrid" 서술 교정, `docs/13` §2 참조) | ★921, main, 2026-03-05 push, 6 issues |
 | `agiresearch/A-mem` | 마지막 저자 Yongfeng Zhang 랩 org (AIOS) | 라이브러리판 (ChromaDB); **arXiv 공식 링크** | ★1,116, 2025-12-12 정체 (#16 "Is this project dead?"), 18 issues |
 | `WujiangXu/A-mem-sys` | 1저자 Wujiang Xu 개인 | 시스템판 (openai/ollama/sglang); 3벌 중 최소 버그(#32·Ps1 수정, #23/#24 잔존) | ★373, main, 2026-03-15 push, 3 issues |
 

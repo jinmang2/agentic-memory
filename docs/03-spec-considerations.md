@@ -159,7 +159,9 @@ add(episode) ──sync──> raw store 기록 + buffer
 > Milvus Lite/Qdrant local/LanceDB; Qdrant 서버 → qdrant-client local 모드;
 > ChromaDB in-memory → PersistentClient+cosine 명시). 현재 배선된 어댑터:
 > 벡터 `QdrantVectorStore`(local 모드, Nemori 계열) / `ChromaVectorStore`(#24
-> cosine 교정판, A-Mem 계열) / `LanceDBVectorStore` / `SqliteVecStore`(vec0);
+> cosine 교정판, A-Mem **라이브러리판**(agiresearch) 계열 — 논문 수치를 낸
+> `WujiangXu` robust 판본은 ChromaDB가 아니라 in-memory 순수 cosine이므로 이 어댑터를
+> "논문 수치 계보"로 읽지 말 것, `docs/13` §2) / `LanceDBVectorStore` / `SqliteVecStore`(vec0);
 > 그래프 `KuzuGraphStore`(임베디드 실 그래프 엔진, lite/standard 기본) /
 > `Neo4jGraphStore`(bolt 서비스 감지 시, full 기본) / `SqliteGraphStore`(최후 폴백);
 > 문서 `PostgresDocStore`(pgserver 임베디드 실 PostgreSQL, tsvector lexical —

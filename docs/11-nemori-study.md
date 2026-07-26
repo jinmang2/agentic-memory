@@ -131,7 +131,7 @@ buffer에 추가
 ```
 질문 → 임베딩 → 타입별 검색: episodes k=10 (dense) + semantic k=20 (dense)
      → RRF(단일 랭킹이라 순서 유지) → hydrate
-     → episodes 상위 r=2건에 _attach_sources():                (pipeline.py)
+     → episodes 상위 r=2건에 AttachSources 스텝:                (retrieval/steps.py)
         source_episode_ids로 원본 메시지를 "Source Messages:"로 부착
      → MemoryBundle.render(budget 6000tok):                    (types.py)
         점수순으로 예산 내 선별 후 "Episodic Memories:" / "Semantic Memories:"
