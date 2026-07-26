@@ -154,8 +154,8 @@ LoCoMo 0.9169 (gpt-4.1-mini, agent mode) / LongMemEval-S 93.0% (gpt-5-mini).
 | 후보 | 우리에게 주는 것 | 배선 난이도 | 판단 |
 |---|---|---|---|
 | **A-MAC admission gate** | "A-Mem은 전부 저장한다"의 **대안**을 실측 가능하게 함. 규칙 4개 + LLM 1콜이라 우리 organizer 계약에 그대로 맞음. precision 축(참조되지 않는 노트 비율)을 처음으로 측정 가능 | 낮음 — `AMemOrganizer.on_message` 앞단 게이트. Novelty는 이미 embedder 보유, Recency/Type은 순수 규칙, Confidence는 ROUGE-L | **1순위** |
-| **GRAVITY anchors** | read-path 기법이고 **방금 만든 ReadStep 플러그인 구조에 정확히 들어맞는다.** A-Mem 호스트에서 +5.6%p 보고 | 중 — anchor 3종 build가 별도 write 패스. 코드 미공개라 프롬프트를 우리가 설계해야 함 | **2순위** |
-| **RecMem recurrence gate** | LightMem과 같은 "유예/선택적 LLM 호출" 계열이고, `consolidate()` 훅이 이미 그 자리. 코드 공개 | 중 — θ_sim/θ_count 트리거는 단순하지만 memory unit 정의가 우리 episodes/semantic과 다름 | 3순위 |
+| **GRAVITY anchors** | ~~read-path 기법이고 ReadStep 플러그인 구조에 정확히 들어맞는다~~ → **아래 교정 참조**. A-Mem 호스트에서 +5.6%p 보고 | 중~높음 — anchor 3종 build가 offline write 패스 + read 주입. 코드 미공개라 프롬프트를 우리가 설계해야 함 | **2순위** |
+| **RecMem recurrence gate** | ~~`consolidate()` 훅이 이미 그 자리~~ → **아래 교정 참조**. LightMem과 같은 "유예/선택적 LLM 호출" 계열. 코드 공개 | 중 — 트리거는 단순하지만 3-tier 전체를 배선해야 함 | 3순위 |
 | **MemMachine** | 구현보다 **측정 프레임**으로서의 가치. 다만 §4.4 캐비앗 때문에 "간극을 명시한 논문"으로 인용하면 부정확 | — | 인용만 |
 | **LightMem** | 이미 조사됨. `consolidate()` = sleep-time 자리 | 중 | 보류 |
 
@@ -167,6 +167,28 @@ turn당 2콜 → 사실상 그대로거나 오히려 감소하고(저장 안 하
 **단, A-MAC 재현 시 반드시 분리할 것**: 논문의 F1 0.583은 admission 결정 F1(N=225)이다. 우리가
 측정할 것은 LoCoMo **answer** F1/J이며, 두 수치는 비교 대상이 아니다. A-MAC 배선의 성공 기준은
 "answer 품질을 유지하면서 노트 수와 write 토큰을 줄이는가"로 세워야 한다.
+
+### ⚠️ 2026-07-26 교정 — 위 표의 GRAVITY·RecMem 배치 판단은 틀렸다
+
+이 표는 abstract 수준 조사로 seam을 추정했고, 이후 **논문 전문 + RecMem 공식 코드 통독**으로
+둘 다 오분류였음이 확인됐다. 전문은 `memory-component-taxonomy.md` §2·§4.
+
+- **GRAVITY는 read-path 기법이 아니다.** anchor 3종은 **offline build phase** 산출물이다 —
+  entity는 *incremental batch update + offline consolidation* 2단계, event는 4W1O 튜플 →
+  temporal trace, topic은 cross-session 식별 + 요약. 게다가 "anchor knowledge base를 **standalone
+  파일로 저장**"한다. query time에 하는 일은 anchor retrieval + query expansion + prompt injection.
+  ⇒ **자체 organizer**(새 메모리 타입 3종, offline 단계는 `consolidate()`) **＋** read step.
+  ReadStep 레지스트리만으로는 절반도 커버되지 않는다.
+- **RecMem은 게이트가 아니라 자체 시스템이다.** 공식 코드(`CaiusDai/RecMem`)에 자체 embedding/
+  vector store/LLM 계층과 subconscious·episodic·semantic **3-tier**가 있고, `SubconsciousMemory`
+  docstring이 buffer가 *query time 검색 소스*임을 명시한다. recurrence 게이트는 `consolidate()`가
+  아니라 `add_memory`의 per-message write 경로 안에 있다(`rec_mem.py:337-411`: ①episodic merge
+  ②`min_relevant_score`/`min_consolidation_cnt` 게이트 ③LLM 없이 buffer 적재). ⇒ **자체 organizer**.
+
+⇒ 따라서 이 §5의 3개 후보 중 **A-MAC만 cross-cutting control policy**이고, 그 범주의 동료는
+GRAVITY/RecMem이 아니라 **SAGE**(2605.30711, "drop-in binary gate for A-Mem", 같은 store seam)와
+**Memory Worth**(2604.12007, discard + retrieval 억제)다. 이 사실이 `agmem/policies/` 패키지 신설의
+근거가 됐다(docs/04 §1.1).
 
 ---
 

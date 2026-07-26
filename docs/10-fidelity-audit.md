@@ -12,7 +12,7 @@
 >   낼 수 있던 엣지를 `valid_ids = {실제 반환 노트}` 로 차단.
 > - **Nemori v1/v4 ● · upstream ◑.** **[N1 수정]** `ThreeWayIntegrator`는 v4 §3.3.3
 >   P_con(new/merge/conflict) **논문 메커니즘**이므로 experimental이 아니라 충실 코어
->   (`nemori_stages.py`)에 있어야 맞다 — 이전 커밋(2164acb)이 이를 "논문 밖"으로
+>   (`organizers/nemori/stages.py`)에 있어야 맞다 — 이전 커밋(2164acb)이 이를 "논문 밖"으로
 >   오분류했던 것을 바로잡아 코어로 되돌리고, 진짜 우리 발명인 `SemanticOfflineConsolidator`
 >   (유예/오프라인 스케줄링)만 experimental에 남김. v4 프리셋이 더 이상 experimental을
 >   import하지 않음. **[N2 해소]** upstream 프리셋의 `merge_time_gap_hours=1.0`(">1h 병합
@@ -43,7 +43,7 @@
 > `experimental.ChainedConsumer` 어댑터로 추출(`nemori_amem`/`nemori_memoryos`). Nemori의
 > 유예/오프라인 스케줄링(`semantic_offline` SemanticOfflineConsolidator)만
 > `experimental/nemori_mixing.py`로 이동 — 그것이 재사용하는 `ThreeWayIntegrator`(v4
-> §3.3.3 논문 메커니즘)는 충실 코어(`nemori_stages.py`)에 유지([N1 수정]). **전 과정 동작
+> §3.3.3 논문 메커니즘)는 충실 코어(`organizers/nemori/stages.py`)에 유지([N1 수정]). **전 과정 동작
 > 보존**(125 passed/1 skipped 불변). 충실 코어 등급 무변경 — 논문 그대로의 로직은 온전.
 > A-Mem 논문 재독은 docs/13(스터디 가이드)로 별도 정리. experimental 항목의 격상은 LoCoMo
 > E2E 실측 후.
@@ -51,7 +51,7 @@
 > **2026-07-18 Nemori 라이프사이클 재설계** (스펙:
 > `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`): 아래 표 Nemori 행의
 > "episode merging, 배치 세그멘테이션 모드" 누락은 `fidelity="v4"|"upstream"` 스위치
-> (`EpisodeMerger`, `BatchPartitioner`, `nemori_stages.py`)로 해소됨 — 등급/측정 판정은 실측
+> (`EpisodeMerger`, `BatchPartitioner`, `organizers/nemori/stages.py`)로 해소됨 — 등급/측정 판정은 실측
 > 전까지 재산정하지 않음(표는 v1 디폴트 기준 그대로 유지).
 
 > **2026-07-17 round-5 P2/구-P3 일괄 반영** (상세: fidelity-round5-other-organizers.md

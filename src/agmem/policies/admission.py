@@ -65,7 +65,7 @@ from agmem._porter import PorterStemmer
 from agmem.core.types import Episode
 from agmem.organizers.base import OrganizerContext
 
-logger = logging.getLogger("agmem.organizers.admission")
+logger = logging.getLogger("agmem.policies.admission")
 
 # ---------------------------------------------------------------------------
 # ROUGE-L (Confidence feature)

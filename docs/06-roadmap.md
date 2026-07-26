@@ -89,7 +89,7 @@
 ## 즉시 다음 액션 (2026-07-26 갱신)
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
-> 브랜치: **`main` 단일**. 테스트 241 passed / 1 skipped.
+> 브랜치: **`main` 단일**. 테스트 245 passed / 1 skipped.
 >
 > **2026-07-26 사용자 지시 — 실험 전면 보류**: 로컬(0.5B)이든 API든 측정을 하지 않는다. 현재
 > 작업 모드는 ①새 논문 구현 ②API 배선 refactor 검토이고, 각 항목마다 **논문 원문 → official
@@ -109,7 +109,7 @@
 
 ### 구현 후보 (근거: `docs/research/write-path-critics.md` §5)
 3. [x] **A-MAC admission gate** (1순위) — **2026-07-26 구현 완료**, 감사 문서
-   `docs/research/amac-admission-gate.md`. `src/agmem/organizers/admission.py` +
+   `docs/research/amac-admission-gate.md`. `src/agmem/policies/admission.py` +
    `AMemOrganizer(admission=...)`, 테스트 52건. 기본값은 `admission=None`(A-Mem 전부 저장 =
    baseline)이므로 기존 config 동작 무변경.
    **측정 재개 시 재튜닝이 선행 조건**: 논문 weight `[0.1,0.1,0.1,0.1,0.6]`/θ=0.55는 공식 코드의
@@ -117,18 +117,32 @@
    feature에 전이되지 않는다. 자세한 건 감사 문서 §7.
    성공 기준은 여전히 논문 F1(admission 결정 F1, oracle 라벨, N=225)이 **아니라** "answer 품질
    유지하며 노트 수·write 토큰 감소"이며, `AdmissionStats`가 그 관측 장비다.
-4. **GRAVITY anchors** (2순위) — read-path 기법이라 `retrieval/steps.py`의 ReadStep 레지스트리에
-   그대로 들어간다. 코드 미공개라 anchor 3종 프롬프트는 자체 설계 필요.
-5. **RecMem recurrence gate** (3순위) — `consolidate()` 훅이 그 자리.
+4. **GRAVITY** (2순위) — **2026-07-26 재분류: read-path 기법이 아니다.** anchor 3종은 offline
+   build phase 산출물이고 standalone 저장되므로 **자체 organizer**(새 메모리 타입 3종 + offline
+   단계는 `consolidate()`) **＋** read step 양쪽이 필요하다. ReadStep 레지스트리만으로는 절반도
+   안 된다. 코드 미공개라 anchor 3종 프롬프트는 자체 설계 필요.
+5. **RecMem** (3순위) — **2026-07-26 재분류: `consolidate()` 게이트가 아니다.** 공식 코드에 자체
+   embedding/vector store/LLM + subconscious·episodic·semantic 3-tier가 있고 buffer 자체가 검색
+   소스다 ⇒ **자체 organizer**. recurrence 게이트는 per-message write 경로 안에 있다.
+6. **SAGE** (신규, 2605.30711) — A-MAC과 **같은 seam·같은 호스트**의 control policy
+   ("drop-in binary gate for A-Mem", LLM 콜 16–18% 절감). vMF 밀도 novelty + adaptive threshold로
+   ADD/NOOP/LLM-merge 라우팅. `policies/admission.py`의 두 번째 멤버가 될 자리이고, 이때 policy
+   공통 contract를 뽑아내면 된다.
+7. **Memory Worth** (신규, 2604.12007) — discard + retrieval 억제를 지배하는 policy. 메모리
+   유닛당 스칼라 카운터 2개만 필요하고 "retrieval을 이미 로깅하는 아키텍처"를 전제하는데
+   `on_retrieval` 훅이 정확히 그것이다.
+
+> 분류 근거와 조사 전문: `docs/research/memory-component-taxonomy.md`. 새 논문을 어디에 넣을지는
+> docs/04 §1.1의 판정 기준(메모리 타입 미선언 + MemoryOp 미발행 → policy)으로 결정한다.
 
 ### 별도 판단이 필요한 미수정 버그 3건 (코드에 문서화됨)
-6. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
+8. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
    tail이 영구 미방출 (`experimental/chained.py` "Known gap"). 고치면 `nemori_memoryos` 수치 변동.
    (어댑터 자신의 `_pending` 배치는 정상 방출되므로 `nemori_amem_k_batched`의 마지막 배치는
    안전하다 — 2026-07-26 확인.)
-7. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
+9. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
    `memory.py:warm_start` docstring). 고치면 과거 run과 op 카운트 비교가 깨진다.
-8. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
+10. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
    `(id, memory_type)`인데 **모든 벡터 백엔드는 `item_id` 단독 upsert**(numpy/sqlite-vec의
    `ON CONFLICT(item_id)`, chroma/qdrant/lance upsert-by-id)이고 `memory_type`은 필터 메타데이터로만
    저장한다. 같은 id를 두 타입으로 쓰면 벡터 인덱스에서 나중 것이 앞의 것을 덮어써 한쪽이 조용히
@@ -136,11 +150,11 @@
    고치려면 5개 백엔드 스키마를 모두 건드리고 재색인이 필요하므로 별도 결정으로 남긴다.
 
 ### 문서 교정 잔여
-9. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
+11. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
    측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
 
 ### 조사 후 종결된 리스크 (재개하지 말 것)
-10. **vendored Porter가 nltk와 다르다 → 영향 실측 0으로 종결** (2026-07-26, A-MAC 감사 부산물).
+12. **vendored Porter가 nltk와 다르다 → 영향 실측 0으로 종결** (2026-07-26, A-MAC 감사 부산물).
     `snap-research/locomo`의 `normalize_answer`와 `rouge_score` 둘 다 nltk 기본 모드
     (`NLTK_EXTENSIONS`)를 쓰는데 `agmem/_porter.py`는 Porter(1980) 원문 조건이라, step 1c
     `Y→I`에서 `cry`/`cried`가 병합되지 않는 등 실제 차이가 있다. `PorterStemmer(mode=...)`로

@@ -13,7 +13,7 @@ package only when an E2E measurement justifies promotion (docs/13 §5, spec
   deferred/offline consolidation pass (absent from the Nemori paper and
   upstream — v4 §3.3.3 consolidation is inline). The three-way decision it
   reuses (``ThreeWayIntegrator``) is paper-faithful and lives in the core
-  ``nemori_stages`` (corrected 2026-07-21 fidelity review).
+  ``nemori.stages`` (corrected 2026-07-21 fidelity review).
 """
 
 from __future__ import annotations

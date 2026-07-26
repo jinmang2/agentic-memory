@@ -5,7 +5,7 @@
 > `docs/research/write-path-critics.md` §5의 구현 후보 **1순위**.
 > 방법: 논문 HTML 전문 + **공식 코드 전수 통독**(github.com/GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents,
 > 단일 커밋 `40407ae`, MIT) + 주장 경험적 재현. 수치는 전부 1차 소스.
-> 산출 코드: `src/agmem/organizers/admission.py`, 테스트 `tests/test_admission_gate.py` (52건).
+> 산출 코드: `src/agmem/policies/admission.py`, 테스트 `tests/test_admission_gate.py` (54건).
 > **측정은 하지 않았다** — 사용자 지시(배선 확정 전 실험 금지)에 따라 유닛 검증까지만.
 
 ---
@@ -137,7 +137,7 @@ spaCy NER`가 남아 있다. POS 태거는 의존성에도 없다.
 
 ---
 
-## 3. 우리 구현 (`organizers/admission.py`)
+## 3. 우리 구현 (`policies/admission.py`)
 
 `AMemOrganizer._ingest` **앞단** 게이트. `_ingest`에 둔 이유는 `on_message`와 chained 경로
 (`ChainedConsumer`가 wrapped의 `on_message`를 호출)가 공유하는 유일한 funnel이기 때문.
@@ -263,6 +263,13 @@ C에 대해서는 이 잔차가 무해하다: candidate와 transcript span을 **
 
 ## 5. 레이어링 수정
 
+**모듈 위치 (2026-07-26 재배치)**: 처음 `organizers/admission.py`에 뒀는데, A-MAC은 메모리 타입을
+선언하지도 `MemoryOp`를 발행하지도 않으므로 방법론이 아니라 **control policy**다 →
+`policies/admission.py`로 이동. 분류 근거는 문헌 자체의 mechanism/policy 구분이고
+(`memory-component-taxonomy.md`), 이 재배치 과정에서 GRAVITY·RecMem을 policy로 봤던 이전 판단도
+오분류로 교정됐다(둘 다 자체 메모리 계층 소유 → mechanism). `organizers/` 루트에 organizer만
+남는다는 불변식은 `test_organizers.py::test_organizers_package_root_holds_only_organizers`가 강제한다.
+
 `_porter.py`를 `agmem/bench/` → `agmem/` 루트로 이동. `organizers`가 `bench`를 import하면
 `bench.locomo → agmem.memory → organizers` 순환이 닫힌다. 임포터 2곳(`bench/locomo.py`,
 `tests/test_locomo_eval.py`) 갱신.
@@ -271,7 +278,7 @@ C에 대해서는 이 잔차가 무해하다: candidate와 transcript span을 **
 
 ## 6. 검증 상태
 
-- `tests/test_admission_gate.py` **54건 통과**. 전체 스위트 **243 passed / 1 skipped**
+- `tests/test_admission_gate.py` **54건 통과**. 전체 스위트 **245 passed / 1 skipped**
   (게이트 전 189). `ruff format` clean.
 - **조립된 파사드(`AgenticMemory.add_message`) 관통 검증** — 조직자 단위가 아니라 실 write path.
   5 turn(선호·감탄사·정체성·감탄사·"…with my sister…")을 흘려서:

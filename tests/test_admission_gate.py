@@ -1,4 +1,4 @@
-"""A-MAC admission gate (organizers/admission.py).
+"""A-MAC admission gate (policies/admission.py).
 
 The ROUGE-L reference values are not hand-derived: they were produced by the
 real ``rouge_score`` package (``RougeScorer(["rougeL"], use_stemmer=True)``,
@@ -17,7 +17,7 @@ import pytest
 from agmem._porter import PorterStemmer
 from agmem.core.types import Episode
 from agmem.embed.fake import FakeEmbedder
-from agmem.organizers.admission import (
+from agmem.policies.admission import (
     PAPER_THRESHOLD,
     PAPER_WEIGHTS,
     AdmissionGate,

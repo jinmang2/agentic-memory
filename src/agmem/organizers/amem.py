@@ -34,8 +34,8 @@ from typing import Any
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, Note
-from agmem.organizers.admission import AdmissionGate
 from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.policies.admission import AdmissionGate
 
 logger = logging.getLogger("agmem.organizers.amem")
 
@@ -159,7 +159,7 @@ class AMemOrganizer(Organizer):
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
-        # Optional A-MAC write-path gate (organizers/admission.py). None keeps
+        # Optional A-MAC write-path gate (policies/admission.py). None keeps
         # A-Mem's paper behaviour of storing every message, which is the
         # baseline the gate is measured against — never enable it by default.
         self.admission = admission

@@ -10,7 +10,7 @@ selected only via that explicit non-default preset.
 
 Note: the three-way new/merge/conflict decision it reuses
 (``ThreeWayIntegrator``) is itself paper-faithful (v4 §3.3.3) and therefore
-lives in the faithful core (``nemori_stages``); only the *deferred/offline
+lives in the faithful core (``nemori.stages``); only the *deferred/offline
 scheduling* around it is our addition. This module imports ThreeWayIntegrator
 from the core rather than owning it (spec 2026-07-21-organizer-experimental-split,
 corrected 2026-07-21 fidelity review — see docs/10 §"2026-07-21 리뷰").
@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.organizers.base import OrganizerContext
-from agmem.organizers.nemori_stages import ThreeWayIntegrator
+from agmem.organizers.nemori.stages import ThreeWayIntegrator
 
 
 class SemanticOfflineConsolidator:

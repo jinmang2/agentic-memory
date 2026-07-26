@@ -1,5 +1,7 @@
 """Phase 1 exit criterion: MemoryOp abstraction holds for RB + A-Mem."""
 
+import importlib
+
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig
 from agmem.core.ops import OpType
@@ -315,3 +317,54 @@ def test_mmr_prefers_diversity():
     ids = [c for c, _ in picked]
     assert ids[0] == "dup1"
     assert ids[1] == "other"  # diversity beats the near-duplicate
+
+
+# ---------------- package layout invariant ----------------
+
+
+def test_organizers_package_root_holds_only_organizers():
+    """Every module directly under ``organizers/`` must define an Organizer.
+
+    The package is the methodology registry, so a module sitting in it that is
+    not a methodology miscategorises itself. Two exemptions, both structural:
+    ``base.py`` is the contract the subclasses implement and ``__init__.py`` is
+    the name->class registry.
+
+    This is the guard for the 2026-07-26 layout fix. A-MAC's gate used to live
+    here and is a control policy, not a mechanism -- it declares no memory type
+    and emits no MemoryOp -- so it moved to ``agmem/policies/``. Nemori's stage
+    strategies moved into the ``organizers/nemori/`` subpackage, which expresses
+    that they belong to one methodology rather than sitting loose beside
+    unrelated ones.
+    """
+    import pkgutil
+
+    import agmem.organizers as pkg
+    from agmem.organizers.base import Organizer
+
+    offenders = []
+    for info in pkgutil.iter_modules(pkg.__path__):
+        if info.name == "base":
+            continue
+        module = importlib.import_module(f"agmem.organizers.{info.name}")
+        has_organizer = any(
+            isinstance(obj, type) and issubclass(obj, Organizer) and obj is not Organizer
+            for obj in vars(module).values()
+        )
+        if not has_organizer:
+            offenders.append(info.name)
+    assert offenders == [], (
+        f"non-Organizer modules directly under organizers/: {offenders} — "
+        "a cross-cutting policy belongs in agmem/policies/, and a single "
+        "methodology's internal stages belong in its own subpackage"
+    )
+
+
+def test_policies_declare_no_memory_type_and_emit_no_ops():
+    """The operational test for belonging in ``policies/`` rather than ``organizers/``."""
+    from agmem.organizers.base import Organizer
+    from agmem.policies import AdmissionGate
+
+    assert not issubclass(AdmissionGate, Organizer)
+    assert not hasattr(AdmissionGate, "produces")
+    assert not hasattr(AdmissionGate, "on_message")

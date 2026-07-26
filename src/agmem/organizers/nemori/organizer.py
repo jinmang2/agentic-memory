@@ -47,10 +47,10 @@ import logging
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import Organizer, OrganizerContext
-from agmem.organizers.nemori_stages import (
-    AppendIntegrator,
+from agmem.organizers.nemori.stages import (
     BOUNDARY_PROMPT,  # noqa: F401 — re-exported for train/distill_data.py (nemori.BOUNDARY_PROMPT)
     BOUNDARY_SCHEMA,  # noqa: F401 — re-exported for train/distill_data.py (nemori.BOUNDARY_SCHEMA)
+    AppendIntegrator,
     BatchPartitioner,
     DedupIdReuseIntegrator,
     EpisodeMerger,

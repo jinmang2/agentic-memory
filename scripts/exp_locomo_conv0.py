@@ -22,11 +22,11 @@ from agmem.bench import locomo
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
-from agmem.organizers.admission import AdmissionGate
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.experimental import ChainedConsumer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
+from agmem.policies.admission import AdmissionGate
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
 OUT = Path(__file__).resolve().parent.parent / "results"

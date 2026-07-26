@@ -49,7 +49,10 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   ├── fusion.py                # RRF
 │   │   └── rerank.py                # Noop / MMR / LLMReranker / CrossEncoder
 │   │
-│   ├── organizers/                  # ★ 방법론 = Organizer 플러그인
+│   ├── organizers/                  # ★ mechanism = 방법론 = Organizer 플러그인
+│   │   │                            #   루트에는 Organizer 서브클래스만 (+contract/registry).
+│   │   │                            #   테스트로 강제: test_organizers.py
+│   │   │                            #   ::test_organizers_package_root_holds_only_organizers
 │   │   ├── base.py                  # Organizer Protocol:
 │   │   │                            #   on_message / on_task_end → list[MemoryOp]
 │   │   │                            #   (+ warm_start, on_retrieval, flush_buffer,
@@ -57,13 +60,21 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   ├── passthrough.py           # no-op baseline (raw episode만)
 │   │   ├── amem.py                  # 노트 구성→링크→이웃 진화 (버그 수정판 명시)
 │   │   ├── memoryos.py              # STM/MTM/LPM + heat 승격 + LFU eviction
-│   │   ├── nemori.py                # boundary 분절→서사(시간 절대화)→predict-calibrate 증류
-│   │   ├── nemori_stages.py         # Segmenter/EpisodeMerger/Integrator/Consolidator
+│   │   ├── nemori/                  # 스테이지를 소유하는 방법론 → 서브패키지
+│   │   │   ├── __init__.py          # NemoriOrganizer 재수출 (기존 import 경로 유지)
+│   │   │   ├── organizer.py         # boundary 분절→서사(시간 절대화)→predict-calibrate 증류
+│   │   │   └── stages.py            # Segmenter/EpisodeMerger/Integrator/Consolidator
 │   │   │                            #   스테이지 (fidelity 스위치, docs/11 §4)
 │   │   ├── zep_graph.py             # entity 추출→resolution→fact→invalidation
 │   │   ├── ace.py                   # Generator/Reflector/Curator + playbook delta
 │   │   ├── reasoning_bank.py        # self-judge→성공/실패 증류→append (+MaTTS 훅)
 │   │   └── gmemory.py               # MAS 궤적 sparsify→insight, reward 기반 프루닝
+│   │
+│   ├── policies/                    # ★ control policy = mechanism과 직교하는 cross-cutting 규칙
+│   │   │                            #   소속 판정: 메모리 타입 미선언 + MemoryOp 미발행.
+│   │   │                            #   근거/조사: docs/research/memory-component-taxonomy.md
+│   │   └── admission.py             # store 연산 게이트: A-MAC(2603.04549) 구현,
+│   │                                #   SAGE(2605.30711)가 같은 seam의 다음 후보
 │   │
 │   ├── memory.py                    # AgenticMemory 퍼사드 (05 문서의 공개 API)
 │   │                                #   + 비동기 write 워커 (내장 스레드+큐, sync_write=False 시)
@@ -87,6 +98,26 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 ```
 
 로드맵(미구현 모듈): `core/namespace.py`, `retrieval/expand.py`(time-range 추출), `embed/api_embedder.py`, `bench/longmemeval.py·judges.py·report.py`, `train/eval_extract.py`, graph store용 `QueueStore`/`GraphStore` 공통 Protocol.
+
+### 1.1 mechanism vs control policy — 새 논문을 어디에 넣을지 정하는 규칙
+
+`organizers/`와 `policies/`의 분리는 우리 편의가 아니라 **문헌 자체의 분해**를 따른다. 서베이
+arXiv:2603.07670은 메모리 시스템을 write–manage–read로 모델링하고(read 연산자 `R(M,x)`, update
+연산자 `U(M,x,a,o,r)`, 연산 집합 *store / retrieve / update / summarize / discard*) 두 층위를
+명시적으로 구분한다:
+
+- **mechanism** (§4) — 시스템이 *무엇인지*. 자기 메모리 표현과 읽기 경로를 소유한다. → `Organizer`
+- **control policy** (§3.3) — 그 연산이 *언제/어떻게 발동하는지*를 지배하는 heuristic/prompted/
+  learned 규칙. 서베이가 "mechanism 선택과 **직교하는 cross-cutting 차원**"이라 부르는 것. → `policies/`
+
+**판정 기준(운영적)**: *policy는 메모리 타입을 선언하지 않고 `MemoryOp`도 발행하지 않는다.*
+저장 상태와 그것을 되읽는 방법을 소유하면 mechanism이다. 이 기준으로 조사 단계에서 잘못
+분류했던 두 건을 교정했다 — RecMem(2605.16045)과 GRAVITY(2605.01688)는 각자 메모리 계층을
+소유하므로 **policy가 아니라 mechanism**이다(`docs/research/memory-component-taxonomy.md` §2).
+
+**세 번째 범주**: 한 방법론이 소유한 내부 스테이지(Nemori의 boundary/merge/integration 전략).
+이것은 그 방법론의 논문 메커니즘이므로 별도 패키지가 아니라 **소유자의 서브패키지**에 둔다
+(`organizers/nemori/stages.py`). 무관한 방법론들 옆에 평평하게 놓지 않는 것이 요점이다.
 
 ## 2. 데이터 흐름
 

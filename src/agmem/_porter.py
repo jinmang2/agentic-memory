@@ -4,7 +4,7 @@ Two callers need Porter stemming and both are reproducing an upstream that got
 it from ``nltk``: the official snap-research/locomo ``normalize_answer``
 (F1/BLEU-1, ``bench/locomo.py``) and ``rouge_score``'s ``use_stemmer=True``
 tokenizer, which A-MAC's Confidence feature runs on
-(``organizers/admission.py``). ``nltk`` is not a dependency here, so this is a
+(``policies/admission.py``). ``nltk`` is not a dependency here, so this is a
 compact vendored implementation of the classic Porter (1980) algorithm rather
 than a naive suffix-stripping fallback. Derived from Vivake Gupta's
 public-domain Python port of Martin Porter's reference C implementation
