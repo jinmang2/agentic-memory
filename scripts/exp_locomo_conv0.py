@@ -289,6 +289,35 @@ def main() -> None:
             NEMORI_TEMPS,
             None,
         ),
+        # --- Nemori v4 Table 7: A-MEM fed Nemori's distilled knowledge K
+        # instead of raw messages (45-64% less storage, core +1.9%~+6.1%).
+        # A-MEM is the system under test, so the read path is A-Mem's own
+        # (notes-only + LLM keyword queries), identical to the `amem` config —
+        # the ONLY difference is what the write path ingests. The two granularity
+        # variants exist because the paper never says at what unit K arrives;
+        # only one of them can land in the paper's storage band (chained.py).
+        "nemori_amem_k": (
+            [
+                lambda: NemoriOrganizer(fidelity="v1"),
+                lambda: ChainedConsumer(AMemOrganizer(), "semantic"),
+            ],
+            ("notes",),
+            10,
+            True,
+            NEMORI_TEMPS,
+            None,
+        ),
+        "nemori_amem_k_batched": (
+            [
+                lambda: NemoriOrganizer(fidelity="v1"),
+                lambda: ChainedConsumer(AMemOrganizer(), "semantic", batch_key="episode_id"),
+            ],
+            ("notes",),
+            10,
+            True,
+            NEMORI_TEMPS,
+            None,
+        ),
         "amem_mixed": (
             ["amem"],
             ("episodic", "notes"),

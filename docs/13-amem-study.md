@@ -170,6 +170,33 @@ messages-only 순수체로 남는다. Nemori의 our-mixing 스테이지(`llm3way
 `experimental/nemori_mixing.py`로 이동. **동작 보존**(125 tests green). 격상 조건: LoCoMo
 E2E 실측으로 이득 확인 시 seam 고쳐 core 승격(§같이 볼 포인트 ①의 text-seam 문제 해소 포함).
 
+### 5.1 Nemori v4 Table 7 — A-Mem에 K를 먹이기 (2026-07-26 배선)
+
+Nemori v4가 직접 수행한 실험이다: **A-MEM의 입력을 raw messages 대신 Nemori의 증류 지식 `K`로
+교체**하면 저장공간 45~64% 감소 + core 점수 +1.9%~+6.1% (`docs/research/nemori-reasoningbank.md`
+§Third-party 통합). 기존 `nemori_amem`은 **에피소드 서사**를 먹이므로 이 실험이 아니다.
+
+| config | 어댑터 | 노트 단위 |
+|---|---|---|
+| `nemori_amem` | `ChainedConsumer(AMem(), "episodes")` | 에피소드 서사 1개 = 노트 1개 (Table 7 아님) |
+| `nemori_amem_k` | `ChainedConsumer(AMem(), "semantic")` | **fact 1개 = 노트 1개** (문자 그대로의 해석) |
+| `nemori_amem_k_batched` | `+ batch_key="episode_id"` | **에피소드의 fact 묶음 = 노트 1개** |
+
+read 경로는 `amem` config와 **동일**(notes-only + keyword_queries): Table 7에서 측정 대상은
+A-MEM이고 `K`는 그 입력일 뿐이다. write가 먹는 것만 다르다.
+
+논문이 `K`의 도착 단위를 명시하지 않아 두 granularity를 모두 배선했다 — **저장공간 45~64% 밴드에
+들어가는 쪽은 하나뿐이므로 실측이 판별한다.** 현재 상태:
+
+- per-fact는 Ps1이 원자 문장 하나를 분석하게 되어 keywords/context가 거의 공허하고,
+  provenance가 upstream 에피소드가 아닌 **semantic fact id**를 가리킨다.
+- batched는 노트 ≈ 이벤트를 유지하고 provenance가 에피소드를 정확히 가리킨다 (테스트로 고정).
+- **양쪽 공통 캐비앗**: Nemori의 calibrate 프롬프트가 semantic statement에서 시간/날짜를
+  금지하므로 `K`에는 timestamp가 없고, 파생 노트는 ingest wall clock으로 떨어진다. 즉 `K`를
+  먹이면 A-Mem의 노트별 대화 시각을 포기하는 셈 — temporal 카테고리 결과 해석 시 필수 전제.
+
+미실측. 테스트: `tests/test_lifecycle.py` — `test_k_to_amem_*` 3종.
+
 ---
 
 ## 6. 결과 해석 캐비앗
@@ -193,6 +220,7 @@ uv run python scripts/exp_locomo_conv0.py --configs passthrough amem
 # amem = notes-only, k=10, keyword_queries, write온도 0.7/0.7, Chroma(cosine)
 # amem_mixed = raw episodic 혼입(ablation용, 논문 재현 아님)
 # nemori_amem = Nemori 에피소드 → A-Mem 노트 체이닝 (experimental: ChainedConsumer)
+# nemori_amem_k / nemori_amem_k_batched = Nemori v4 Table 7 (아래 §5.1)
 ```
 테스트: `tests/test_organizers.py` — `test_amem_note_link_and_evolution`,
 `test_amem_hallucinated_neighbor_ids_ignored`, `test_amem_degrades_without_llm`.

@@ -692,3 +692,70 @@ def test_delete_op_is_not_propagated_as_event():
         actor="src",
     )
     assert consumer.seen == []
+
+
+# ---------------- Nemori K -> A-Mem (v4 Table 7, experimental) ---------------
+
+
+def _k_to_amem(batch_key=None):
+    """Nemori's distilled knowledge K fed to A-Mem in place of raw messages."""
+    from agmem.organizers.amem import AMemOrganizer
+    from agmem.organizers.experimental import ChainedConsumer
+
+    consumer = ChainedConsumer(AMemOrganizer(), "semantic", batch_key=batch_key)
+    mem = _mk(organizers=[consumer])
+    return mem, consumer
+
+
+def _emit_facts(mem, facts, episode_id):
+    """Emit semantic ADDs the way Nemori's integrators do (payload carries
+    episode_id, which is the batch key)."""
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id=fact_id,
+                payload={
+                    "id": fact_id,
+                    "content": content,
+                    "episode_id": episode_id,
+                    "source_episode_ids": [episode_id],
+                    "embedding_text": content,
+                },
+            )
+            for fact_id, content in facts
+        ],
+        actor="nemori",
+    )
+
+
+def test_k_to_amem_per_fact_makes_one_note_each():
+    mem, _ = _k_to_amem()
+    _emit_facts(mem, [("f1", "Alice is a curator."), ("f2", "Alice prefers trains.")], "ep1")
+    notes = mem.doc_store.list_items("notes", namespace="t")
+    assert sorted(n["content"] for n in notes) == ["Alice is a curator.", "Alice prefers trains."]
+
+
+def test_k_to_amem_batched_groups_one_episodes_facts():
+    """A batch closes when the episode_id changes; the tail needs flush()."""
+    mem, _ = _k_to_amem(batch_key="episode_id")
+    _emit_facts(mem, [("f1", "Alice is a curator."), ("f2", "Alice prefers trains.")], "ep1")
+    assert mem.doc_store.list_items("notes", namespace="t") == []  # still accumulating
+    _emit_facts(mem, [("f3", "Bob lives in Seoul.")], "ep2")  # key change closes ep1
+    notes = mem.doc_store.list_items("notes", namespace="t")
+    assert [n["content"] for n in notes] == ["Alice is a curator.\nAlice prefers trains."]
+    # provenance points at the upstream episode, not at an individual fact
+    assert notes[0]["source_episode_ids"] == ["ep1"]
+    mem.flush()  # ep2 has no following event to close it
+    assert len(mem.doc_store.list_items("notes", namespace="t")) == 2
+
+
+def test_k_to_amem_batched_retires_only_when_all_facts_superseded():
+    mem, consumer = _k_to_amem(batch_key="episode_id")
+    _emit_facts(mem, [("f1", "Alice is a curator."), ("f2", "Alice prefers trains.")], "ep1")
+    mem.flush()
+    note_id = mem.doc_store.list_items("notes", namespace="t")[0]["id"]
+    assert consumer._retire({"f1"}) == []  # partially absorbed -> note stands
+    retired = consumer._retire({"f2"})
+    assert [(o.op, o.target_id) for o in retired] == [(OpType.INVALIDATE, note_id)]
