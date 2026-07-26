@@ -89,7 +89,7 @@
 ## 즉시 다음 액션 (2026-07-26 갱신)
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
-> 브랜치: **`main` 단일**. 테스트 254 passed / 1 skipped.
+> 브랜치: **`main` 단일**. 테스트 263 passed / 1 skipped.
 >
 > **2026-07-26 사용자 지시 — 실험 전면 보류**: 로컬(0.5B)이든 API든 측정을 하지 않는다. 현재
 > 작업 모드는 ①새 논문 구현 ②API 배선 refactor 검토이고, 각 항목마다 **논문 원문 → official
@@ -193,11 +193,25 @@
   §2 Read에 명시. docs/05에 합성 API(`AdmissionGated`/`ChainedConsumer`)와
   `default_memory_types` 추가.
 
-**남긴 판단 2건**: ① 타입을 쪼개는 것(`semantic_profile` 신설)이 `actor` 필터보다 근본적이지만
-저장 아티팩트의 타입 키가 바뀌므로 보류 — 어휘가 `type`/`kind`/`actor` 셋으로 늘어난 상태이고
-Phase 5 비교표 전에 재검토. ② `search()`의 `on_retrieval` 적용이 호출자 스레드에서 write 큐를
-우회하므로 organizer in-memory 상태(MemoryOS `_heat`)에 경합이 있다 — 자료구조는 깨지지 않고
-heat 카운터 갱신 손실 수준이라 문서화만 했다(docs/04 §2).
+**남긴 판단 3건** (전부 "기록하고 지금은 건드리지 않는다" — 이유가 각각 다름):
+
+① **타입 분할 보류.** `semantic_profile` 신설이 `actor` 필터보다 근본적이지만 저장 아티팩트의
+타입 키가 바뀐다. 어휘가 `type`/`kind`/`actor` 셋으로 늘어난 상태이고, **Phase 5 비교표를 그리기
+전에 한 번에 정리**하는 게 맞다. `actor` 가드가 실피해는 이미 막고 있으므로 급하지 않다.
+
+② **`search()`의 write-큐 우회.** `on_retrieval` op를 호출자 스레드에서 적용하므로 organizer의
+in-memory 상태(MemoryOS `_heat`)에 워커 스레드와의 경합이 있다. **락으로 고치면 안 된다** —
+`_apply_from_all`을 잠그면 워커가 LLM 호출 중 락을 쥐고 있는 동안 `search()`가 블록되어, read가
+write를 기다리지 않는다는 async write의 설계 목적 자체가 깨진다. 자료구조는 손상되지 않고 heat
+카운터 갱신 1건 손실 수준이라 문서화만 했다(docs/04 §2).
+
+③ **`profile` 용어 3중 충돌** (2026-07-26 재점검에서 제기, 미해소). `AgmemConfig.profile`
+(lite/standard/full) / MemoryOS `kind="profile"`(사용자 프로필 fact) / `stats()["profile"]`·
+`bench/harness.py`의 재현 스탬프가 전부 같은 단어다. §2.4.1이 "consolidation"에, §2.6이 memory
+type에 한 것과 **같은 처방이 필요한 세 번째 용어**인데 아직 축을 가르지 않았다. 어느 쪽을 고쳐도
+비용이 있다 — `AgmemConfig.profile`은 TOML `[profile]`과 저장된 결과 스탬프에 박혀 있고,
+`kind="profile"`은 아티팩트와 `bench/locomo.py`의 read 경로에 박혀 있다. ①과 같은 타이밍
+(Phase 5 어휘 정리)에 함께 결정한다.
 
 ### 문서 교정 잔여
 12. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
