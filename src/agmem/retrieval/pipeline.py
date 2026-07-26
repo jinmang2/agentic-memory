@@ -15,6 +15,12 @@ from agmem.retrieval.steps import ReadContext, ReadStep, _DictItem, default_read
 from agmem.stores.base import DocStore, VectorStore
 
 
+def _item_id(scored: ScoredItem) -> str | None:
+    """Id of a scored item, whichever shape it has — an ``Episode`` carries ``id``
+    as an attribute, derived items are dict-backed (``_DictItem``)."""
+    return getattr(scored.item, "id", None) or scored.item.data.get("id")
+
+
 class RetrievalPipeline:
     """Facade over one namespace's stores for `search()`; stateless beyond
     its store/embedder/reranker references, so one instance is safe to
@@ -71,6 +77,7 @@ class RetrievalPipeline:
         query_embedding = self.embedder.embed([query], kind="query")[0]
 
         bundle = MemoryBundle(query=query)
+        served: set[tuple[str, str | None]] = set()
         for memory_type in memory_types:
             type_k = k.get(memory_type, 10) if isinstance(k, dict) else k
             candidate_k = type_k * 3  # over-fetch per source, fuse down
@@ -116,14 +123,25 @@ class RetrievalPipeline:
                         doc_store=self.doc_store,
                         namespace=namespace,
                         graph_store=self.graph_store,
-                        bundle_ids={
-                            getattr(s.item, "id", None) or s.item.data.get("id")
-                            for s in bundle.items
-                        },
+                        bundle_ids={_item_id(s) for s in bundle.items},
                     ),
                 )
 
-            bundle.items.extend(hydrated)
+            # A step may emit a type that another pass also serves, so the same
+            # item can reach the bundle twice and be rendered twice into the QA
+            # prompt: ExpandExperiences replaces an experience with its strategy
+            # items while reasoning_bank declares both types, and two retrieved
+            # experiences can share one strategy. Dedup on (memory_type, id) —
+            # never the bare id, since the items table is keyed (id, memory_type)
+            # and the same id under two types is two distinct items. First
+            # occurrence wins, so an expansion's score/provenance is the one kept
+            # and `produces` order still decides which copy survives.
+            for scored in hydrated:
+                key = (scored.memory_type, _item_id(scored))
+                if key in served:
+                    continue
+                served.add(key)
+                bundle.items.append(scored)
         return bundle
 
     def _hydrate(self, fused: list[tuple[str, float]], memory_type: str) -> list[ScoredItem]:

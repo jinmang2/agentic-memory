@@ -93,6 +93,66 @@ def test_zero_cap_disables_the_step():
         mem.close()
 
 
+def test_expanded_items_are_not_served_twice():
+    """A step may emit a type a later pass also searches: ExpandExperiences
+    replaces an experience with its strategy items, and reasoning_bank declares
+    both types, so `strategies` got rendered twice into the QA prompt. Reachable
+    via the memory_types=None default (MCP), never by the explicit-type bench
+    calls."""
+    mem = AgenticMemory(
+        namespace="t", organizers=["reasoning_bank"], embedder=FakeEmbedder(dim=128)
+    )
+    try:
+        assert mem.default_memory_types == ("episodic", "experiences", "strategies")
+        put_indexed(mem, "s1", "strategies", {"content": "prefer the search box"})
+        put_indexed(mem, "s2", "strategies", {"content": "verify the cart total"})
+        put_indexed(
+            mem, "x1", "experiences", {"content": "checkout flow", "item_ids": ["s1", "s2"]}
+        )
+        bundle = mem.search("checkout search box cart total")
+        served = [(s.memory_type, s.item.data["id"]) for s in bundle.items]
+        assert sorted(served) == [("strategies", "s1"), ("strategies", "s2")]
+        # the render is the actual contract — it goes verbatim into the prompt
+        assert bundle.render().count("prefer the search box") == 1
+    finally:
+        mem.close()
+
+
+def test_two_experiences_sharing_a_strategy_serve_it_once():
+    """The same duplication within a single pass: one strategy reachable from two
+    retrieved experiences."""
+    mem = AgenticMemory(
+        namespace="t", organizers=["reasoning_bank"], embedder=FakeEmbedder(dim=128)
+    )
+    try:
+        put_indexed(mem, "s1", "strategies", {"content": "prefer the search box"})
+        put_indexed(mem, "x1", "experiences", {"content": "checkout flow", "item_ids": ["s1"]})
+        put_indexed(mem, "x2", "experiences", {"content": "checkout retry", "item_ids": ["s1"]})
+        bundle = mem.search("checkout flow retry", memory_types=["experiences"])
+        assert [s.item.data["id"] for s in bundle.items] == ["s1"]
+    finally:
+        mem.close()
+
+
+def test_cross_type_id_collision_is_not_deduped():
+    """Dedup keys on (memory_type, id), never the bare id: the items table is
+    keyed (id, memory_type), so one id under two types is two distinct items.
+
+    The `shared` note is reached by link expansion (a doc-store fetch) rather than
+    the vector index, because the vector stores upsert by bare `item_id` and would
+    otherwise let the `pages` row overwrite the `notes` one."""
+    mem = make_mem()
+    try:
+        put_indexed(mem, "n1", "notes", {"content": "a note about paris", "links": ["shared"]})
+        mem.doc_store.put_item("shared", "notes", "t", {"id": "shared", "content": "linked note"})
+        put_indexed(mem, "shared", "pages", {"content": "a page about paris"})
+        bundle = mem.search("paris", memory_types=["notes", "pages"])
+        served = [(s.memory_type, s.item.data["id"]) for s in bundle.items]
+        assert ("notes", "shared") in served and ("pages", "shared") in served
+    finally:
+        mem.close()
+
+
 def test_nemori_top_r_source_attachment():
     mem = make_mem()
     try:
