@@ -354,16 +354,20 @@ class AgenticMemory:
             ]
         )
 
-    def _apply_from_all(self, hook: Callable[[Organizer], list[MemoryOp]]) -> int:
+    def _apply_from_all(
+        self, hook: Callable[[Organizer], list[MemoryOp]], propagate: bool = True
+    ) -> int:
         """Run one hook across every organizer in list order, applying each
         organizer's ops under its own name, and return the total op count.
 
         The single place organizers are fanned out over — so hook call sites stay
-        one line and can never drift on ordering or actor attribution."""
+        one line and can never drift on ordering or actor attribution.
+        ``propagate=False`` applies the ops without turning them into
+        ``MemoryEvent``s; see ``search()`` for the one caller that needs it."""
         applied = 0
         for org in self.organizers:
             ops = hook(org)
-            self._apply_ops(ops, actor=org.name)
+            self._apply_ops(ops, actor=org.name, propagate=propagate)
             applied += len(ops)
         return applied
 
@@ -485,6 +489,26 @@ class AgenticMemory:
                 data = dict(op.payload)
             else:  # UPDATE/MERGE: merge into existing item, don't clobber
                 existing = self.doc_store.get_items([op.target_id], op.target_type)
+                if not existing and op.op is OpType.UPDATE:
+                    # UPDATE used to upsert, so an UPDATE naming an id that is not
+                    # there wrote a fragment with no content and no provenance
+                    # ({"helpful": 1, "id": ..., "actor": ...}) that retrieval would
+                    # then serve. Nothing emits one today — every organizer reads its
+                    # target first, and the two hooks taking caller-supplied ids
+                    # (ACE/G-Memory on_feedback) guard explicitly — so this makes the
+                    # emitter's bug loud instead of storing its consequence. The op
+                    # stays in the evolution log either way: append happens first, so
+                    # skipping the store write loses no history.
+                    logger.warning(
+                        "UPDATE on missing item (type=%s id=%s actor=%s); op logged, not applied",
+                        op.target_type,
+                        op.target_id,
+                        op.actor,
+                    )
+                    return
+                # MERGE keeps upserting on purpose: a merge writes its result under a
+                # NEW id (Nemori emits MERGE(new) + INVALIDATE(absorbed)), so "target
+                # does not exist yet" is the normal case for it, not an error.
                 data = dict(existing[0]) if existing else {}
                 data.update(op.payload)
             data.setdefault("id", op.target_id)
@@ -576,7 +600,19 @@ class AgenticMemory:
         reranker); this method's own contract is the read->write loop: every served
         ``(item_id, memory_type, score)`` triple is passed to each organizer's
         ``on_retrieval`` synchronously, before this call returns, so their returned ops
-        are applied for the *next* search — never the one in progress."""
+        are applied for the *next* search — never the one in progress.
+
+        Those ops are applied WITHOUT propagation. ``base.on_retrieval`` requires
+        implementations to be cheap ("no LLM calls here") because this runs inline on
+        the read path, but that contract only binds the hook itself: propagated ops
+        become ``MemoryEvent``s, and a subscriber's ``on_memory_event`` may do anything
+        — ``ChainedConsumer`` feeds the wrapped organizer's ``on_message``, which calls
+        an LLM. Nothing hits that today only because both ``on_retrieval``
+        implementations return ``[]``. Cutting propagation here makes the read path's
+        cost bound structural instead of a property two organizers happen to have. The
+        cost is that a chained consumer cannot observe read-path mutations; when some
+        methodology needs that, it should be an explicit decision rather than something
+        inherited from the write path's fan-out."""
         types = tuple(memory_types) if memory_types is not None else self.default_memory_types
         bundle = self.pipeline.search(query, k=k, memory_types=types, namespace=self.namespace)
         # read->write feedback (round-5): organizers see what was served.
@@ -588,7 +624,7 @@ class AgenticMemory:
             )
             for s in bundle.items
         ]
-        self._apply_from_all(lambda org: org.on_retrieval(hits, self._ctx))
+        self._apply_from_all(lambda org: org.on_retrieval(hits, self._ctx), propagate=False)
         return bundle
 
     def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:

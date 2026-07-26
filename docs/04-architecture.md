@@ -325,23 +325,27 @@ served-insight 게이트(round-5 W-4)는 호출자 없는 `backward()` 안에만
 팬아웃 이후 "이 규칙은 누구 것인가"가 "어느 organizer가 활성인가"와 같은 질문이 된다. 대가는
 명시적이다: **소유 organizer가 활성이 아니면 피드백은 0을 반환하는 no-op**이다.
 
-### 3.5 알려진 잠복 사항 (버그 아님, 관측된 상태로 기록)
+### 3.5 op 의미와 위상 경계 — "구현이 지키던 것"을 구조로 옮긴 두 건
 
-파사드 감사에서 나왔지만 **현재 실경로가 없어 고치지 않은** 것들. 고치지 않은 이유가 곧
-재발 조건이므로 남긴다.
+파사드 감사에서 나온 두 건은 **당시 실경로가 없었다.** 그래서 넘길 뻔했는데, 둘 다 안전한
+이유가 "우연히 아무도 그렇게 안 해서"였다 — 즉 다음 방법론이 재발시킬 수 있는 상태였다.
 
-- **`UPDATE`는 upsert다.** 없는 id에 UPDATE하면 아이템이 생긴다. 우연이 아니라 load-bearing:
-  `base.cursor_op`이 UPDATE로 consolidate 커서를 *처음* 만든다. 지금 안전한 이유는 organizer의
-  UPDATE 발행 지점이 전부 대상을 먼저 읽기 때문이고, 외부 id를 받는 두 경로(ACE·G-Memory의
-  `on_feedback`)는 `get_items` + `continue`로 명시적으로 가드한다. 위험은 "가드를 잊은 다음
-  organizer가 실패 대신 유령 아이템을 조용히 쓴다"는 것이다.
-- **`on_retrieval` 반환 op는 전파된다.** `base.py`가 "must be cheap: no LLM calls here"를
-  계약으로 걸었지만 그 계약은 organizer 본인에게만 걸린다 — 반환 op가 MemoryEvent로 전파되면
-  구독자의 `on_memory_event`가 임의 작업(`ChainedConsumer`는 wrapped의 `on_message` = LLM)을
-  읽기 경로에서 돌린다. 지금 안전한 이유는 `memoryos`/`gmemory` 두 구현 모두 명시적으로 `[]`를
-  반환하기 때문이다 — **구조가 아니라 구현이 지키고 있다.**
-- **`warm_start`는 프로덕션 호출자가 없다.** 큐 드레인은 `consolidate`와 맞추기 위해 넣었지만,
-  이 훅 전체가 테스트에서만 불린다.
+- **`UPDATE`는 더 이상 upsert가 아니다.** 없는 id에 UPDATE하면 내용도 provenance도 없는 파편이
+  생기고 그게 검색에 서빙됐다. upsert가 필요했던 유일한 자리는 `base.cursor_op`(첫 전진 시 커서
+  행이 없음)인데, 커서의 상태는 `seq` 전부라 **전체 치환이 곧 올바른 의미**다 — 그래서 `cursor_op`은
+  `ADD`가 됐고 UPDATE는 "대상이 있어야 한다"로 좁혀졌다(없으면 warning 후 미적용, op는 로그에
+  남으므로 이력 손실 없음). **`MERGE`는 upsert를 유지한다** — 병합 결과는 새 id에 쓰이므로
+  (Nemori의 MERGE(신규)+INVALIDATE(흡수)) 대상 부재가 정상 경로다.
+- **`on_retrieval` 반환 op는 전파하지 않는다.** `base.py`의 "must be cheap: no LLM calls here"는
+  훅 본인에게만 걸리는 계약이었다 — 반환 op가 MemoryEvent가 되면 구독자의 `on_memory_event`가
+  임의 작업(`ChainedConsumer`는 wrapped의 `on_message` = LLM)을 읽기 경로에서 돌린다. `memoryos`/
+  `gmemory`가 둘 다 `[]`를 반환해서 발화하지 않았을 뿐이므로, 읽기 경로의 비용 상한을 구조로
+  옮겼다(`_apply_from_all(propagate=False)`). op 자체는 그대로 적용된다. **대가**: 체인 소비자가
+  읽기 경로의 변경을 관측할 수 없다 — 어떤 방법론이 그걸 필요로 하면 write-path 팬아웃에서
+  물려받는 게 아니라 명시적 결정이어야 한다.
+
+기록만 한 것: **`warm_start`는 프로덕션 호출자가 없다.** 큐 드레인은 `consolidate`와 맞추려고
+넣었지만 이 훅 전체가 테스트에서만 불린다 — 결함이 아니라 배선 상태다.
 
 ## 4. 프로세스 토폴로지
 

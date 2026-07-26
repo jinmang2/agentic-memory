@@ -185,9 +185,16 @@ class Organizer:
         return int(items[0].get("seq", 0)) if items else 0
 
     def cursor_op(self, seq: int) -> MemoryOp:
-        """Emit the cursor-advance op for ``cursor_key``."""
+        """Emit the cursor-advance op for ``cursor_key``.
+
+        ADD, not UPDATE: the cursor's whole state is ``seq``, so a full replace
+        is exactly right, and it works on the first advance when no cursor row
+        exists yet. It used to be an UPDATE, which only worked because
+        ``_apply_one`` treated UPDATE as an upsert — bookkeeping quietly widening
+        the meaning of an op every methodology also uses. Reading it back is
+        unchanged (``read_cursor`` sees the same ``{"seq": n}`` item)."""
         return MemoryOp(
-            op=OpType.UPDATE,
+            op=OpType.ADD,
             target_type="state",
             target_id=self.cursor_key,
             payload={"seq": seq},

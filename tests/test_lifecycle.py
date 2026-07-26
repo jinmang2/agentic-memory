@@ -33,9 +33,117 @@ def test_cursor_helpers_roundtrip():
     ctx = OrganizerContext(doc_store=doc, vector_store=None, embedder=None, namespace="t")
     assert org.read_cursor(ctx) == 0
     op = org.cursor_op(7)
-    assert (op.op, op.target_type, op.target_id) == (OpType.UPDATE, "state", "consolidate:curs")
+    # ADD, not UPDATE: the cursor's entire state is `seq`, so a full replace is
+    # right, and the first advance has no row to update. It was an UPDATE only
+    # because `_apply_one` upserted, which is no longer true for UPDATE.
+    assert (op.op, op.target_type, op.target_id) == (OpType.ADD, "state", "consolidate:curs")
     doc.put_item("consolidate:curs", "state", "t", {"id": "consolidate:curs", "seq": 7})
     assert org.read_cursor(ctx) == 7
+
+
+def test_update_on_missing_item_is_not_an_upsert():
+    """UPDATE used to upsert, so an UPDATE naming an absent id stored a fragment
+    with no content and no provenance, which retrieval would then serve. The op
+    is still logged — append happens before apply — so no history is lost."""
+    mem = _mk()
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.UPDATE, target_type="notes", target_id="ghost", payload={"helpful": 1}
+                )
+            ],
+            actor="ace",
+        )
+        assert mem.doc_store.get_items(["ghost"], "notes") == []
+        assert [(o.op, o.target_id) for o in mem.log.tail(5)] == [(OpType.UPDATE, "ghost")]
+    finally:
+        mem.close()
+
+
+def test_merge_still_creates_its_target():
+    """The narrowing above must not touch MERGE: a merge writes its result under
+    a NEW id (Nemori emits MERGE(new) + INVALIDATE(absorbed)), so a missing
+    target is the normal case for it."""
+    mem = _mk()
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.MERGE,
+                    target_type="episodes",
+                    target_id="merged1",
+                    payload={"content": "two episodes combined", "supersedes": ["e1", "e2"]},
+                )
+            ],
+            actor="nemori",
+        )
+        assert [d["id"] for d in mem.doc_store.get_items(["merged1"], "episodes")] == ["merged1"]
+    finally:
+        mem.close()
+
+
+def test_cursor_advances_across_consolidate_cycles():
+    """End-to-end guard for cursor_op switching to ADD: the cursor must still be
+    created on the first advance and read back on the next cycle."""
+
+    class Cur(Organizer):
+        name = "cur"
+
+        def consolidate(self, ctx):
+            return [self.cursor_op(self.read_cursor(ctx) + 5)]
+
+    mem = _mk([Cur()])
+    try:
+        seen = []
+        for _ in range(3):
+            mem.consolidate()
+            seen.append(mem.doc_store.get_items(["consolidate:cur"], "state")[0]["seq"])
+        assert seen == [5, 10, 15]
+    finally:
+        mem.close()
+
+
+def test_on_retrieval_ops_do_not_wake_subscribers():
+    """``on_retrieval`` must be cheap because it runs inline on the read path,
+    but that contract binds only the hook: propagated ops become MemoryEvents,
+    and a subscriber's handler may call an LLM (ChainedConsumer feeds the wrapped
+    organizer's on_message). The ops are still applied — only the fan-out stops."""
+
+    class Reader(Organizer):
+        name = "reader"
+        produces = ("pages",)
+
+        def on_retrieval(self, hits, ctx):
+            return [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="pages",
+                    target_id="p1",
+                    payload={"content": "heat bump"},
+                )
+            ]
+
+    class Sub(Organizer):
+        name = "sub"
+        consumes = ("pages",)
+
+        def __init__(self):
+            self.seen = 0
+
+        def on_memory_event(self, ev, ctx):
+            self.seen += 1
+            return []
+
+    sub = Sub()
+    mem = _mk([Reader(), sub])
+    try:
+        mem.add_message("hello there")
+        mem.search("hello", memory_types=["episodic"])
+        assert sub.seen == 0
+        assert [d["id"] for d in mem.doc_store.get_items(["p1"], "pages")] == ["p1"]
+    finally:
+        mem.close()
 
 
 def test_invalidate_preserves_first_and_removes_vector():
