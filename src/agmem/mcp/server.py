@@ -63,12 +63,15 @@ def add_task_result(
 
 @mcp.tool()
 def search_memory(
-    query: str, memory_types: str = "episodic", k: int = 10, budget_tokens: int = 1600
+    query: str, memory_types: str = "", k: int = 10, budget_tokens: int = 1600
 ) -> str:
     """Search memory. memory_types: comma-separated subset of episodic,
     episodes, notes, pages, semantic, entities, facts, strategies, playbook.
+    Leave it empty (the default) to search raw episodes plus whatever the
+    configured organizers actually produce — the old "episodic" default silently
+    returned raw messages instead of, say, A-Mem notes.
     Returns rendered context plus item provenance."""
-    types = tuple(t.strip() for t in memory_types.split(",") if t.strip())
+    types = tuple(t.strip() for t in memory_types.split(",") if t.strip()) or None
     bundle = get_mem().search(query, memory_types=types, k=k)
     return json.dumps(
         {

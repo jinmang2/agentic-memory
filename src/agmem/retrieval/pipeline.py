@@ -1,13 +1,9 @@
 """Retrieval pipeline: recall (dense + lexical, per memory type) -> RRF ->
 rerank -> hydrate -> methodology-faithful post-steps.
 
-Post-hydration steps restore upstream read-path semantics that the deep
-fidelity audit (docs/research/fidelity-deep-audit.md) found missing:
-- notes: 1-hop link expansion (A-Mem official eval's
-  find_related_memories_raw — retrieved notes pull in their linked
-  neighbors, capped)
-- episodes: top-r narrative episodes attach their original source messages
-  (Nemori r=2 — offsets narrative-abstraction information loss)
+The post-steps live in ``retrieval/steps.py`` as one plugin per methodology,
+registered by memory type; this module only sequences them. See that module for
+why they stay type-keyed rather than organizer-keyed.
 """
 
 from __future__ import annotations
@@ -15,6 +11,7 @@ from __future__ import annotations
 from agmem.core.types import MemoryBundle, ScoredItem
 from agmem.embed.base import Embedder
 from agmem.retrieval.fusion import rrf_fuse
+from agmem.retrieval.steps import ReadContext, ReadStep, _DictItem, default_read_steps
 from agmem.stores.base import DocStore, VectorStore
 
 
@@ -34,26 +31,33 @@ class RetrievalPipeline:
         graph_store=None,
         lexical_types: tuple[str, ...] = ("episodic",),
         graph_expansion_cap: int = 10,
+        read_steps: dict[str, ReadStep] | None = None,
     ) -> None:
-        """``reranker=None`` keeps RRF fusion order as-is. ``link_expansion_cap``
-        bounds A-Mem's 1-hop note-link expansion; ``attach_sources_top_r``
-        bounds how many top episodic hits get their source messages attached.
-        ``graph_store``/``graph_expansion_cap`` enable the Zep GraphRecall
-        step (entity hits pull incident active edges) — no-op when
-        ``graph_store`` is None. ``lexical_types`` selects which memory types
-        get a BM25 channel fused via RRF alongside the dense one."""
+        """``reranker=None`` keeps RRF fusion order as-is. ``lexical_types``
+        selects which memory types get a BM25 channel fused via RRF alongside
+        the dense one (Zep hybrid adds facts/entities).
+
+        The three cap arguments configure the default post-step registry:
+        ``link_expansion_cap`` bounds A-Mem's 1-hop note-link expansion,
+        ``attach_sources_top_r`` how many top episode hits get their source
+        messages attached, and ``graph_expansion_cap`` how many incident edges
+        an entity hit pulls; 0 disables that step. Pass ``read_steps`` to
+        replace the registry outright (custom methodology read behavior)."""
         self.doc_store = doc_store
         self.vector_store = vector_store
         self.embedder = embedder
         self.reranker = reranker  # None -> keep fusion order
-        self.link_expansion_cap = link_expansion_cap
-        self.attach_sources_top_r = attach_sources_top_r
-        # Zep hybrid/GraphRecall (round-5): lexical_types get a BM25 channel
-        # fused via RRF; retrieved entity nodes pull their incident active
-        # edges (facts) from the graph store.
         self.graph_store = graph_store
         self.lexical_types = set(lexical_types)
-        self.graph_expansion_cap = graph_expansion_cap
+        self.read_steps = (
+            read_steps
+            if read_steps is not None
+            else default_read_steps(
+                link_expansion_cap=link_expansion_cap,
+                attach_sources_top_r=attach_sources_top_r,
+                graph_expansion_cap=graph_expansion_cap,
+            )
+        )
 
     def search(
         self,
@@ -104,50 +108,23 @@ class RetrievalPipeline:
                 fused = fused[:type_k]
             hydrated = self._hydrate(fused, memory_type)
 
-            if memory_type == "notes" and self.link_expansion_cap:
-                hydrated += self._expand_links(hydrated)
-            if memory_type == "episodes" and self.attach_sources_top_r:
-                self._attach_sources(hydrated)
-            if memory_type == "experiences":
-                hydrated = self._expand_experiences(hydrated)
-            if memory_type == "entities" and self.graph_store is not None:
-                hydrated += self._graph_expand(hydrated, bundle, namespace)
+            step = self.read_steps.get(memory_type)
+            if step is not None:
+                hydrated = step.run(
+                    hydrated,
+                    ReadContext(
+                        doc_store=self.doc_store,
+                        namespace=namespace,
+                        graph_store=self.graph_store,
+                        bundle_ids={
+                            getattr(s.item, "id", None) or s.item.data.get("id")
+                            for s in bundle.items
+                        },
+                    ),
+                )
 
             bundle.items.extend(hydrated)
         return bundle
-
-    def _graph_expand(
-        self, entity_hits: list[ScoredItem], bundle: MemoryBundle, namespace: str | None
-    ) -> list[ScoredItem]:
-        """Zep GraphRecall (round-5 ④, minimal form): retrieved entity nodes
-        pull their incident ACTIVE edges; the edges' fact items join the
-        bundle (deduped against already-selected facts), scored just below
-        their entity."""
-        seen = {getattr(s.item, "id", None) or s.item.data.get("id") for s in bundle.items} | {
-            s.item.data.get("id") for s in entity_hits
-        }
-        node_ids = [s.item.data.get("id") for s in entity_hits]
-        edges = self.graph_store.edges_for_nodes([n for n in node_ids if n], namespace or "main")
-        wanted: dict[str, float] = {}
-        base = max((s.score for s in entity_hits), default=0.0) * 0.9
-        for e in edges:
-            edge_id = e.get("id")
-            if edge_id and edge_id not in seen and len(wanted) < self.graph_expansion_cap:
-                seen.add(edge_id)
-                wanted[edge_id] = base
-        out: list[ScoredItem] = []
-        for data in self.doc_store.get_items(list(wanted), "facts"):
-            if data.get("deleted"):
-                continue
-            out.append(
-                ScoredItem(
-                    item=_DictItem(data),
-                    memory_type="facts",
-                    score=wanted.get(data.get("id"), 0.0),
-                    provenance=data.get("source_episode_ids", []),
-                )
-            )
-        return out
 
     def _hydrate(self, fused: list[tuple[str, float]], memory_type: str) -> list[ScoredItem]:
         ids = [item_id for item_id, _ in fused]
@@ -177,110 +154,3 @@ class RetrievalPipeline:
                     )
                 )
         return out
-
-    def _expand_links(self, hits: list[ScoredItem]) -> list[ScoredItem]:
-        """A-Mem 1-hop: pull linked neighbor notes of retrieved notes.
-
-        Links are unidirectional as upstream. Cap semantics deviate:
-        upstream caps PER HIT (agiresearch k per hit; WujiangXu k+1 via an
-        off-by-one), so eval k=10 can pull ~100 link neighbors — WujiangXu
-        #16/#21 show even upstream considers this ambiguous. We use one
-        global cap (default 5); neighbors score just below their parent.
-        Keep this deviation in result caveats when comparing multi-hop."""
-        seen = {s.item.data["id"] for s in hits}
-        wanted: list[tuple[str, float]] = []
-        for s in sorted(hits, key=lambda s: s.score, reverse=True):
-            for linked_id in s.item.data.get("links", []):
-                if linked_id not in seen and len(wanted) < self.link_expansion_cap:
-                    seen.add(linked_id)
-                    wanted.append((linked_id, s.score * 0.9))
-        if not wanted:
-            return []
-        by_id = dict(wanted)
-        out: list[ScoredItem] = []
-        for data in self.doc_store.get_items(list(by_id), "notes"):
-            out.append(
-                ScoredItem(
-                    item=_DictItem(data),
-                    memory_type="notes",
-                    score=by_id.get(data.get("id"), 0.0),
-                    provenance=data.get("source_episode_ids", []),
-                )
-            )
-        return out
-
-    def _expand_experiences(self, hits: list[ScoredItem]) -> list[ScoredItem]:
-        """ReasoningBank experience mode: an experience hit is REPLACED by
-        its member strategy items (upstream injects the top-1 experience's
-        items, never the record itself). An experience with no surviving
-        items yields nothing — upstream's miss -> no-injection semantics."""
-        out: list[ScoredItem] = []
-        for s in hits:
-            ids = s.item.data.get("item_ids", [])
-            for data in self.doc_store.get_items(ids, "strategies"):
-                if data.get("deleted"):
-                    continue
-                out.append(
-                    ScoredItem(
-                        item=_DictItem(data),
-                        memory_type="strategies",
-                        score=s.score,
-                        provenance=data.get("source_episode_ids", []),
-                    )
-                )
-        return out
-
-    def _attach_sources(self, hits: list[ScoredItem]) -> None:
-        """Nemori r=2: top-r episodes carry their raw source messages,
-        rendered as ``role: content`` lines as upstream search.py does."""
-        for s in sorted(hits, key=lambda s: s.score, reverse=True)[: self.attach_sources_top_r]:
-            source_ids = s.item.data.get("source_episode_ids", [])
-            if source_ids:
-                episodes = self.doc_store.get_episodes(source_ids)
-                s.item.data["_source_messages"] = [
-                    f"{episode.role}: {episode.content}" for episode in episodes
-                ]
-
-
-class _DictItem:
-    """Lightweight wrapper so derived items render uniformly in a bundle.
-
-    Render exposes methodology metadata (audit P0-4): note context/tags,
-    item timestamps, and attached source messages."""
-
-    def __init__(self, data: dict) -> None:
-        """`data` is kept by reference, not copied — callers like `_attach_sources`
-        mutate it in place (e.g. to inject `_source_messages`)."""
-        self.data = data
-        self.content = data.get("content", "")
-
-    def render(self) -> str:
-        """Multi-line text injected verbatim into the LLM context — order and
-        section labels here are part of the read-path prompt contract."""
-        parts: list[str] = []
-        title = self.data.get("title")
-        head = f"{title}: " if title else ""
-        # Bi-temporal facts render their validity range (Zep's context
-        # template: "FACT (Date range: from - to)") so invalidated facts
-        # are visibly historical instead of passing as current (round-5 X2).
-        if self.data.get("valid_at") or self.data.get("invalid_at"):
-            stamp = (
-                f" (Date range: {self.data.get('valid_at') or 'unknown'}"
-                f" - {self.data.get('invalid_at') or 'present'})"
-            )
-        else:
-            ts = self.data.get("timestamp")
-            stamp = f" ({ts})" if ts else ""
-        parts.append(f"{head}{self.content}{stamp}")
-        # ReasoningBank items carry when-to-apply guidance in description;
-        # upstream injects the full item markdown (round-5 X3).
-        if self.data.get("description"):
-            parts.append(f"description: {self.data['description']}")
-        if self.data.get("context"):
-            parts.append(f"context: {self.data['context']}")
-        if self.data.get("tags"):
-            parts.append(f"tags: {', '.join(map(str, self.data['tags']))}")
-        if self.data.get("_source_messages"):
-            src = "\n".join(f"  - {m}" for m in self.data["_source_messages"])
-            parts.append(f"Source Messages:\n{src}")
-        return "\n".join(parts)

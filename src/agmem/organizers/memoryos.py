@@ -93,6 +93,8 @@ class MemoryOSOrganizer(Organizer):
 
     name = "memoryos"
 
+    produces = ("pages", "semantic")
+
     def __init__(
         self,
         stm_capacity: int = 10,

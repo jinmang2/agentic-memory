@@ -112,6 +112,8 @@ class ReasoningBankOrganizer(Organizer):
 
     name = "reasoning_bank"
 
+    produces = ("experiences", "strategies")
+
     def __init__(
         self, max_items: int = 3, self_judge: bool = True, persona: str | None = None
     ) -> None:

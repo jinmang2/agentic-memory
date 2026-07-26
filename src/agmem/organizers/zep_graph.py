@@ -171,6 +171,12 @@ class ZepGraphOrganizer(Organizer):
 
     name = "zep_graph"
 
+    # facts BEFORE entities, matching the upstream-faithful config order: the
+    # entities step (GraphRecall) pulls incident edge facts and dedups against
+    # ids already in the bundle, so facts must be searched first or the same
+    # fact is served twice.
+    produces = ("facts", "entities")
+
     def __init__(
         self,
         graph: SqliteGraphStore | None = None,

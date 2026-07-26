@@ -234,6 +234,8 @@ class NemoriOrganizer(Organizer):
 
     name = "nemori"
 
+    produces = ("episodes", "semantic")
+
     def __init__(
         self,
         fidelity: str | None = None,

@@ -208,6 +208,9 @@ class AgenticMemory:
             reranker=self.reranker,
             graph_store=self.graph_store,
             lexical_types=self.config.lexical_types,
+            link_expansion_cap=self.config.link_expansion_cap,
+            attach_sources_top_r=self.config.attach_sources_top_r,
+            graph_expansion_cap=self.config.graph_expansion_cap,
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------
@@ -461,23 +464,43 @@ class AgenticMemory:
 
     # ---- read ---------------------------------------------------------------
 
+    @property
+    def default_memory_types(self) -> tuple[str, ...]:
+        """What ``search()`` reads when the caller names no types.
+
+        ``episodic`` always leads: raw episodes are written by the facade itself
+        (``_ingest_episode``), so no organizer declares them, yet they are always
+        present. Then each active organizer's ``produces``, in organizer order,
+        deduped — so ``--organizers amem`` searches notes without the caller
+        having to know that."""
+        types = ["episodic"]
+        for org in self.organizers:
+            for memory_type in org.produces:
+                if memory_type not in types:
+                    types.append(memory_type)
+        return tuple(types)
+
     def search(
         self,
         query: str,
-        memory_types: Sequence[str] = ("episodic",),
+        memory_types: Sequence[str] | None = None,
         k: int | dict[str, int] = 10,
     ) -> MemoryBundle:
         """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
         read->write hooks.
+
+        ``memory_types=None`` falls back to ``default_memory_types`` (the active
+        organizers' declared output); passing types explicitly overrides that, which
+        is how the paper-faithful configs stay methodology-pure and how the
+        deliberately-mixed ablations keep their raw episodic channel.
 
         Ranking/fusion policy lives in ``RetrievalPipeline`` (lexical+vector fusion,
         reranker); this method's own contract is the read->write loop: every served
         ``(item_id, memory_type, score)`` triple is passed to each organizer's
         ``on_retrieval`` synchronously, before this call returns, so their returned ops
         are applied for the *next* search — never the one in progress."""
-        bundle = self.pipeline.search(
-            query, k=k, memory_types=tuple(memory_types), namespace=self.namespace
-        )
+        types = tuple(memory_types) if memory_types is not None else self.default_memory_types
+        bundle = self.pipeline.search(query, k=k, memory_types=types, namespace=self.namespace)
         # read->write feedback (round-5): organizers see what was served.
         hits = [
             (

@@ -124,6 +124,8 @@ class AMemOrganizer(Organizer):
 
     name = "amem"
 
+    produces = ("notes",)
+
     def __init__(self, top_k: int = 5) -> None:
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.

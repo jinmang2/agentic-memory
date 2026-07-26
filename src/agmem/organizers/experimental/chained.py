@@ -45,6 +45,9 @@ class ChainedConsumer(Organizer):
         self.wrapped = wrapped
         self.name = wrapped.name
         self.consumes = (source_type,)
+        # the wrapper writes exactly what the wrapped organizer writes, so it
+        # must carry the same read-type declaration (default_memory_types)
+        self.produces = wrapped.produces
         # source event id -> (produced_id, produced_type); only used for the
         # generic 1:1 retire path (wrapped organizers without their own retire).
         self._produced: dict[str, tuple[str, str]] = {}

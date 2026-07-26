@@ -113,6 +113,8 @@ class GMemoryOrganizer(Organizer):
 
     name = "gmemory"
 
+    produces = ("strategies",)
+
     def __init__(self, finetune_every: int = 5, insight_max: int = 10) -> None:
         """``finetune_every``: run the insight-rule finetune LLM call once
         per this many ``on_task_end`` calls. ``insight_max``: cap on

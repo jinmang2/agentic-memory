@@ -337,6 +337,67 @@ def test_apply_ops_does_not_mutate_callers_ops():
     assert mem.doc_store.tail(1)[0].actor == "stamped"  # log carries the actor
 
 
+# ---- produces -> default_memory_types -----------------------------------------
+
+
+def test_default_memory_types_leads_with_episodic():
+    """Raw episodes are written by the facade, not by any organizer, so they are
+    always searchable and always first."""
+    assert _mk(organizers=["passthrough"]).default_memory_types == ("episodic",)
+
+
+def test_default_memory_types_follows_the_active_organizers():
+    from agmem.organizers.amem import AMemOrganizer
+    from agmem.organizers.nemori import NemoriOrganizer
+
+    mem = _mk(organizers=[AMemOrganizer()])
+    assert mem.default_memory_types == ("episodic", "notes")
+    mem = _mk(organizers=[NemoriOrganizer(), AMemOrganizer()])
+    assert mem.default_memory_types == ("episodic", "episodes", "semantic", "notes")
+
+
+def test_default_memory_types_dedupes_shared_types():
+    """Nemori and MemoryOS both write "semantic"; it must appear once."""
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+    from agmem.organizers.nemori import NemoriOrganizer
+
+    mem = _mk(organizers=[NemoriOrganizer(), MemoryOSOrganizer()])
+    assert mem.default_memory_types == ("episodic", "episodes", "semantic", "pages")
+
+
+def test_chained_consumer_forwards_produces():
+    from agmem.organizers.amem import AMemOrganizer
+    from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.nemori import NemoriOrganizer
+
+    mem = _mk(
+        organizers=[NemoriOrganizer(), ChainedConsumer(AMemOrganizer(), "episodes")],
+    )
+    assert mem.default_memory_types == ("episodic", "episodes", "semantic", "notes")
+
+
+def test_zep_declares_facts_before_entities():
+    """Order is the read order: the entities step pulls incident edge facts and
+    dedupes against ids already in the bundle, so facts must come first or the
+    same fact is served twice."""
+    from agmem.organizers.zep_graph import ZepGraphOrganizer
+
+    assert ZepGraphOrganizer.produces == ("facts", "entities")
+
+
+def test_explicit_memory_types_override_the_default():
+    """Paper-faithful configs stay methodology-pure by naming types explicitly."""
+    from agmem.organizers.amem import AMemOrganizer
+
+    mem = _mk(organizers=[AMemOrganizer()])
+    mem.add_message("paris museums")  # no LLM -> A-Mem stores a bare note
+    assert mem.default_memory_types == ("episodic", "notes")
+    # notes-only: the raw episode must not leak into an A-Mem paper run
+    assert [s.memory_type for s in mem.search("paris", memory_types=("notes",)).items] == ["notes"]
+    # the default now reaches the note the old ("episodic",) default hid
+    assert [s.memory_type for s in mem.search("paris").items] == ["episodic", "notes"]
+
+
 # ---------------- MemoryOS via ChainedConsumer (Task 12, experimental) ------
 
 

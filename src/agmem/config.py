@@ -66,6 +66,13 @@ class AgmemConfig:
     # (Zep hybrid search adds "facts"/"entities"; A-Mem/Nemori stay
     # dense-only as their upstream evals do)
     lexical_types: tuple[str, ...] = ("episodic",)
+    # Read-path post-step knobs (retrieval/steps.py). Defaults reproduce the
+    # methodology-faithful behavior; 0 disables the step. The first two are
+    # documented deviations from upstream (A-Mem caps per hit, not globally),
+    # so they must be reachable from config to be ablatable at all.
+    link_expansion_cap: int = 5  # A-Mem 1-hop note-link expansion, global cap
+    attach_sources_top_r: int = 2  # Nemori r: top-r episodes carry source messages
+    graph_expansion_cap: int = 10  # Zep GraphRecall: incident edges per entity hit
 
     def slot_default(self, slot: str) -> str | None:
         """`overrides[slot]` if set, else the profile's default class name for

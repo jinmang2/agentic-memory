@@ -43,7 +43,52 @@ def test_link_expansion_capped():
         for lid in links:
             put_indexed(mem, lid, "notes", {"content": f"leaf {lid}", "links": []})
         bundle = mem.search("hub note", memory_types=["notes"], k=1)
-        assert len(bundle.items) <= 1 + mem.pipeline.link_expansion_cap
+        # the cap now lives on the registered read step (retrieval/steps.py)
+        assert len(bundle.items) <= 1 + mem.pipeline.read_steps["notes"].cap
+    finally:
+        mem.close()
+
+
+def test_read_step_caps_are_configurable():
+    """The A-Mem link cap and Nemori's r are documented upstream deviations, so
+    they must be ablatable from config — they used to be pipeline constructor
+    defaults no caller could reach."""
+    from agmem.config import AgmemConfig
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(link_expansion_cap=2),
+    )
+    try:
+        links = [f"x{i}" for i in range(10)]
+        put_indexed(mem, "hub", "notes", {"content": "hub note", "links": links})
+        for lid in links:
+            put_indexed(mem, lid, "notes", {"content": f"leaf {lid}", "links": []})
+        bundle = mem.search("hub note", memory_types=["notes"], k=1)
+        assert len(bundle.items) == 3  # 1 hit + cap 2, not the default 5
+    finally:
+        mem.close()
+
+
+def test_zero_cap_disables_the_step():
+    """0 keeps the falsy-cap disable the old `and self.link_expansion_cap`
+    guard provided: no expansion step is registered at all."""
+    from agmem.config import AgmemConfig
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(link_expansion_cap=0),
+    )
+    try:
+        put_indexed(mem, "n1", "notes", {"content": "paris travel museums", "links": ["n2"]})
+        put_indexed(mem, "n2", "notes", {"content": "budget three million won", "links": ["n1"]})
+        assert "notes" not in mem.pipeline.read_steps
+        bundle = mem.search("paris museums", memory_types=["notes"], k=1)
+        assert [s.item.data["id"] for s in bundle.items] == ["n1"]  # no neighbor pulled
     finally:
         mem.close()
 

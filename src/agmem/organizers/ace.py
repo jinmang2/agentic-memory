@@ -119,6 +119,8 @@ class ACEOrganizer(Organizer):
 
     name = "ace"
 
+    produces = ("playbook",)
+
     def __init__(self, dedup_threshold: float = DEDUP_THRESHOLD, max_ops: int = 5) -> None:
         """``dedup_threshold`` gates embedding-cosine dedup against both the
         existing playbook and the current curator batch (round-5 §3.4,

@@ -72,6 +72,16 @@ class Organizer:
 
     name = "base"
     consumes: tuple[str, ...] = ()
+    # Memory types this organizer's ops write. Declarative counterpart to
+    # ``consumes``: it drives ``AgenticMemory.default_memory_types`` so callers
+    # that don't name types (MCP, ad-hoc use) search what the active
+    # methodology actually produced. It does NOT gate the read-path steps —
+    # those stay keyed on the memory type alone, so items written straight to a
+    # store still get them (retrieval/steps.py).
+    # ORDER IS THE READ ORDER and is load-bearing: an expansion step dedups
+    # against ids already in the bundle, so a type another type's step pulls in
+    # must be listed first (see ZepGraphOrganizer: facts before entities).
+    produces: tuple[str, ...] = ()
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         """Called once per stored episode; the raw episode is already durable/searchable
