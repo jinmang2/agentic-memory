@@ -245,9 +245,29 @@ class MemoryBundle:
     }
 
     def render(self, budget_tokens: int = 1600) -> str:
-        """Select items by descending score until the budget is spent, then
-        render them grouped by memory type (in bundle insertion order) so
-        each type forms one labeled section, as the upstream evals do."""
+        """Select items by descending score, stopping at the FIRST item that does
+        not fit, then render them grouped by memory type (in bundle insertion
+        order) so each type forms one labeled section, as the upstream evals do.
+
+        "Stopping at the first item that does not fit" is not "until the budget
+        is spent", which is what this used to claim: one long item drops every
+        lower-scored item after it, including ones that would have fit. Whether
+        that is the right policy is an open decision, not a reproduction
+        question — upstream A-Mem has no context budget at all (it injects the
+        retrieved notes directly; ``max_tokens`` there is the generation cap), so
+        the budget is our own addition and there is no upstream behavior to
+        match. The alternatives each lose something: skipping the oversized item
+        and continuing fills the budget but can drop the 3rd-most-relevant memory
+        while keeping the 10th; truncating it preserves score order at the cost
+        of serving a cut-off memory.
+
+        It has never bound on a measured run: across the A-Mem reproduction's
+        1986 questions x 2 configs, the largest bundle renders to 11,663 chars
+        against a 24,000-char budget (49%), and no question exceeds it — so no
+        published number here depends on which policy is chosen. Nemori/MemoryOS
+        configs render narratives plus attached source messages and are much
+        heavier, but their artifacts predate retrieval capture, so that is
+        unmeasured rather than known-safe."""
         budget_chars = budget_tokens * self.CHARS_PER_TOKEN
         selected: list[ScoredItem] = []
         used = 0
