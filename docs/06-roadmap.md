@@ -89,9 +89,14 @@
 ## 즉시 다음 액션 (2026-07-26 갱신)
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
-> 브랜치: **`main` 단일** (`80bcb37`). 테스트 187 passed / 1 skipped.
+> 브랜치: **`main` 단일**. 테스트 241 passed / 1 skipped.
+>
+> **2026-07-26 사용자 지시 — 실험 전면 보류**: 로컬(0.5B)이든 API든 측정을 하지 않는다. 현재
+> 작업 모드는 ①새 논문 구현 ②API 배선 refactor 검토이고, 각 항목마다 **논문 원문 → official
+> 코드 → 우리 구현** 3자 대조를 반복한다(A-Mem에서 5차까지 돌린 그 패턴). 배선이 정말 이상
+>없다고 확정된 최후에 측정을 재개한다. 따라서 아래 1·2번은 **배선 완료 상태로 대기**시켜 둔다.
 
-### 미실측 — 배선은 끝났고 유료 실행만 남음
+### 미실측 — 배선은 끝났고 유료 실행만 남음 (지시에 따라 대기)
 1. **Nemori v4 Table 7 실측** (`docs/13-amem-study.md` §5.1). config 2종이 대기 중:
    ```bash
    uv run python scripts/exp_locomo_conv0.py --configs nemori_amem_k nemori_amem_k_batched
@@ -103,10 +108,15 @@
    `nemori_mix` / `nemori_memoryos` / `nemori_amem`. 유닛 테스트까지만 검증된 상태.
 
 ### 구현 후보 (근거: `docs/research/write-path-critics.md` §5)
-3. **A-MAC admission gate** (1순위) — `AMemOrganizer.on_message` 앞단 게이트. 5 factor 중
-   4개가 LLM-free. **성공 기준을 논문 F1(=admission 결정 F1, N=225)이 아니라 "answer 품질
-   유지하며 노트 수·write 토큰 감소"로 세울 것.** 부산물로 "저장 노트의 미참조율"이라는
-   현재 측정 불가 축이 열린다.
+3. [x] **A-MAC admission gate** (1순위) — **2026-07-26 구현 완료**, 감사 문서
+   `docs/research/amac-admission-gate.md`. `src/agmem/organizers/admission.py` +
+   `AMemOrganizer(admission=...)`, 테스트 52건. 기본값은 `admission=None`(A-Mem 전부 저장 =
+   baseline)이므로 기존 config 동작 무변경.
+   **측정 재개 시 재튜닝이 선행 조건**: 논문 weight `[0.1,0.1,0.1,0.1,0.6]`/θ=0.55는 공식 코드의
+   결함 2건(N≡1.0·R≡0.0 상수화, Type Prior 부분문자열 매칭) 위에서 맞춰진 값이라 디버그된
+   feature에 전이되지 않는다. 자세한 건 감사 문서 §7.
+   성공 기준은 여전히 논문 F1(admission 결정 F1, oracle 라벨, N=225)이 **아니라** "answer 품질
+   유지하며 노트 수·write 토큰 감소"이며, `AdmissionStats`가 그 관측 장비다.
 4. **GRAVITY anchors** (2순위) — read-path 기법이라 `retrieval/steps.py`의 ReadStep 레지스트리에
    그대로 들어간다. 코드 미공개라 anchor 3종 프롬프트는 자체 설계 필요.
 5. **RecMem recurrence gate** (3순위) — `consolidate()` 훅이 그 자리.
@@ -128,6 +138,17 @@
 ### 문서 교정 잔여
 9. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
    측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
+
+### 조사 후 종결된 리스크 (재개하지 말 것)
+10. **vendored Porter가 nltk와 다르다 → 영향 실측 0으로 종결** (2026-07-26, A-MAC 감사 부산물).
+    `snap-research/locomo`의 `normalize_answer`와 `rouge_score` 둘 다 nltk 기본 모드
+    (`NLTK_EXTENSIONS`)를 쓰는데 `agmem/_porter.py`는 Porter(1980) 원문 조건이라, step 1c
+    `Y→I`에서 `cry`/`cried`가 병합되지 않는 등 실제 차이가 있다. `PorterStemmer(mode=...)`로
+    파라미터화했고 기본값은 `"original"`(기존 동작) 유지 — `bench/locomo.py`가 명시적으로 지정.
+    **저장된 `results/repro/*.records.jsonl` 8파일 11,914 질문을 두 모드로 오프라인 재채점한
+    결과 F1이 바뀌는 질문이 0건**(감사 문서 §4 표). 발표 수치 무영향이므로 기본값 전환도
+    재측정도 불필요. 잔여 gap(nltk 불규칙 pool·step5a 2글자 cvc·step2, 692어휘 중 10단어)은
+    같은 이유로 낮은 우선순위의 별건.
 
 > **2026-07-26 처리 완료**: (구 8번) "A-Mem read = cosine+BM25 hybrid" 오류를 `docs/13`·`08`·
 > `03`·`14`에서 교정. `docs/14`는 같은 문서 안에서 자기모순(45행은 "BM25 없음", 349행은

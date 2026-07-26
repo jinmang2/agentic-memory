@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
 
-from agmem.bench._porter import PorterStemmer
+from agmem._porter import PorterStemmer
 from agmem.memory import AgenticMemory
 
 CATEGORY_NAMES = {
@@ -158,7 +158,12 @@ def select_questions(
 # ---------------- metrics (SQuAD-style) ----------------
 
 _ARTICLES = re.compile(r"\b(a|an|the|and)\b")
-_STEMMER = PorterStemmer()
+# mode="original" is the pre-existing behaviour every stored run under
+# results/repro/ was scored with, NOT the faithful one: snap-research/locomo's
+# normalize_answer stems with nltk's default (NLTK_EXTENSIONS). Switching to
+# mode="nltk" moves F1/BLEU-1 and so is an explicit, deferred decision — see
+# agmem._porter's docstring and docs/research/amac-admission-gate.md §4.
+_STEMMER = PorterStemmer(mode="original")
 
 
 def normalize(text: str) -> list[str]:

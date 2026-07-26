@@ -22,6 +22,7 @@ from agmem.bench import locomo
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
+from agmem.organizers.admission import AdmissionGate
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.experimental import ChainedConsumer
 from agmem.organizers.memoryos import MemoryOSOrganizer
@@ -392,6 +393,35 @@ def main() -> None:
             True,
             NEMORI_TEMPS,
             None,
+        ),
+        # --- A-MAC admission gate in front of A-Mem (arXiv:2603.04549; audit in
+        # docs/research/amac-admission-gate.md). The read path is byte-identical
+        # to `amem` (notes-only + LLM keyword queries), so `amem` vs these two is
+        # a clean write-path-only contrast. The gate is LLM-free by default, so a
+        # rejected turn costs 0 calls where `amem` spends 2.
+        # NOT a paper reproduction of A-MAC's Table 1: that measures admission
+        # decision F1 against an oracle `is_referenced` label, not answer quality.
+        # Per the audit §7 the published weights/threshold need re-tuning before
+        # these numbers mean anything — run the pair, not just the first one.
+        "amem_amac": (
+            [lambda: AMemOrganizer(admission=AdmissionGate())],
+            ("notes",),
+            10,
+            True,
+            AMEM_TEMPS,
+            AMEM_STORE,
+        ),
+        # Same gate with the release's substring keyword matching restored, which
+        # is what its published recall 0.972 was produced under. Pairing it with
+        # `amem_amac` tests on our own data whether that recall is an artifact of
+        # the matching defect (audit §2 defect 2).
+        "amem_amac_upstream": (
+            [lambda: AMemOrganizer(admission=AdmissionGate(type_matching="substring"))],
+            ("notes",),
+            10,
+            True,
+            AMEM_TEMPS,
+            AMEM_STORE,
         ),
         "amem_mixed": (
             ["amem"],

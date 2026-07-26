@@ -1,25 +1,69 @@
 """Porter (1980) stemming algorithm — pure-stdlib, vendored.
 
-The official snap-research/locomo ``normalize_answer`` Porter-stems each token
-before F1/BLEU scoring. ``nltk`` is not a dependency here, so this is a compact
-vendored implementation of the classic Porter (1980) algorithm rather than a
-naive suffix-stripping fallback. Derived from Vivake Gupta's public-domain
-Python port of Martin Porter's reference C implementation
+Two callers need Porter stemming and both are reproducing an upstream that got
+it from ``nltk``: the official snap-research/locomo ``normalize_answer``
+(F1/BLEU-1, ``bench/locomo.py``) and ``rouge_score``'s ``use_stemmer=True``
+tokenizer, which A-MAC's Confidence feature runs on
+(``organizers/admission.py``). ``nltk`` is not a dependency here, so this is a
+compact vendored implementation of the classic Porter (1980) algorithm rather
+than a naive suffix-stripping fallback. Derived from Vivake Gupta's
+public-domain Python port of Martin Porter's reference C implementation
 (https://tartarus.org/martin/PorterStemmer/), lightly modernized.
 
-Only ``stem(word)`` is used by the benchmark; the class is kept self-contained
-and unit-tested (tests/test_locomo_eval.py).
+It lives at the package root rather than under ``bench/`` because
+``organizers`` may not import ``bench`` — ``bench.locomo`` imports
+``agmem.memory``, which imports the organizers, so a cross-package import here
+would close a cycle.
+
+Only ``stem(word)`` is used; the class is kept self-contained and unit-tested
+(tests/test_locomo_eval.py).
 """
 
 from __future__ import annotations
 
 
 class PorterStemmer:
-    """Classic Porter (1980) stemmer. ``stem(word)`` lowercases nothing — the
-    caller is expected to pass an already-lowercased token (LoCoMo normalize
-    lowercases first)."""
+    """Porter stemmer. ``stem(word)`` lowercases nothing — the caller is
+    expected to pass an already-lowercased token (LoCoMo normalize lowercases
+    first).
 
-    def __init__(self) -> None:
+    ``mode`` selects step 1c's ``Y -> I`` condition, which is where
+    ``nltk.stem.porter.PorterStemmer``'s default (``NLTK_EXTENSIONS``) deviates
+    most often from Porter's 1980 paper:
+
+    - ``"original"`` (default) — the paper's ``(*v*) Y -> I``: apply whenever the
+      stem contains a vowel, so ``saturday -> saturdai`` and ``enjoy -> enjoi``.
+    - ``"nltk"`` — ``(*c and not c) Y -> I``: apply only when the letter before
+      the ``y`` is a consonant and the stem is longer than one character.
+      ``happy -> happi``, ``cry -> cri``, but ``saturday`` and ``enjoy`` are
+      left alone.
+
+    **Both upstreams being reproduced here call nltk in its default mode** —
+    snap-research/locomo's ``normalize_answer`` (our F1/BLEU-1) and
+    ``rouge_score``'s ``use_stemmer=True`` tokenizer (A-MAC Confidence) — so
+    ``"nltk"`` is the faithful choice and ``"original"`` is only the default to
+    keep already-published run artifacts reproducible. The difference is not
+    cosmetic: under ``"original"``, ``cry``/``cried`` do not conflate (``cry``
+    stays ``cry`` while ``cried`` becomes ``cri``), changing token overlap.
+
+    The mode choice was **measured to change nothing we have published**:
+    re-scoring all 11,914 stored ``results/repro/*.records.jsonl`` QA pairs under
+    both modes moves zero questions' F1 (``docs/research/amac-admission-gate.md``
+    §4). So this is a closed risk, not an open decision — which is also why
+    flipping the default is not worth a re-measurement.
+
+    Step 1c is **not the only divergence**: over a 692-word LoCoMo vocabulary,
+    ``"nltk"`` mode still differs from real nltk on 10 words via
+    ``NLTK_EXTENSIONS`` features this port does not carry (its 16-entry
+    irregular-forms pool: ``sky``, ``outings``…; a 2-character ``vc`` case added
+    to the step-5a ``_ends_cvc`` test, which is why nltk keeps
+    ``are``/``ate``/``use``; and a step-2 difference reached by ``emotionally``).
+    Full nltk equivalence is a separate, low-priority task for the same reason."""
+
+    def __init__(self, mode: str = "original") -> None:
+        if mode not in ("nltk", "original"):
+            raise ValueError(f"mode must be 'nltk' or 'original', got {mode!r}")
+        self.mode = mode
         self.b = ""  # buffer for the word being stemmed
         self.k = 0
         self.j = 0
@@ -130,7 +174,20 @@ class PorterStemmer:
                 self._setto("e")
 
     def _step1c(self) -> None:
-        if self._ends("y") and self._vowelinstem():
+        """Step 1c: ``Y -> I``, under whichever condition ``mode`` selects.
+
+        The stem here is ``b[:k]`` (the word minus its trailing ``y``), so
+        nltk's ``(*c and not c)`` test — "stem longer than one character and its
+        last letter is a consonant" — is ``self.k > 1 and self._cons(self.k - 1)``.
+        ``_cons``'s recursion for ``y`` only reads earlier indices, all of which
+        lie inside the stem, so it matches nltk's ``_is_consonant(stem, ...)``."""
+        if not self._ends("y"):
+            return
+        if self.mode == "nltk":
+            applies = self.k > 1 and self._cons(self.k - 1)
+        else:
+            applies = self._vowelinstem()
+        if applies:
             self.b = self.b[: self.k] + "i"
 
     def _step2(self) -> None:

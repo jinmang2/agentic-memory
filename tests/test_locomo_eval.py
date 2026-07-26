@@ -3,7 +3,7 @@ truncation, cat5 answer prompt selection, and the optional Mem0-style J-score
 judge. Unit-level only — no LLM/server (fakes throughout)."""
 
 from agmem import AgenticMemory
-from agmem.bench._porter import PorterStemmer
+from agmem._porter import PorterStemmer
 from agmem.bench.locomo import (
     ANSWER_PROMPT,
     ANSWER_PROMPT_NO_ABSTAIN,
