@@ -1,5 +1,7 @@
 """Phase 3: Nemori, MemoryOS, Zep-graph, G-Memory through the same MemoryOp contract."""
 
+from helpers import StubLLM
+
 from agmem import AgenticMemory
 from agmem.core.ops import OpType
 from agmem.embed.fake import FakeEmbedder
@@ -7,8 +9,6 @@ from agmem.organizers.gmemory import GMemoryOrganizer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.zep_graph import ZepGraphOrganizer
-
-from helpers import StubLLM
 
 
 def make_mem(organizer, llm):

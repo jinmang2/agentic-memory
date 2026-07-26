@@ -28,6 +28,24 @@ Members, keyed by the survey operation they govern:
 |---|---|---|
 | ``admission`` | *store* | A-MAC (2603.04549, implemented), SAGE (2605.30711, candidate) |
 | *(none yet)* | *discard* / *retrieve* suppression | Memory Worth (2604.12007, candidate) |
+| *(none yet)* | *store/update/discard*, learned | Mem-alpha (2509.25911, candidate) |
+
+Mem-alpha is worth singling out because it validates the split from the other
+direction: its RL trains a policy over ``memory_insert``/``update``/``delete``
+calls and the paper states its "memory architecture is modular and decoupled from
+the reinforcement learning framework", with retriever and generator frozen. The
+orthogonality is the papers' own, not our imposition. Beyond the operation, a
+policy is also classified by *granularity* (LightMem gates tokens, A-MAC gates
+turns) and by *kind* (heuristic / prompted / learned, survey §3.3).
+
+A policy is attached to a mechanism by a wrapper, never by a constructor
+argument on the mechanism: ``organizers/gated.py::AdmissionGated`` applies any
+admission gate to any message-driven organizer, which is what makes the
+cross-cutting claim true rather than aspirational. **No mechanism imports this
+package** — inside ``organizers/`` only that one adapter module does, and the
+dependency the other way is limited to ``organizers.base.OrganizerContext``. See that module for the verified applicability limits — task-driven
+organizers (ACE, G-Memory, ReasoningBank) declare no ``on_message`` and so are
+outside *admission*'s reach specifically, though not outside ``policies/``.
 
 There is deliberately no ``base.py`` policy Protocol yet: with one implemented
 member, any shared interface would be guessed from a single example. The second

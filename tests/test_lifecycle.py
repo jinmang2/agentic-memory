@@ -1,9 +1,10 @@
 """Lifecycle contract: events, cursor, consolidate (spec §1)."""
 
+from helpers import StubLLM, make_mem_multi
+
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode
 from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext, overrides
-from helpers import StubLLM, make_mem_multi
 
 
 def _mk(organizers=("passthrough",)):
@@ -436,9 +437,8 @@ def test_memoryos_consumes_nemori_episodes():
 
 
 def test_memoryos_retires_superseded_units():
-    from agmem.organizers.memoryos import MemoryOSOrganizer
-
     from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
 
     mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=1), "episodes")
     mem = _mk(organizers=[mos])
@@ -560,7 +560,6 @@ def test_memoryos_heat_eviction_drops_reverse_index():
 
 def test_amem_consumes_episodes_and_retires_notes():
     from agmem.organizers.amem import AMemOrganizer
-
     from agmem.organizers.experimental import ChainedConsumer
 
     org = ChainedConsumer(AMemOrganizer(), "episodes")
@@ -604,9 +603,8 @@ def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
     """M3(a): a page backed by 2 sources survives when only 1 source is
     superseded (_retire's source_ids.discard leaves a non-empty set); only
     once the last source is superseded does the page INVALIDATE fire."""
-    from agmem.organizers.memoryos import MemoryOSOrganizer
-
     from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
 
     mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=2), "episodes")
     mem = _mk(organizers=[mos])  # no LLM -> one mechanical page over the batch
@@ -635,9 +633,8 @@ def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
 def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
     """M3(b): MemoryOS UPDATE replaces the unit while still in STM, but is a
     no-op once the unit has been paged (documented staleness, spec §3)."""
-    from agmem.organizers.memoryos import MemoryOSOrganizer
-
     from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
 
     inner = MemoryOSOrganizer(stm_capacity=2)
     mos = ChainedConsumer(inner, "episodes")
@@ -660,7 +657,6 @@ def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
 def test_amem_update_does_not_rewrite_note():
     """M3(b): A-Mem consuming episodes does not re-distill a note on UPDATE."""
     from agmem.organizers.amem import AMemOrganizer
-
     from agmem.organizers.experimental import ChainedConsumer
 
     org = ChainedConsumer(AMemOrganizer(), "episodes")

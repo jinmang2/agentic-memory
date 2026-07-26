@@ -1,8 +1,8 @@
+import pytest
+
 from agmem.capabilities.detect import HostCapabilities, detect
 from agmem.capabilities.requires import Requires
 from agmem.capabilities.resolver import ResolutionError, resolve
-
-import pytest
 
 
 def make_caps(**kwargs) -> HostCapabilities:

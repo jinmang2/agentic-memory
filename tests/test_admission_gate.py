@@ -13,10 +13,15 @@ import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from helpers import StubLLM, make_mem_multi
 
 from agmem._porter import PorterStemmer
+from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode
 from agmem.embed.fake import FakeEmbedder
+from agmem.organizers.amem import AMemOrganizer
+from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.gated import AdmissionGated
 from agmem.policies.admission import (
     PAPER_THRESHOLD,
     PAPER_WEIGHTS,
@@ -25,11 +30,8 @@ from agmem.policies.admission import (
     rouge_l_fmeasure,
     rouge_tokenize,
 )
-from agmem.organizers.amem import AMemOrganizer
-from agmem.organizers.base import OrganizerContext
 from agmem.stores.numpy_vec import NumpyVectorStore
 from agmem.stores.sqlite_doc import SqliteDocStore
-from helpers import StubLLM, make_mem_multi
 
 # (target, prediction, rouge_score's rougeL fmeasure)
 ROUGE_REFERENCE = [
@@ -415,12 +417,13 @@ def _amem_llm():
     )
 
 
-def test_amem_stores_every_message_when_no_gate_is_attached():
-    """A-Mem's paper behaviour is the baseline the gate is measured against."""
+def test_amem_stores_every_message_when_ungated():
+    """A-Mem's paper behaviour is the baseline the gate is measured against, and
+    the mechanism must not know policies exist."""
     llm = _amem_llm()
     ctx = _ctx(llm)
     org = AMemOrganizer()
-    assert org.admission is None
+    assert not hasattr(org, "admission")  # no policy coupling on the mechanism
     ops = org.on_message(_ep("Wow."), ctx)
     assert len(ops) == 1
     assert [role for role, _ in llm.calls] == ["extract"]
@@ -429,30 +432,27 @@ def test_amem_stores_every_message_when_no_gate_is_attached():
 def test_gated_amem_spends_no_llm_calls_on_a_rejected_message():
     llm = _amem_llm()
     ctx = _ctx(llm)
-    org = AMemOrganizer(admission=AdmissionGate())
+    org = AdmissionGated(AMemOrganizer(), AdmissionGate())
     assert org.on_message(_ep("Wow."), ctx) == []
     assert llm.calls == []  # both Ps1 and Ps2/Ps3 skipped
-    assert org.admission.stats.as_dict() == {
-        **org.admission.stats.as_dict(),
-        "seen": 1,
-        "admitted": 0,
-    }
+    stats = org.gate.stats.as_dict()
+    assert (stats["seen"], stats["admitted"]) == (1, 0)
 
 
 def test_gated_amem_still_ingests_an_admitted_message():
     llm = _amem_llm()
     ctx = _ctx(llm)
-    org = AMemOrganizer(admission=AdmissionGate())
+    org = AdmissionGated(AMemOrganizer(), AdmissionGate())
     ops = org.on_message(_ep("I prefer tea over coffee."), ctx)
     assert len(ops) == 1
     assert [role for role, _ in llm.calls] == ["extract"]
-    assert org.admission.stats.as_dict()["admitted"] == 1
+    assert org.gate.stats.as_dict()["admitted"] == 1
 
 
 def test_gate_rejection_leaves_no_trace_in_the_op_log():
     """A rejected turn must produce zero ops, not an op the facade then filters."""
     ctx = _ctx(_amem_llm())
-    org = AMemOrganizer(admission=AdmissionGate())
+    org = AdmissionGated(AMemOrganizer(), AdmissionGate())
     produced = [op for text in ("Wow.", "Ugh.", "Hmm.") for op in org.on_message(_ep(text), ctx)]
     assert produced == []
 
@@ -475,7 +475,7 @@ def _run_e2e(gate):
             "distill": [{"should_evolve": False, "connections": []}] * n,
         }
     )
-    org = AMemOrganizer(admission=gate)
+    org = AMemOrganizer() if gate is None else AdmissionGated(AMemOrganizer(), gate)
     mem = make_mem_multi([org], llm)
     for turn in _E2E_TURNS:
         mem.add_message(turn)
@@ -490,7 +490,7 @@ def test_end_to_end_gate_cuts_notes_and_write_calls_through_the_facade():
     notes_gated, calls_gated, org = _run_e2e(AdmissionGate())
     assert notes_gated == 2  # preference + identity
     assert calls_gated == 3  # 2 extract + 1 distill
-    stats = org.admission.stats.as_dict()
+    stats = org.gate.stats.as_dict()
     assert stats["seen"] == 5 and stats["admitted"] == 2
     assert stats["admit_rate"] == pytest.approx(0.4)
     assert calls_gated < calls_ungated  # the whole point: fewer write-path calls
@@ -503,8 +503,8 @@ def test_substring_matching_admits_more_which_is_defect_2_in_our_own_pipeline():
     notes_sub, calls_sub, sub_org = _run_e2e(AdmissionGate(type_matching="substring"))
     assert notes_sub == 3  # the `sister` turn is now admitted
     assert calls_sub > calls_word
-    assert sub_org.admission.stats.as_dict()["type_counts"]["fact"] == 1
-    assert "fact" not in word_org.admission.stats.as_dict()["type_counts"]
+    assert sub_org.gate.stats.as_dict()["type_counts"]["fact"] == 1
+    assert "fact" not in word_org.gate.stats.as_dict()["type_counts"]
 
 
 def test_gate_math_matches_a_hand_computed_score():
@@ -521,3 +521,112 @@ def test_gate_math_matches_a_hand_computed_score():
     assert decision.score == pytest.approx(expected)
     assert decision.score == pytest.approx(0.74)
     assert decision.admit and not math.isnan(decision.score)
+
+
+# ---------------------------------------------------------------------------
+# AdmissionGated: the claim that policies/ is cross-cutting
+# ---------------------------------------------------------------------------
+
+
+class _Recording(Organizer):
+    """Minimal mechanism double: records what reached it, produces one type."""
+
+    name = "recording"
+    produces = ("notes",)
+    consumes = ("episodes",)
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+        self.warm: list[str] = []
+        self.tasks: list[str] = []
+
+    def on_message(self, episode, ctx):
+        self.seen.append(episode.content)
+        return [MemoryOp(op=OpType.ADD, target_type="notes", target_id=episode.id, payload={})]
+
+    def warm_start(self, corpus, ctx):
+        self.warm = [e.content for e in corpus]
+        return []
+
+    def on_task_end(self, trajectory, outcome, task, ctx):
+        self.tasks.append(task)
+        return []
+
+
+def test_gate_applies_to_an_arbitrary_organizer_not_just_amem():
+    """The point of putting the gate in policies/: it is not A-Mem-specific."""
+    inner = _Recording()
+    org = AdmissionGated(inner, AdmissionGate())
+    ctx = _ctx()
+    for text in ("I prefer tea over coffee.", "Wow."):
+        org.on_message(_ep(text), ctx)
+    assert inner.seen == ["I prefer tea over coffee."]  # the interjection never arrived
+
+
+def test_wrapper_mirrors_identity_so_the_gate_is_invisible_downstream():
+    inner = _Recording()
+    org = AdmissionGated(inner, AdmissionGate())
+    assert (org.name, org.produces, org.consumes) == ("recording", ("notes",), ("episodes",))
+
+
+def test_wrapper_forwards_the_consolidate_cursor_scope():
+    """AgenticMemory stamps _cursor_scope on the instance it holds — the wrapper —
+    so it must reach the wrapped organizer or persisted progress would fork."""
+    inner = _Recording()
+    org = AdmissionGated(inner, AdmissionGate())
+    org._cursor_scope = "recording#1"
+    assert inner._cursor_scope == "recording#1"
+    assert inner.cursor_key == "consolidate:recording#1"
+
+
+def test_warm_start_is_filtered_because_hosts_override_it():
+    """A gate living only in on_message would be bypassed by Nemori/MemoryOS,
+    which replace warm_start with their own replay."""
+    inner = _Recording()
+    org = AdmissionGated(inner, AdmissionGate())
+    corpus = [_ep("I prefer tea over coffee."), _ep("Wow."), _ep("My name is Caroline.")]
+    org.warm_start(corpus, _ctx())
+    assert inner.warm == ["I prefer tea over coffee.", "My name is Caroline."]
+    assert inner.seen == []  # warm_start must not double-dispatch through on_message
+
+
+def test_task_end_passes_through_ungated():
+    """Admission scores a candidate against a transcript; a trajectory is neither."""
+    inner = _Recording()
+    org = AdmissionGated(inner, AdmissionGate())
+    org.on_task_end([{"step": 1}], "success", "some task", _ctx())
+    assert inner.tasks == ["some task"]
+    assert org.gate.stats.as_dict()["seen"] == 0  # the gate was never consulted
+
+
+def test_decisions_are_retained_for_artifact_capture():
+    org = AdmissionGated(_Recording(), AdmissionGate())
+    ctx = _ctx()
+    for text in ("I prefer tea over coffee.", "Wow."):
+        org.on_message(_ep(text), ctx)
+    assert [d.admit for d in org.decisions] == [True, False]
+    assert all(set(d.as_dict()) for d in org.decisions)
+
+
+def test_gating_passthrough_is_a_no_op_by_construction():
+    """Documented applicability limit: passthrough emits no ops and the facade
+    already stored the raw episode, so a veto cannot change anything."""
+    from agmem.organizers.passthrough import PassthroughOrganizer
+
+    ctx = _ctx()
+    plain, gated = PassthroughOrganizer(), AdmissionGated(PassthroughOrganizer(), AdmissionGate())
+    assert plain.on_message(_ep("Wow."), ctx) == gated.on_message(_ep("Wow."), ctx) == []
+
+
+def test_task_driven_organizers_have_no_message_hook_to_gate():
+    """Pins the applicability matrix in gated.py: ACE / G-Memory / ReasoningBank
+    are on_task_end-driven, so an episode-keyed gate has nothing to decide."""
+    from agmem.organizers.ace import ACEOrganizer
+    from agmem.organizers.base import overrides
+    from agmem.organizers.gmemory import GMemoryOrganizer
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    for cls in (ACEOrganizer, GMemoryOrganizer, ReasoningBankOrganizer):
+        org = cls()
+        assert not overrides(org, "on_message"), cls.__name__
+        assert overrides(org, "on_task_end"), cls.__name__

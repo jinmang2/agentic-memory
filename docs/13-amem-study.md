@@ -3,7 +3,7 @@
 > A-MEM: Agentic Memory for LLM Agents (arXiv:2502.12110, **NeurIPS 2025**).
 > 저자: Wujiang Xu(1저자) … Yongfeng Zhang(마지막 저자), Rutgers + AIOS Foundation.
 > 이 문서는 docs/11(Nemori 스터디)의 자매편. 근거: 논문 §3/App B/§4 verbatim 재독
-> (2026-07-21) + 공식 3벌 원문 정독 + `src/agmem/organizers/amem.py`,
+> (2026-07-21) + 공식 3벌 원문 정독 + `src/agmem/organizers/amem/organizer.py`,
 > `src/agmem/retrieval/pipeline.py`. 선행 포렌식: docs/08, docs/10,
 > docs/research/fidelity-round3(§1)·round4(§1).
 
@@ -124,7 +124,7 @@ Fig.2 캡션: "linked memories … are also **automatically accessed**" = 1-hop 
 
 ## 4. 우리 구현 워크스루
 
-### 4.1 write 경로 — `AMemOrganizer` (`organizers/amem.py`)
+### 4.1 write 경로 — `AMemOrganizer` (`organizers/amem/organizer.py`)
 
 메시지당 파이프라인 (`_ingest`, `amem.py:188`):
 ```
@@ -241,4 +241,4 @@ uv run python scripts/exp_locomo_conv0.py --configs passthrough amem
 ## 8. 더 읽기
 - 발표용 리뷰: docs/08 / 충실도 등급표: docs/10
 - 포렌식 원장: docs/research/fidelity-round3(§1) · round4(§1)
-- 코드: `src/agmem/organizers/amem.py` · `src/agmem/retrieval/pipeline.py:181`
+- 코드: `src/agmem/organizers/amem/organizer.py` · `src/agmem/retrieval/pipeline.py:181`

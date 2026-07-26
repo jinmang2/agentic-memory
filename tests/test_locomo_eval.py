@@ -8,6 +8,7 @@ from agmem.bench.locomo import (
     ANSWER_PROMPT,
     ANSWER_PROMPT_NO_ABSTAIN,
     CAT5_NOT_MENTIONED,
+    _tok_wujiang,
     answer,
     cat5_options,
     gold_for,
@@ -16,7 +17,6 @@ from agmem.bench.locomo import (
     normalize,
     resolve_cat5_reply,
     token_f1_wujiang,
-    _tok_wujiang,
 )
 from agmem.embed.fake import FakeEmbedder
 

@@ -1,9 +1,9 @@
+from helpers import StubLLM
+
 from agmem import AgenticMemory
 from agmem.core.ops import OpType
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.ace import ACEOrganizer
-
-from helpers import StubLLM
 
 
 def make_mem(llm):

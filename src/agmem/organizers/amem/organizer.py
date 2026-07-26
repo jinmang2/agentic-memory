@@ -35,7 +35,6 @@ from typing import Any
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, Note
 from agmem.organizers.base import Organizer, OrganizerContext
-from agmem.policies.admission import AdmissionGate
 
 logger = logging.getLogger("agmem.organizers.amem")
 
@@ -155,14 +154,10 @@ class AMemOrganizer(Organizer):
 
     produces = ("notes",)
 
-    def __init__(self, top_k: int = 5, admission: AdmissionGate | None = None) -> None:
+    def __init__(self, top_k: int = 5) -> None:
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
-        # Optional A-MAC write-path gate (policies/admission.py). None keeps
-        # A-Mem's paper behaviour of storing every message, which is the
-        # baseline the gate is measured against — never enable it by default.
-        self.admission = admission
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         """Runs the full note pipeline (Ps1 construction -> neighbor retrieval
@@ -175,14 +170,6 @@ class AMemOrganizer(Organizer):
         return self._ingest(episode, ctx)
 
     def _ingest(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
-        # A-MAC gate first, so a rejected message costs zero LLM calls rather
-        # than A-Mem's two. It sits in `_ingest` rather than `on_message`
-        # because that is the single funnel both entry points share: chained
-        # composition reaches this organizer through `ChainedConsumer`, which
-        # calls the wrapped organizer's ordinary `on_message`.
-        if self.admission is not None and not self.admission.decide(episode, ctx).admit:
-            return []
-
         # upstream "talk start time": the conversation date when known,
         # not the ingest wall clock
         talk_time = episode.meta.get("date") or episode.timestamp.isoformat()

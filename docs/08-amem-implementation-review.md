@@ -65,7 +65,7 @@
 
 ### 3.1 설계: 방법론을 Organizer 플러그인으로
 
-A-Mem 전체가 `organizers/amem.py` 하나 (~160줄). 스토리지를 직접 만지지 않고
+A-Mem 전체가 `organizers/amem/organizer.py` 하나 (~160줄). 스토리지를 직접 만지지 않고
 **MemoryOp(ADD/LINK/UPDATE) 리스트를 반환** → append-only evolution_log에 기록 후 반영.
 전 과정이 감사/재생(replay) 가능 — 원논문의 "evolution이 뭘 바꿨는지 추적 불가" 문제 해소.
 

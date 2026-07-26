@@ -2,13 +2,12 @@
 
 import importlib
 
+from helpers import StubLLM
+
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig
 from agmem.core.ops import OpType
 from agmem.embed.fake import FakeEmbedder
-
-
-from helpers import StubLLM
 
 
 def make_mem(organizer, llm) -> AgenticMemory:
@@ -322,42 +321,66 @@ def test_mmr_prefers_diversity():
 # ---------------- package layout invariant ----------------
 
 
-def test_organizers_package_root_holds_only_organizers():
-    """Every module directly under ``organizers/`` must define an Organizer.
+def test_organizers_root_is_framework_only_and_methodologies_are_packages():
+    """``organizers/`` root = the plugin framework; every methodology = a subpackage.
 
-    The package is the methodology registry, so a module sitting in it that is
-    not a methodology miscategorises itself. Two exemptions, both structural:
-    ``base.py`` is the contract the subclasses implement and ``__init__.py`` is
-    the name->class registry.
-
-    This is the guard for the 2026-07-26 layout fix. A-MAC's gate used to live
-    here and is a control policy, not a mechanism -- it declares no memory type
-    and emits no MemoryOp -- so it moved to ``agmem/policies/``. Nemori's stage
-    strategies moved into the ``organizers/nemori/`` subpackage, which expresses
-    that they belong to one methodology rather than sitting loose beside
-    unrelated ones.
+    The earlier version of this rule was "the root holds Organizer subclasses",
+    with ``base.py``/``__init__.py`` carved out as exceptions — and an exception
+    list is how the root got mixed in the first place. It also let ``gated.py``
+    pass while re-mixing categories, since a composition adapter is framework,
+    not a methodology. So the rule is now positional and exception-free: a
+    plain module at the root is framework, and anything that implements a paper
+    lives in its own package (which is also where its internal stages go, as
+    Nemori's already do).
     """
     import pkgutil
 
     import agmem.organizers as pkg
     from agmem.organizers.base import Organizer
 
-    offenders = []
+    FRAMEWORK = {"base", "gated"}
+    stray_modules, packages = [], []
     for info in pkgutil.iter_modules(pkg.__path__):
-        if info.name == "base":
-            continue
-        module = importlib.import_module(f"agmem.organizers.{info.name}")
-        has_organizer = any(
-            isinstance(obj, type) and issubclass(obj, Organizer) and obj is not Organizer
-            for obj in vars(module).values()
-        )
-        if not has_organizer:
-            offenders.append(info.name)
-    assert offenders == [], (
-        f"non-Organizer modules directly under organizers/: {offenders} — "
-        "a cross-cutting policy belongs in agmem/policies/, and a single "
-        "methodology's internal stages belong in its own subpackage"
+        (packages if info.ispkg else stray_modules).append(info.name)
+
+    assert sorted(stray_modules) == sorted(FRAMEWORK), (
+        f"root modules must be exactly {sorted(FRAMEWORK)}, got {sorted(stray_modules)} — "
+        "a methodology belongs in its own subpackage"
     )
+    for name in packages:
+        if name == "experimental":
+            continue  # semantic quarantine, not a single methodology
+        module = importlib.import_module(f"agmem.organizers.{name}")
+        exported = [
+            obj
+            for obj in vars(module).values()
+            if isinstance(obj, type) and issubclass(obj, Organizer) and obj is not Organizer
+        ]
+        assert exported, f"methodology package {name!r} must re-export its Organizer"
+
+
+def test_methodology_packages_keep_their_single_module_import_path():
+    """Promoting a module to a package must not move any call site."""
+    from agmem.organizers.ace import ACEOrganizer
+    from agmem.organizers.amem import AMemOrganizer
+    from agmem.organizers.gmemory import GMemoryOrganizer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+    from agmem.organizers.nemori import NemoriOrganizer
+    from agmem.organizers.passthrough import PassthroughOrganizer
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+    from agmem.organizers.zep_graph import ZepGraphOrganizer
+
+    for cls in (
+        ACEOrganizer,
+        AMemOrganizer,
+        GMemoryOrganizer,
+        MemoryOSOrganizer,
+        NemoriOrganizer,
+        PassthroughOrganizer,
+        ReasoningBankOrganizer,
+        ZepGraphOrganizer,
+    ):
+        assert cls.__module__.endswith(".organizer"), cls.__module__
 
 
 def test_policies_declare_no_memory_type_and_emit_no_ops():
@@ -368,3 +391,23 @@ def test_policies_declare_no_memory_type_and_emit_no_ops():
     assert not issubclass(AdmissionGate, Organizer)
     assert not hasattr(AdmissionGate, "produces")
     assert not hasattr(AdmissionGate, "on_message")
+
+
+def test_no_mechanism_imports_the_policies_package():
+    """Orthogonality as an enforced fact, not a claim in a docstring.
+
+    A mechanism must not know policies exist; only the adapter that applies one
+    (``organizers/gated.py``) may import the package. If a future organizer grows
+    an ``admission=`` constructor argument again, this fails.
+    """
+    import pathlib
+
+    import agmem.organizers as pkg
+
+    root = pathlib.Path(pkg.__path__[0])
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in root.rglob("*.py")
+        if path.name != "gated.py" and "agmem.policies" in path.read_text()
+    ]
+    assert offenders == [], f"mechanism modules importing policies: {offenders}"

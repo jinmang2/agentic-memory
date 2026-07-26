@@ -2,7 +2,7 @@
 
 > 대상: arXiv:2508.03341 (v1 초기 형식화 + v4 ACL 형식화), github.com/nemori-ai/nemori
 > (현행 main = 이슈 #13의 async/Qdrant 리라이트, LoCoMo V5 83.05% 버전).
-> 우리 구현: `src/agmem/organizers/nemori.py` + `src/agmem/retrieval/pipeline.py`
+> 우리 구현: `src/agmem/organizers/nemori/organizer.py` + `src/agmem/retrieval/pipeline.py`
 > + `src/agmem/bench/locomo.py`. 커밋 e7c5f8f(3차 감사 반영) 기준.
 > 근거 감사: docs/research/fidelity-deep-audit.md(1차), fidelity-round3-paper-code-forensics.md(3차).
 

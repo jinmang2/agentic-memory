@@ -50,31 +50,43 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   └── rerank.py                # Noop / MMR / LLMReranker / CrossEncoder
 │   │
 │   ├── organizers/                  # ★ mechanism = 방법론 = Organizer 플러그인
-│   │   │                            #   루트에는 Organizer 서브클래스만 (+contract/registry).
+│   │   │                            #   ── 규칙: 루트의 평범한 모듈 = 프레임워크,
+│   │   │                            #   방법론은 전부 자기 패키지. 예외 없음.
 │   │   │                            #   테스트로 강제: test_organizers.py
-│   │   │                            #   ::test_organizers_package_root_holds_only_organizers
-│   │   ├── base.py                  # Organizer Protocol:
+│   │   │                            #   ::test_organizers_root_is_framework_only_...
+│   │   ├── base.py                  # [프레임워크] Organizer Protocol:
 │   │   │                            #   on_message / on_task_end → list[MemoryOp]
 │   │   │                            #   (+ warm_start, on_retrieval, flush_buffer,
 │   │   │                            #   on_memory_event(consumes 구독)/consolidate — §2)
-│   │   ├── passthrough.py           # no-op baseline (raw episode만)
-│   │   ├── amem.py                  # 노트 구성→링크→이웃 진화 (버그 수정판 명시)
-│   │   ├── memoryos.py              # STM/MTM/LPM + heat 승격 + LFU eviction
-│   │   ├── nemori/                  # 스테이지를 소유하는 방법론 → 서브패키지
-│   │   │   ├── __init__.py          # NemoriOrganizer 재수출 (기존 import 경로 유지)
-│   │   │   ├── organizer.py         # boundary 분절→서사(시간 절대화)→predict-calibrate 증류
-│   │   │   └── stages.py            # Segmenter/EpisodeMerger/Integrator/Consolidator
-│   │   │                            #   스테이지 (fidelity 스위치, docs/11 §4)
-│   │   ├── zep_graph.py             # entity 추출→resolution→fact→invalidation
-│   │   ├── ace.py                   # Generator/Reflector/Curator + playbook delta
-│   │   ├── reasoning_bank.py        # self-judge→성공/실패 증류→append (+MaTTS 훅)
-│   │   └── gmemory.py               # MAS 궤적 sparsify→insight, reward 기반 프루닝
+│   │   ├── gated.py                 # [프레임워크] AdmissionGated: policies/의 결정을
+│   │   │                            #   임의 organizer에 적용하는 합성 어댑터
+│   │   ├── __init__.py              # [프레임워크] name→class 레지스트리
+│   │   │
+│   │   │                            # ── 방법론: 각 패키지가 organizer.py + __init__.py
+│   │   │                            #   재수출(기존 import 경로 그대로) + 필요 시 내부 모듈
+│   │   ├── passthrough/             # no-op baseline (raw episode만)
+│   │   ├── amem/                    # 노트 구성→링크→이웃 진화 (버그 수정판 명시)
+│   │   ├── memoryos/                # STM/MTM/LPM + heat 승격 + LFU eviction
+│   │   ├── nemori/                  # 내부 스테이지를 가진 예시
+│   │   │   ├── __init__.py          #   NemoriOrganizer 재수출
+│   │   │   ├── organizer.py         #   boundary 분절→서사(시간 절대화)→predict-calibrate 증류
+│   │   │   └── stages.py            #   Segmenter/EpisodeMerger/Integrator/Consolidator
+│   │   │                            #   (fidelity 스위치, docs/11 §4)
+│   │   ├── zep_graph/               # entity 추출→resolution→fact→invalidation
+│   │   ├── ace/                     # Generator/Reflector/Curator + playbook delta
+│   │   ├── reasoning_bank/          # self-judge→성공/실패 증류→append (+MaTTS 훅)
+│   │   ├── gmemory/                 # MAS 궤적 sparsify→insight, reward 기반 프루닝
+│   │   └── experimental/            # 논문 재현이 아닌 합성 (의미적 격리 — 위 위치 규칙과
+│   │                                #   직교. ChainedConsumer + Nemori experimental 스테이지)
 │   │
 │   ├── policies/                    # ★ control policy = mechanism과 직교하는 cross-cutting 규칙
 │   │   │                            #   소속 판정: 메모리 타입 미선언 + MemoryOp 미발행.
 │   │   │                            #   근거/조사: docs/research/memory-component-taxonomy.md
 │   │   └── admission.py             # store 연산 게이트: A-MAC(2603.04549) 구현,
-│   │                                #   SAGE(2605.30711)가 같은 seam의 다음 후보
+│   │                                #   SAGE(2605.30711)가 같은 seam의 다음 후보.
+│   │                                #   적용은 organizers/gated.py wrapper 경유 —
+│   │                                #   어떤 mechanism도 이 패키지를 import하지 않는다
+│   │                                #   (organizers 중 gated.py만 import)
 │   │
 │   ├── memory.py                    # AgenticMemory 퍼사드 (05 문서의 공개 API)
 │   │                                #   + 비동기 write 워커 (내장 스레드+큐, sync_write=False 시)
@@ -116,8 +128,40 @@ arXiv:2603.07670은 메모리 시스템을 write–manage–read로 모델링하
 소유하므로 **policy가 아니라 mechanism**이다(`docs/research/memory-component-taxonomy.md` §2).
 
 **세 번째 범주**: 한 방법론이 소유한 내부 스테이지(Nemori의 boundary/merge/integration 전략).
-이것은 그 방법론의 논문 메커니즘이므로 별도 패키지가 아니라 **소유자의 서브패키지**에 둔다
-(`organizers/nemori/stages.py`). 무관한 방법론들 옆에 평평하게 놓지 않는 것이 요점이다.
+이것은 그 방법론의 논문 메커니즘이므로 별도 패키지가 아니라 **소유자 패키지 안**에 둔다
+(`organizers/nemori/stages.py`).
+
+### 1.2 `organizers/` 위치 규칙 — 예외 없는 형태
+
+**루트의 평범한 모듈 = 프레임워크. 방법론은 전부 자기 패키지.**
+
+| 위치 | 내용 |
+|---|---|
+| `organizers/base.py` | Organizer contract |
+| `organizers/gated.py` | 합성 어댑터(policy 적용) |
+| `organizers/__init__.py` | name→class 레지스트리 |
+| `organizers/<methodology>/` | 방법론 1개. `organizer.py` + `__init__.py` 재수출 (+내부 모듈) |
+| `organizers/experimental/` | 의미적 격리(논문 재현 아님). 위 규칙과 **직교** |
+
+이전 판의 규칙은 "루트는 Organizer 서브클래스만"이었고 `base.py`/`__init__.py`를 **예외로
+빼뒀다** — 그런데 예외 목록이야말로 루트가 처음 섞인 원인이었다. 게다가 그 규칙은 `gated.py`를
+통과시키면서 범주를 다시 섞었다(합성 어댑터는 프레임워크이지 방법론이 아니다). 그래서 규칙을
+**위치 기반·예외 없음**으로 바꿨다: 루트의 평범한 모듈은 프레임워크이고, 논문을 구현하는 것은
+전부 자기 패키지를 가진다 — 내부 스테이지가 생길 자리도 그 안이다(Nemori가 이미 그 형태).
+
+단일 파일 방법론까지 패키지로 만드는 ceremony 비용이 있지만, `__init__.py`가 organizer를
+재수출하므로 **호출부 40여 곳이 전부 무변경**이고(`from agmem.organizers.amem import
+AMemOrganizer` 그대로 해석), 방법론이 내부 모듈을 갖게 될 때 루트를 다시 오염시키지 않는다.
+`test_methodology_packages_keep_their_single_module_import_path`가 경로 보존을 고정한다.
+
+**policy를 mechanism에 붙이는 방법**: 생성자 인자가 아니라 wrapper
+(`organizers/gated.py::AdmissionGated`). 생성자 인자로 두면 policy가 그 mechanism 하나에서만
+도달 가능해져 "cross-cutting"이 말뿐이 되고, mechanism이 policy를 import하게 된다. wrapper면
+한 번 구현으로 모든 message 기반 organizer에 적용되고, **어떤 mechanism도 `policies`를 import하지
+않는다** — `organizers/` 안에서 `policies`를 import하는 모듈은 어댑터인 `gated.py` 단 하나이고
+(`policies`는 `organizers.base`의 `OrganizerContext`만 역참조한다), 이것이 직교성의 실제 증거다. **단 적용 범위는 정책의 seam이 정한다**: admission은
+`on_message`가 있는 organizer에만 의미가 있고 task 기반(ACE/G-Memory/ReasoningBank)에는
+원리적으로 적용 불가다. 검증된 매트릭스는 `gated.py` 모듈 docstring과 taxonomy 문서 §2.5.
 
 ## 2. 데이터 흐름
 

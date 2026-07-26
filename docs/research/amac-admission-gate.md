@@ -5,7 +5,8 @@
 > `docs/research/write-path-critics.md` §5의 구현 후보 **1순위**.
 > 방법: 논문 HTML 전문 + **공식 코드 전수 통독**(github.com/GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents,
 > 단일 커밋 `40407ae`, MIT) + 주장 경험적 재현. 수치는 전부 1차 소스.
-> 산출 코드: `src/agmem/policies/admission.py`, 테스트 `tests/test_admission_gate.py` (54건).
+> 산출 코드: `src/agmem/policies/admission.py` + 적용 wrapper `organizers/gated.py`,
+> 테스트 `tests/test_admission_gate.py` (62건).
 > **측정은 하지 않았다** — 사용자 지시(배선 확정 전 실험 금지)에 따라 유닛 검증까지만.
 
 ---
@@ -137,14 +138,19 @@ spaCy NER`가 남아 있다. POS 태거는 의존성에도 없다.
 
 ---
 
-## 3. 우리 구현 (`policies/admission.py`)
+## 3. 우리 구현 (`policies/admission.py` + `organizers/gated.py`)
 
-`AMemOrganizer._ingest` **앞단** 게이트. `_ingest`에 둔 이유는 `on_message`와 chained 경로
-(`ChainedConsumer`가 wrapped의 `on_message`를 호출)가 공유하는 유일한 funnel이기 때문.
-거부된 turn은 A-Mem의 **2콜(Ps1 + Ps2/Ps3)을 0콜로** 만든다.
+    AdmissionGated(AMemOrganizer(), AdmissionGate())
 
-기본값은 `admission=None` = **A-Mem 논문 동작(전부 저장)** — 게이트가 측정될 baseline이므로
-절대 기본 활성화하지 않는다.
+wrapper가 `on_message`를 가로채므로 거부된 turn은 wrapped organizer에 **도달하지 않고**, A-Mem의
+**2콜(Ps1 + Ps2/Ps3)이 0콜**이 된다. 게이트를 붙이지 않은 `AMemOrganizer()`가
+**A-Mem 논문 동작(전부 저장)** = 측정 baseline이다.
+
+**처음엔 `AMemOrganizer(admission=...)` 생성자 인자였고, 그건 틀린 배치였다.** policy 패키지에
+둔다는 것은 다른 organizer에도 적용된다는 주장인데 생성자 인자는 그 주장을 A-Mem 하나로 한정하고
+mechanism이 policy를 import하게 만든다. wrapper로 바꾼 뒤 `organizers/amem/organizer.py`의 policy import는
+0개이고, 적용 범위는 taxonomy §2.5에서 organizer 8종 전수 검증했다 — message 기반 3종 유효,
+`passthrough` 무의미, `nemori`는 분절이 변하므로 ablation, task 기반 3종은 적용 불가.
 
 ### 의도적 편차 (전부 코드 docstring에 근거 명시)
 

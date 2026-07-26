@@ -24,6 +24,7 @@ from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.experimental import ChainedConsumer
+from agmem.organizers.gated import AdmissionGated
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.policies.admission import AdmissionGate
@@ -404,7 +405,7 @@ def main() -> None:
         # Per the audit §7 the published weights/threshold need re-tuning before
         # these numbers mean anything — run the pair, not just the first one.
         "amem_amac": (
-            [lambda: AMemOrganizer(admission=AdmissionGate())],
+            [lambda: AdmissionGated(AMemOrganizer(), AdmissionGate())],
             ("notes",),
             10,
             True,
@@ -416,7 +417,7 @@ def main() -> None:
         # `amem_amac` tests on our own data whether that recall is an artifact of
         # the matching defect (audit §2 defect 2).
         "amem_amac_upstream": (
-            [lambda: AMemOrganizer(admission=AdmissionGate(type_matching="substring"))],
+            [lambda: AdmissionGated(AMemOrganizer(), AdmissionGate(type_matching="substring"))],
             ("notes",),
             10,
             True,

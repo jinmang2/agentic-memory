@@ -89,7 +89,7 @@
 ## 즉시 다음 액션 (2026-07-26 갱신)
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
-> 브랜치: **`main` 단일**. 테스트 245 passed / 1 skipped.
+> 브랜치: **`main` 단일**. 테스트 254 passed / 1 skipped.
 >
 > **2026-07-26 사용자 지시 — 실험 전면 보류**: 로컬(0.5B)이든 API든 측정을 하지 않는다. 현재
 > 작업 모드는 ①새 논문 구현 ②API 배선 refactor 검토이고, 각 항목마다 **논문 원문 → official
@@ -110,8 +110,11 @@
 ### 구현 후보 (근거: `docs/research/write-path-critics.md` §5)
 3. [x] **A-MAC admission gate** (1순위) — **2026-07-26 구현 완료**, 감사 문서
    `docs/research/amac-admission-gate.md`. `src/agmem/policies/admission.py` +
-   `AMemOrganizer(admission=...)`, 테스트 52건. 기본값은 `admission=None`(A-Mem 전부 저장 =
-   baseline)이므로 기존 config 동작 무변경.
+   적용 wrapper `organizers/gated.py::AdmissionGated`, 테스트 62건. 게이트를 붙이지 않으면
+   A-Mem은 전부 저장(= baseline)이므로 기존 config 동작 무변경.
+   **적용 범위 검증됨**(taxonomy §2.5): message 기반(`amem`/`zep_graph`/`memoryos`)에 유효,
+   `passthrough`는 무의미, `nemori`는 분절이 바뀌므로 ablation으로 보고할 것, task 기반
+   (`ace`/`gmemory`/`reasoning_bank`)은 `on_message`가 없어 **적용 불가**.
    **측정 재개 시 재튜닝이 선행 조건**: 논문 weight `[0.1,0.1,0.1,0.1,0.6]`/θ=0.55는 공식 코드의
    결함 2건(N≡1.0·R≡0.0 상수화, Type Prior 부분문자열 매칭) 위에서 맞춰진 값이라 디버그된
    feature에 전이되지 않는다. 자세한 건 감사 문서 §7.
@@ -130,19 +133,24 @@
    공통 contract를 뽑아내면 된다.
 7. **Memory Worth** (신규, 2604.12007) — discard + retrieval 억제를 지배하는 policy. 메모리
    유닛당 스칼라 카운터 2개만 필요하고 "retrieval을 이미 로깅하는 아키텍처"를 전제하는데
-   `on_retrieval` 훅이 정확히 그것이다.
+   `on_retrieval` 훅이 정확히 그것이다. **admission과 달리 task 기반 organizer에도 적용된다**
+   (쓰기 방식과 무관하게 검색된 유닛을 지배하므로).
+8. **Mem-α** (신규, 2509.25911) — policy 범주의 **learned** 변종. RL이 `memory_insert`/`update`/
+   `delete` 호출 정책을 학습하고 논문이 "메모리 아키텍처는 RL 프레임워크와 분리돼 교체 가능"하다고
+   명시 — 우리 mechanism/policy 분리가 문헌의 축임을 확인해주는 사례. 학습 인프라가 필요해 Phase 4
+   (0.5B 학습)와 묶어야 한다.
 
 > 분류 근거와 조사 전문: `docs/research/memory-component-taxonomy.md`. 새 논문을 어디에 넣을지는
 > docs/04 §1.1의 판정 기준(메모리 타입 미선언 + MemoryOp 미발행 → policy)으로 결정한다.
 
 ### 별도 판단이 필요한 미수정 버그 3건 (코드에 문서화됨)
-8. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
+9. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
    tail이 영구 미방출 (`experimental/chained.py` "Known gap"). 고치면 `nemori_memoryos` 수치 변동.
    (어댑터 자신의 `_pending` 배치는 정상 방출되므로 `nemori_amem_k_batched`의 마지막 배치는
    안전하다 — 2026-07-26 확인.)
-9. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
+10. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
    `memory.py:warm_start` docstring). 고치면 과거 run과 op 카운트 비교가 깨진다.
-10. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
+11. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
    `(id, memory_type)`인데 **모든 벡터 백엔드는 `item_id` 단독 upsert**(numpy/sqlite-vec의
    `ON CONFLICT(item_id)`, chroma/qdrant/lance upsert-by-id)이고 `memory_type`은 필터 메타데이터로만
    저장한다. 같은 id를 두 타입으로 쓰면 벡터 인덱스에서 나중 것이 앞의 것을 덮어써 한쪽이 조용히
@@ -150,11 +158,11 @@
    고치려면 5개 백엔드 스키마를 모두 건드리고 재색인이 필요하므로 별도 결정으로 남긴다.
 
 ### 문서 교정 잔여
-11. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
+12. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
    측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
 
 ### 조사 후 종결된 리스크 (재개하지 말 것)
-12. **vendored Porter가 nltk와 다르다 → 영향 실측 0으로 종결** (2026-07-26, A-MAC 감사 부산물).
+13. **vendored Porter가 nltk와 다르다 → 영향 실측 0으로 종결** (2026-07-26, A-MAC 감사 부산물).
     `snap-research/locomo`의 `normalize_answer`와 `rouge_score` 둘 다 nltk 기본 모드
     (`NLTK_EXTENSIONS`)를 쓰는데 `agmem/_porter.py`는 Porter(1980) 원문 조건이라, step 1c
     `Y→I`에서 `cry`/`cried`가 병합되지 않는 등 실제 차이가 있다. `PorterStemmer(mode=...)`로
