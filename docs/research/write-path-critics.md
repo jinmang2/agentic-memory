@@ -147,6 +147,9 @@ LoCoMo 0.9169 (gpt-4.1-mini, agent mode) / LongMemEval-S 93.0% (gpt-5-mini).
 > 함께 보고하지만, "80% 절감" 문구는 memory-only 경로 기준이고 retrieval 단계만 따로 떼지 않았다.
 > 즉 이 논문은 **간극의 사례이자 부분적 반례**로 인용하는 게 정확하다.
 
+구조 판정(2026-07-26 추가): **mechanism**이다 — 자체 3-tier + 자체 Retrieval Agent. 그리고 A-Mem의
+**추출 축 반대 극단**이라 비교표의 끝점이 된다. 상세는 `memory-component-taxonomy.md` §2.4.
+
 ---
 
 ## 5. 구현 후보 판단

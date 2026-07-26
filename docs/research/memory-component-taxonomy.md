@@ -46,6 +46,76 @@ within-task/between-task **여러 stage에 걸친 add-on 계열**로 다루고 �
 | HyMem (2602.13933) | dual-granular 저장 + 2-tier 자체 retrieval + reflection | 후보 |
 | MIRIX (2507.07957) | 6 메모리 타입(Core/Episodic/Semantic/Procedural/Resource/Knowledge Vault) + multi-agent 제어 | 미구현 |
 | MemOS (2507.03724) | memory OS, MemCube 단위. MIRIX/Mem0/Zep/Memobase/MemU/Supermemory를 baseline으로 비교 | 미구현 |
+| **MemMachine** (2604.04853, Apache-2.0) | 자체 3-tier(short-term / long-term episodic / profile) + 자체 **Retrieval Agent**. §2.4 참조 | 미구현 |
+
+### 2.4 MemMachine — 추출 축의 반대 극단 (비교표에서 가장 쓸모 있는 지점)
+
+**구조 판정: mechanism.** 자체 3 tier(short-term, long-term episodic, profile)와 자체 read 경로를
+소유한다. 그런데 방향이 A-Mem과 정반대다:
+
+- **write**: "ground-truth-preserving architecture that **stores entire conversational episodes and
+  reduces lossy LLM-based extraction**". 메시지별 fact 추출이 **없다**. write-path LLM은 STM 요약과
+  profile 추출에만 쓴다. 인덱싱은 문장 단위.
+- **read**: nucleus match를 주변 ±1~2 turn으로 확장하는 *contextualized retrieval* → dedup·시간순
+  정렬 + 선택적 cross-encoder rerank.
+- **Retrieval Agent**: 질의를 direct retrieval / parallel decomposition / iterative chain-of-query
+  중 하나로 **적응적 라우팅**한다.
+
+수치: LoCoMo 0.9169(gpt-4.1-mini, agent mode) / LongMemEval-S 93.0%(gpt-5-mini).
+input 토큰 LoCoMo 4.20M vs Mem0 19.21M (−78%), memory mode 4.20M / agent mode 8.57M.
+
+**우리에게 주는 것 3가지**:
+1. **비용-정확도 파레토의 반대쪽 끝점**이다. A-Mem은 turn당 2콜을 써서 추출하고, MemMachine은
+   사실상 추출하지 않는다. 8-시스템 비교표(Phase 5)의 축을 정의해주는 대조군이다.
+2. **우리 설계 규칙을 외부에서 검증해준다.** `core/types.py`의 "raw Episode는 불변, organizer는
+   파생만 — verbatim-loss 방어"가 MemMachine의 ground-truth preservation과 같은 주장이다. 즉 우리
+   `passthrough` baseline이 이 계열의 하한이고, MemMachine은 그 위에 STM 요약 + profile만 얹은 형태다.
+3. **Retrieval Agent는 read-path control policy이고 우리에게 자리가 없다.** 적응적 질의 라우팅은
+   메모리 타입을 선언하지 않고 op도 발행하지 않는다 → 판정 기준상 policy인데, MemMachine 안에서는
+   mechanism 내부 부품이다. **mechanism이 policy를 내장할 수 있다**는 사례이므로, 우리가 이걸
+   구현한다면 `policies/`의 read-side 멤버로 뽑아내는 게 맞다(Memory Worth와 같은 자리).
+
+인용 캐비앗은 `write-path-critics.md` §4.4에 이미 기록됨 — retrieved vs total 간극을 스스로
+분리하지 않았고 "80% 절감"은 memory-only 경로 기준이다.
+
+### 2.4.1 "consolidation"은 최소 3가지 다른 것을 가리킨다
+
+비교표를 쓸 때 가장 헷갈리는 용어다. 우리 코드 기준으로 확정된 사실:
+
+| 논문/코드의 "consolidation" | 실제로 하는 일 | 시점 | 우리 훅 |
+|---|---|---|---|
+| **우리 `Organizer.consolidate(ctx)`** | cursor로 재개되는 **지연 관리 패스**. `AgenticMemory.consolidate()`로만 호출 | offline | 그 자체. **구현한 방법론은 Nemori 하나** |
+| **Nemori** | semantic 통합. inline(v4 `ThreeWayIntegrator`)과 deferred(`SemanticOfflineConsolidator`, `consolidation="semantic_offline"`)의 **두 갈래** = 시점 ablation 축 | 둘 다 | 둘 다 (inline은 write 경로, deferred는 `consolidate()`) |
+| **Zep/Graphiti** | **consolidation이 아니다.** entity resolution(같은 실체 병합) + bi-temporal invalidation(기존 fact 무효화)이고 전부 `on_message` 안이다. `consolidate()`를 구현하지 않는다. community detection만 offline 성격인데 TODO 미구현 | inline | `on_message` |
+| **RecMem** | recurrence 게이트가 트리거하는 buffer→episodic **승격** | **inline** (`add_memory` 안, `rec_mem.py:337-411`) | `on_message` |
+| **LightMem** | sleep-time offline 재구성 | offline | `consolidate()` |
+| **MemoryOS** | STM→MTM→LPM heat 승격 + LFU eviction | inline | `on_message` |
+
+⇒ 정리: 서베이의 연산 어휘로 보면 "consolidation"은 단일 연산이 아니고 **summarize + update +
+discard의 묶음**이다. 비교할 때 갈라야 할 축은 두 개다 — **언제**(inline / deferred-offline) ×
+**무엇을**(요약 / 통합 / 승격 / 무효화·삭제). "consolidation을 한다"만으로는 아무 것도 비교되지 않는다.
+
+내가 RecMem을 "`consolidate()` 훅이 그 자리"라고 잘못 배치한 원인도 이것이다 — 논문이
+"consolidation"이라 부르니 offline 패스라고 가정했지만 실제로는 per-message write 경로였다.
+
+### 2.4.2 `on_message` vs `on_task_end` — 무엇이 실제로 달라지는가
+
+파사드 코드(`memory.py:227-283`)로 확인한 비대칭:
+
+| | `add_message` → `on_message` | `add_task_result` → `on_task_end` |
+|---|---|---|
+| 훅 시그니처 | `(episode, ctx)` | `(trajectory, outcome, task, ctx)` — **Episode를 받지 않는다** |
+| 저장되는 raw | 메시지 **전문**이 Episode로 영구 보존 | `content=task` 문자열 + `meta={outcome, agent_id, steps}` 뿐. **trajectory는 파사드가 저장하지 않는다** |
+| 정보 소실 위험 | 낮음 — organizer가 손실 추출해도 원문이 남아 재파생 가능 | **높음 — `on_task_end`가 뽑지 못한 것은 영구 소실.** 기회가 한 번이다 |
+| `warm_start` 백필 | 지원 (corpus를 `on_message`로 replay) | **불가** — corpus는 `Episode` 리스트이므로 task 기반 organizer는 아무 것도 만들지 않는다 |
+| admission policy | 적용 가능 | **적용 불가** (§2.5) |
+| 우리 organizer | amem, nemori, memoryos, zep_graph, passthrough | ace, gmemory, reasoning_bank |
+
+**비교 설계에 주는 제약(중요)**: LoCoMo/LongMemEval은 대화 벤치 = `on_message` 계열만 측정한다.
+task 기반 3종은 그 벤치에서 **아무 것도 생산하지 않는다**. 즉 Phase 5의 "8-시스템 비교표"는
+**하나의 벤치로 8개를 나란히 놓을 수 없다** — 대화 벤치(5종) + 에이전트 태스크 벤치(3종)로 갈리고,
+파레토 곡선도 축이 다르므로 따로 그려야 한다. 이건 구현 문제가 아니라 방법론들이 소비하는 입력
+단위가 다르다는 사실이다.
 
 **LightMem이 주는 설계 시사점**: write 트리거 granularity가 **turn이 아니라 topic-segmented
 group**이다. A-MAC/SAGE는 turn 단위 admission이고 LightMem의 sensory 압축은 **토큰 단위**다.
