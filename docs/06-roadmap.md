@@ -86,8 +86,40 @@
 | G-Memory LICENSE 부재 | 조사 확인 | 코드 복사 금지, 논문 기반 클린룸 재구현 + 출처 명기 |
 | 스코프 폭발 | 8 방법론 × 벤치 × 학습 | Phase별 완료 기준 엄수; Zep-graph/G-Memory는 후순위 배치 |
 
-## 즉시 다음 액션 (Phase 0 시작점)
+## 즉시 다음 액션 (2026-07-26 갱신)
 
-1. `uv init agentic_memory && uv add pydantic sqlite-vec sentence-transformers openai fastmcp`
-2. llama.cpp 설치 + Qwen3-0.6B GGUF 다운로드, OpenAI-compatible 서버 기동 확인
-3. `capabilities/detect.py` 작성 (이 문서의 환경 실측값이 첫 테스트 케이스)
+> 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
+> 브랜치: **`main` 단일** (`622a73f`). 테스트 184 passed / 1 skipped.
+
+### 미실측 — 배선은 끝났고 유료 실행만 남음
+1. **Nemori v4 Table 7 실측** (`docs/13-amem-study.md` §5.1). config 2종이 대기 중:
+   ```bash
+   uv run python scripts/exp_locomo_conv0.py --configs nemori_amem_k nemori_amem_k_batched
+   ```
+   판별 기준: **저장공간 45~64% 감소 밴드**에 들어가는 granularity는 하나뿐이다. 노트 수와
+   write 토큰을 A-Mem 단독(turn당 1노트)과 대조할 것. temporal 카테고리는 `K`에 timestamp가
+   없다는 전제를 반드시 붙여 해석.
+2. **라이프사이클 config E2E 미실측** (Phase 2 잔여): `nemori_v4` / `nemori_upstream` /
+   `nemori_mix` / `nemori_memoryos` / `nemori_amem`. 유닛 테스트까지만 검증된 상태.
+
+### 구현 후보 (근거: `docs/research/write-path-critics.md` §5)
+3. **A-MAC admission gate** (1순위) — `AMemOrganizer.on_message` 앞단 게이트. 5 factor 중
+   4개가 LLM-free. **성공 기준을 논문 F1(=admission 결정 F1, N=225)이 아니라 "answer 품질
+   유지하며 노트 수·write 토큰 감소"로 세울 것.** 부산물로 "저장 노트의 미참조율"이라는
+   현재 측정 불가 축이 열린다.
+4. **GRAVITY anchors** (2순위) — read-path 기법이라 `retrieval/steps.py`의 ReadStep 레지스트리에
+   그대로 들어간다. 코드 미공개라 anchor 3종 프롬프트는 자체 설계 필요.
+5. **RecMem recurrence gate** (3순위) — `consolidate()` 훅이 그 자리.
+
+### 별도 판단이 필요한 미수정 버그 2건 (코드에 문서화됨)
+6. `ChainedConsumer`가 `flush_buffer`를 wrapped에 전달하지 않아 체이닝된 MemoryOS의 부분 STM
+   tail이 영구 미방출 (`experimental/chained.py` "Known gap"). 고치면 `nemori_memoryos` 수치 변동.
+7. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
+   `memory.py:warm_start` docstring). 고치면 과거 run과 op 카운트 비교가 깨진다.
+
+### 문서 교정 잔여
+8. `docs/13`·`08`·`03`의 "A-Mem read = cosine+BM25 hybrid" 서술은 **오류** — 실제 upstream은
+   순수 in-memory sklearn cosine(`SimpleEmbeddingRetriever.search`), `HybridRetriever`(BM25)는
+   eval 미사용 dead-code.
+9. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
+   측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
