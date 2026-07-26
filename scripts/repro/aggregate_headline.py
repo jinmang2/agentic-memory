@@ -108,7 +108,11 @@ def aggregate(eval_paths: list[Path], ingest_paths: list[Path] | None = None) ->
     provenance = [
         {
             "file": p.name,
-            "git_sha": st.get("git_sha"),
+            # `commit` is the canonical name (bench/stamp.py); `git_sha` is the
+            # name the artifacts already on disk use, and those runs are not
+            # going to be re-spent, so both must resolve.
+            "commit": st.get("commit") or st.get("git_sha"),
+            "profile": st.get("profile"),
             "cost_usd": s.get("cost_usd"),
             "overall_f1": s.get("overall", {}).get("f1"),
         }

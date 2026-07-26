@@ -340,9 +340,16 @@ served-insight 게이트(round-5 W-4)는 호출자 없는 `backward()` 안에만
   훅 본인에게만 걸리는 계약이었다 — 반환 op가 MemoryEvent가 되면 구독자의 `on_memory_event`가
   임의 작업(`ChainedConsumer`는 wrapped의 `on_message` = LLM)을 읽기 경로에서 돌린다. `memoryos`/
   `gmemory`가 둘 다 `[]`를 반환해서 발화하지 않았을 뿐이므로, 읽기 경로의 비용 상한을 구조로
-  옮겼다(`_apply_from_all(propagate=False)`). op 자체는 그대로 적용된다. **대가**: 체인 소비자가
-  읽기 경로의 변경을 관측할 수 없다 — 어떤 방법론이 그걸 필요로 하면 write-path 팬아웃에서
-  물려받는 게 아니라 명시적 결정이어야 한다.
+  옮겼다(`_apply_from_all(propagate=False)`). op 자체는 그대로 적용된다.
+
+  **"관측 불가"가 손실이 아닌 이유**: 구독자를 구현한 건 `ChainedConsumer` 하나뿐인데
+  (`gated.py`는 위임), 그 핸들러는 `payload["content"]`를 읽어 wrapped 유닛을 덮어쓴다. read-path
+  op에는 `content`가 없으므로(heat 카운터는 `{"heat": 3}`) 전파하면 누적 중이던 내용이 `""`로
+  **파괴된다** — 실측: `{'pg1': 'user booked a flight to Paris'}` → `{'pg1': ''}`. 즉 현재 구독자는
+  read-path op를 의미 있게 소비할 수 없다. 그래도 남는 위험은 드롭이 **조용하다**는 것이므로,
+  read-path op의 `target_type`이 실제로 누군가의 `consumes`에 있으면 warning을 남긴다
+  (`memory.py::_warn_if_subscribed`) — UPDATE를 좁힐 때와 같은 원칙이다. 어떤 방법론이 진짜로
+  전파를 필요로 하면 write-path 팬아웃에서 물려받는 게 아니라 명시적 결정이어야 한다.
 
 기록만 한 것: **`warm_start`는 프로덕션 호출자가 없다.** 큐 드레인은 `consolidate`와 맞추려고
 넣었지만 이 훅 전체가 테스트에서만 불린다 — 결함이 아니라 배선 상태다.

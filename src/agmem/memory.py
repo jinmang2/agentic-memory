@@ -624,8 +624,32 @@ class AgenticMemory:
             )
             for s in bundle.items
         ]
-        self._apply_from_all(lambda org: org.on_retrieval(hits, self._ctx), propagate=False)
+        self._apply_from_all(
+            lambda org: self._warn_if_subscribed(org.on_retrieval(hits, self._ctx), org),
+            propagate=False,
+        )
         return bundle
+
+    def _warn_if_subscribed(self, ops: list[MemoryOp], source: Organizer) -> list[MemoryOp]:
+        """Pass ``ops`` through, warning if any would have reached a subscriber.
+
+        Cutting propagation on the read path is silent by nature, and a silent
+        behavioural gap is the thing this codebase keeps getting caught by. If a
+        methodology ever emits content-bearing ops from ``on_retrieval`` and
+        expects a chained consumer to see them, this says so instead of leaving
+        the author to infer it from an empty downstream."""
+        for op in ops:
+            for org in self.organizers:
+                if org.name != source.name and op.target_type in org.consumes:
+                    logger.warning(
+                        "on_retrieval op (type=%s from=%s) is not propagated, so %s will not "
+                        "see it — read-path ops are applied but never fanned out (docs/04 §3.5)",
+                        op.target_type,
+                        source.name,
+                        org.name,
+                    )
+                    return ops
+        return ops
 
     def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:
         """Close the loop: usage outcome adjusts memory quality signals.

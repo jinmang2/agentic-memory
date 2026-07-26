@@ -13,6 +13,10 @@ model = "intfloat/multilingual-e5-small"   # 한국어 포함 multilingual, 384d
 [write]
 sync = true          # Phase 1에서 async queue 기본값으로 전환 예정
 
+[llm_options]
+# guided_json = true   # 서버측 제약 디코딩(vLLM guided_json). 미지원 백엔드나
+#                      # 원논문 재현 시 false — 두 실험 스크립트가 모두 false다.
+
 # 역할별 LLM 라우팅 — 로컬 0.6B가 추출을, API가 judge를 담당하는 티어링
 [llm.extract]
 endpoint = "http://localhost:8080/v1"      # llama.cpp llama-server

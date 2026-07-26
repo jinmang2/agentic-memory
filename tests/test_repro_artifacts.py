@@ -525,7 +525,10 @@ def test_headline_aggregator_mean_std(tmp_path):
     assert out["eval_cost_usd"] == round(3 * 0.7, 6)
     assert out["ingest_cost_usd"] is None and out["campaign_cost_usd"] is None
     assert "cost_usd_total" not in out  # the misleading field is gone
-    assert len(out["sources"]) == 3 and out["sources"][0]["git_sha"] == "sha0"
+    # The fixture writes the OLD artifact shape (`git_sha`); the aggregator now
+    # reports the canonical `commit`, resolved through the fallback — that is what
+    # keeps already-spent runs on disk aggregatable.
+    assert len(out["sources"]) == 3 and out["sources"][0]["commit"] == "sha0"
 
 
 def test_headline_cost_includes_ingest_when_supplied(tmp_path):
@@ -676,3 +679,52 @@ def test_parallel_finalize_writes_combined_summary_and_sentinel(tmp_path, monkey
     assert sentinel.name == p.H.SENTINEL_NAME
     done = set(json.loads(sentinel.read_text())["conv_indices"])
     assert done == set(convs)
+
+
+def test_required_stamp_fields_match_the_documented_discipline():
+    """docs/05 §3 names the fields every result must carry. That line was
+    restated in three stampers and two had drifted — the LoCoMo results on disk
+    are missing four of the six. Tie the constant to the doc so the next
+    divergence is a test failure, not something found by reading JSON."""
+    import re
+    from pathlib import Path
+
+    from agmem.bench.stamp import REQUIRED_FIELDS
+
+    doc = Path(__file__).resolve().parents[1] / "docs" / "05-api-design.md"
+    line = next(ln for ln in doc.read_text().splitlines() if "재현성 규율" in ln)
+    documented = tuple(re.findall(r"\w+", re.search(r"\{([^}]*)\}", line).group(1)))
+    assert documented == REQUIRED_FIELDS
+
+
+def test_run_stamp_always_carries_the_required_fields():
+    from agmem import AgenticMemory
+    from agmem.bench.stamp import REQUIRED_FIELDS, run_stamp
+    from agmem.embed.fake import FakeEmbedder
+
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=64))
+    try:
+        stamp = run_stamp(mem, model="m", judge=True, runs=3, dataset="d")
+        assert set(REQUIRED_FIELDS) <= set(stamp)
+        assert stamp["profile"] == "lite" and stamp["runs"] == 3
+        assert stamp["commit"] and stamp["commit"] != "unknown"
+    finally:
+        mem.close()
+
+    # no memory (aggregate stamps): the fields still exist rather than vanishing
+    bare = run_stamp(None, model=None, dataset_version="v1")
+    assert set(REQUIRED_FIELDS) <= set(bare)
+    assert bare["profile"] is None and bare["dataset_version"] == "v1"
+
+
+def test_dataset_fingerprint_is_content_addressed(tmp_path):
+    """A hand-written label cannot say WHICH copy of the data a number came
+    from — the substance of the Zep-LoCoMo dispute the discipline cites."""
+    from agmem.bench.stamp import dataset_fingerprint
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    a.write_text('{"x": 1}')
+    b.write_text('{"x": 2}')
+    assert dataset_fingerprint(a) == dataset_fingerprint(a)
+    assert dataset_fingerprint(a) != dataset_fingerprint(b)
+    assert dataset_fingerprint(tmp_path / "missing.json") == "unknown"

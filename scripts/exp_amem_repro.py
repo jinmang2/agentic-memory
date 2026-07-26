@@ -34,6 +34,7 @@ from pathlib import Path
 from agmem import AgenticMemory
 from agmem._env import load_env_local
 from agmem.bench import locomo
+from agmem.bench import stamp as bench_stamp
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
@@ -722,31 +723,44 @@ def main() -> None:
 
 def _stamp(args, sha: str | None, utc_started: str, utc_finished: str, n_questions) -> dict:
     """Self-describing config stamp for the summary JSON: model/embedder/k/
-    eval-mode/temps/expand + provenance (git_sha, dataset_path, timestamps) +
-    the cost rates so cost_usd is reproducible, and the cat5 seed note."""
-    return {
-        "model": args.model,
-        "endpoint": args.endpoint,
-        "embedder": args.embedder,
-        "k": args.k,
-        "eval_mode": args.eval_mode,
-        "temps": {"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE},
-        "expand_links": args.expand_links,
-        "conv": args.conv,
-        "runs": args.runs,
-        "workers": args.workers,
-        "n_questions": n_questions,
-        "memory_types": list(MEMORY_TYPES),
-        "keyword_queries": True,
-        "eval_only": args.eval_only,
-        "dataset": "locomo10",
-        "dataset_path": str(DATA),
-        "git_sha": sha,
-        "utc_started": utc_started,
-        "utc_finished": utc_finished,
-        "cost_rates": COST_RATES,
-        "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
-    }
+    eval-mode/temps/expand + provenance (commit, dataset_path, timestamps) +
+    the cost rates so cost_usd is reproducible, and the cat5 seed note.
+
+    The six documented fields (docs/05 §3) come from ``bench.stamp.run_stamp``;
+    this adds only what is specific to the A-Mem reproduction. ``profile`` was
+    the one it never recorded — harmless in hindsight only because every run
+    pinned ``profile="lite"`` in the config it builds.
+
+    ``git_sha`` is kept alongside the canonical ``commit`` because
+    ``scripts/repro/aggregate_headline.py`` and the artifacts already on disk
+    read it by that name; dropping it would strand results we are not going to
+    re-spend the API budget to regenerate."""
+    return bench_stamp.run_stamp(
+        None,  # the memory is per-conversation here; the run spans many
+        model=args.model,
+        judge=args.eval_mode,
+        runs=args.runs,
+        dataset="locomo10",
+        dataset_path=DATA,
+        profile="lite",  # pinned by make_memory's AgmemConfig
+        endpoint=args.endpoint,
+        embedder=args.embedder,
+        k=args.k,
+        eval_mode=args.eval_mode,
+        temps={"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE},
+        expand_links=args.expand_links,
+        conv=args.conv,
+        workers=args.workers,
+        n_questions=n_questions,
+        memory_types=list(MEMORY_TYPES),
+        keyword_queries=True,
+        eval_only=args.eval_only,
+        git_sha=sha,
+        utc_started=utc_started,
+        utc_finished=utc_finished,
+        cost_rates=COST_RATES,
+        cat5_seed="md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
+    )
 
 
 if __name__ == "__main__":

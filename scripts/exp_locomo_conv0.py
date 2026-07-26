@@ -19,6 +19,7 @@ from pathlib import Path
 
 from agmem import AgenticMemory
 from agmem.bench import locomo
+from agmem.bench import stamp as bench_stamp
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
@@ -216,18 +217,24 @@ def run(
             "llm_budget": mem.budget.summary(),
             "memory_capacity": capacity,
             "structured_drops": dict(mem.structured.drops) if mem.structured else {},
-            "stamp": {
-                "embedder": mem.embedder.name,
-                "model": "qwen3-0.6b",
-                "k": k,
-                "budget_tokens": 6000,
-                "dataset": "locomo10 conv0",
-                "keyword_queries": keyword_queries,
-                "role_overrides": role_overrides,
-                "vector_store": type(mem.vector_store).__name__,
-                "max_sessions": max_sessions,
-                "n_questions": len(questions),
-                "organizer_detail": [
+            # docs/05 §3's six fields come from run_stamp; this call adds only the
+            # condition specific to this script. The inline dict this replaced was
+            # missing four of the six (profile, commit, judge, runs), so no result
+            # in results/ can say which profile or commit produced it.
+            "stamp": bench_stamp.run_stamp(
+                mem,
+                model="qwen3-0.6b",
+                judge=judge,
+                runs=1,
+                dataset="locomo10 conv0",
+                dataset_path=DATA,
+                k=k,
+                budget_tokens=6000,
+                keyword_queries=keyword_queries,
+                role_overrides=role_overrides,
+                max_sessions=max_sessions,
+                n_questions=len(questions),
+                organizer_detail=[
                     {
                         "name": getattr(o, "name", type(o).__name__),
                         "fidelity": getattr(o, "fidelity", None),
@@ -235,7 +242,7 @@ def run(
                     }
                     for o in mem.organizers
                 ],
-            },
+            ),
             "records": res["records"],
         }
         OUT.mkdir(exist_ok=True)

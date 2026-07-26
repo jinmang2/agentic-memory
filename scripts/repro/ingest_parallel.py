@@ -299,6 +299,7 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
         "stamp": {
             **{k: summaries[0].get("stamp", {}).get(k) for k in summaries[0].get("stamp", {})},
             "conv": "all",
+            "commit": sha,  # canonical name; git_sha kept for existing readers
             "git_sha": sha,
             "parallel_ingest": {"workers": args.workers, "convs": convs, "wall_s": wall_s},
         },

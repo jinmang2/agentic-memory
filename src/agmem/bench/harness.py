@@ -9,29 +9,17 @@ accuracy, and multi-run mean±std is the reporting unit. Loaders: LoCoMo
 from __future__ import annotations
 
 import json
-import platform
 import statistics
-import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from agmem import __version__
+from agmem.bench.stamp import run_stamp
 from agmem.memory import AgenticMemory
 
-
-def _git_commit() -> str:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-        return out.stdout.strip() or "unknown"
-    except OSError:
-        return "unknown"
+# `_git_commit` moved to bench/stamp.py as `git_commit`: the result stamp is
+# built in one place now (see that module for why three copies was the problem).
 
 
 @dataclass
@@ -62,13 +50,11 @@ class BenchRun:
                     metrics[f"tokens_{role}"] = s["tokens_in"] + s["tokens_out"]
                 per_run.append(metrics)
                 if i == 0:
-                    stamps = {
-                        "profile": mem.config.profile,
-                        "embedder": mem.embedder.name,
-                        "vector_store": type(mem.vector_store).__name__,
-                        "organizers": [o.name for o in mem.organizers],
-                        "structured_drops": (dict(mem.structured.drops) if mem.structured else {}),
-                    }
+                    stamps = run_stamp(
+                        mem,
+                        runs=self.runs,
+                        structured_drops=(dict(mem.structured.drops) if mem.structured else {}),
+                    )
             finally:
                 mem.close()
 
@@ -86,14 +72,7 @@ class BenchRun:
             "runs": self.runs,
             "metrics": aggregated,
             "per_run": per_run,
-            "stamp": {
-                **stamps,
-                "agmem_version": __version__,
-                "commit": _git_commit(),
-                "python": platform.python_version(),
-                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                **self.meta,
-            },
+            "stamp": {**stamps, **self.meta},
         }
         if out_dir:
             out = Path(out_dir)

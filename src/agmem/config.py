@@ -96,7 +96,12 @@ def load_config(path: str | Path) -> AgmemConfig:
     malformed TOML raises (`FileNotFoundError`/`tomllib.TOMLDecodeError`) —
     there is no silent fallback to defaults. Unrecognized top-level tables
     are ignored; only `[profile]`, `[storage]`, `[embed]`, `[override]`,
-    `[write]`, `[retrieval]`, and `[llm.<role>]` are read.
+    `[write]`, `[retrieval]`, `[llm_options]`, and `[llm.<role>]` are read.
+
+    `[llm_options].guided_json` was read here but appeared in no docs list, no
+    docstring and not in `agmem.example.toml` — an undiscoverable switch, which
+    matters because both experiment scripts set `use_guided_json=False` in Python
+    and a TOML-driven run had no documented way to match them.
 
     `[retrieval]` exists because `retrieval/steps.py` claims its read-path
     deviations (A-Mem's global link cap, Nemori's source-attachment `r`) are

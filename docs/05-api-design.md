@@ -128,6 +128,9 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 
 - **stdio** (Claude Desktop/Code, Cursor) + **streamable HTTP** (`:8765/mcp`) 겸용 — FastMCP로 구현.
 - namespace = Graphiti `group_id` 패턴 (기본 `"main"`), 클라이언트별 격리.
+- `agmem.toml`이 읽는 테이블에 `[llm_options]`(`guided_json`)가 포함된다 — 코드는 읽고 있었지만
+  문서 목록·`load_config` docstring·예시 파일 어디에도 없어 발견 불가능한 스위치였다. 두 실험
+  스크립트가 Python에서 `use_guided_json=False`로 도는데 TOML 경로엔 맞출 방법이 없었다.
 - 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` (Graphiti와 동일 규칙). 이 규칙이 실제로
   적용되는 곳은 `mcp/server.py::main`이다 — `--config`를 주면 `--profile`이 통째로 무시돼
   TOML의 profile로 뜨면서 로그엔 플래그 값을 찍고 있었다(규칙의 정반대). 이제 `--profile`이
