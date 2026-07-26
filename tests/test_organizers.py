@@ -6,7 +6,7 @@ from helpers import StubLLM
 
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig
-from agmem.core.ops import OpType
+from agmem.core.ops import MemoryOp, OpType
 from agmem.embed.fake import FakeEmbedder
 
 
@@ -411,3 +411,50 @@ def test_no_mechanism_imports_the_policies_package():
         if path.name != "gated.py" and "agmem.policies" in path.read_text()
     ]
     assert offenders == [], f"mechanism modules importing policies: {offenders}"
+
+
+def test_feedback_is_owned_by_the_producing_organizer():
+    """`strategies` is written by both ReasoningBank and G-Memory, so a facade
+    that branched on the memory type applied G-Memory's +1/-2 reward to
+    ReasoningBank items — whose paper is deliberately append-only with no
+    feedback loop at all. Feedback now fans out to organizers, so an item only
+    moves when its own methodology is active."""
+    from agmem.core.types import StrategyItem
+    from agmem.organizers.gmemory import GMemoryOrganizer
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    item = StrategyItem(title="t", description="d", content="c")
+    add = MemoryOp(
+        op=OpType.ADD,
+        target_type="strategies",
+        target_id=item.id,
+        payload={"id": item.id, "content": "c", "embedding_text": "c", "score": 1.0},
+    )
+
+    # ReasoningBank alone: no feedback semantics -> nothing happens.
+    mem = AgenticMemory(
+        namespace="t", organizers=[ReasoningBankOrganizer()], embedder=FakeEmbedder(dim=64)
+    )
+    try:
+        mem._apply_ops([add], actor="reasoning_bank")
+        assert mem.report_feedback([item.id], helpful=False) == 0
+        assert mem.doc_store.get_items([item.id], "strategies")[0]["score"] == 1.0
+    finally:
+        mem.close()
+
+    # G-Memory: reward applies, but only to insights it actually served
+    # (upstream insights_cache — round-5 W-4, which used to live in an
+    # uncallable `backward()` while the live path ignored the gate).
+    org = GMemoryOrganizer()
+    mem = AgenticMemory(namespace="t", organizers=[org], embedder=FakeEmbedder(dim=64))
+    try:
+        mem._apply_ops([add], actor="gmemory")
+        org._served = {"some-other-id"}
+        assert mem.report_feedback([item.id], helpful=True) == 0  # never served -> untouched
+        assert org._served == set()  # ...and the cache is cleared, not leaked
+
+        org._served = {item.id}
+        assert mem.report_feedback([item.id], helpful=True) == 1
+        assert mem.doc_store.get_items([item.id], "strategies")[0]["score"] == 2.0
+    finally:
+        mem.close()

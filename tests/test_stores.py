@@ -236,3 +236,17 @@ def test_postgres_doc_store_roundtrip():
         assert s.count() == 1
     finally:
         s.close()
+
+
+def test_memory_types_covers_every_organizer_output():
+    """`core/ops.py` declares `target_type` to be one of `MEMORY_TYPES`, so the
+    tuple has to stay exhaustive — `experiences` was missing for as long as
+    ReasoningBank had been emitting it, and nothing noticed because the
+    constraint is documentation, not validation.
+
+    `produces` is the declaration that goes stale, so check against it."""
+    from agmem.core.types import MEMORY_TYPES
+    from agmem.organizers import ORGANIZERS
+
+    declared = {t for cls in ORGANIZERS.values() for t in cls.produces}
+    assert declared - set(MEMORY_TYPES) == set()

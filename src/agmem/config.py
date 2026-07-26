@@ -95,8 +95,15 @@ def load_config(path: str | Path) -> AgmemConfig:
     """Parse a TOML config file into an `AgmemConfig`. Missing `path` or
     malformed TOML raises (`FileNotFoundError`/`tomllib.TOMLDecodeError`) —
     there is no silent fallback to defaults. Unrecognized top-level tables
-    are ignored; only `[profile]`, `[storage]`, `[embed]`, `[override]`, and
-    `[llm.<role>]` are read."""
+    are ignored; only `[profile]`, `[storage]`, `[embed]`, `[override]`,
+    `[write]`, `[retrieval]`, and `[llm.<role>]` are read.
+
+    `[retrieval]` exists because `retrieval/steps.py` claims its read-path
+    deviations (A-Mem's global link cap, Nemori's source-attachment `r`) are
+    "configured from AgmemConfig, so those deviations are finally ablatable" —
+    which was true through the Python API and false through TOML, the path the
+    repro runbook uses. Omitted keys keep the `AgmemConfig` defaults, so an
+    existing config file resolves exactly as before."""
     raw: dict[str, Any] = tomllib.loads(Path(path).read_text())
 
     profile = raw.get("profile", {}).get("name", "lite")
@@ -113,6 +120,8 @@ def load_config(path: str | Path) -> AgmemConfig:
             max_tokens=cfg.get("max_tokens", 1024),
         )
 
+    defaults = AgmemConfig()
+    retrieval = raw.get("retrieval", {})
     return AgmemConfig(
         profile=profile,
         data_dir=data_dir,
@@ -120,5 +129,10 @@ def load_config(path: str | Path) -> AgmemConfig:
         overrides=dict(raw.get("override", {})),
         llm_roles=llm_roles,
         strict=raw.get("profile", {}).get("strict", False),
-        sync_write=raw.get("write", {}).get("sync", True),
+        sync_write=raw.get("write", {}).get("sync", defaults.sync_write),
+        use_guided_json=raw.get("llm_options", {}).get("guided_json", defaults.use_guided_json),
+        lexical_types=tuple(retrieval.get("lexical_types", defaults.lexical_types)),
+        link_expansion_cap=retrieval.get("link_expansion_cap", defaults.link_expansion_cap),
+        attach_sources_top_r=retrieval.get("attach_sources_top_r", defaults.attach_sources_top_r),
+        graph_expansion_cap=retrieval.get("graph_expansion_cap", defaults.graph_expansion_cap),
     )

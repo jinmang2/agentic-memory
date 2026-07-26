@@ -69,3 +69,35 @@ def test_resolver_strict_raises():
 def test_resolver_no_candidate_raises():
     with pytest.raises(ResolutionError):
         resolve("graph_store", [Heavy], make_caps())
+
+
+def test_load_config_reads_read_path_knobs(tmp_path):
+    """`retrieval/steps.py` calls its upstream deviations "ablatable from
+    AgmemConfig"; the repro runbook reaches config through TOML, where these
+    keys used to be silently dropped."""
+    from agmem.config import AgmemConfig, load_config
+
+    path = tmp_path / "agmem.toml"
+    path.write_text(
+        '[profile]\nname = "lite"\n'
+        "[retrieval]\n"
+        'lexical_types = ["episodic", "facts"]\n'
+        "link_expansion_cap = 0\n"
+        "attach_sources_top_r = 4\n"
+        "graph_expansion_cap = 3\n"
+    )
+    cfg = load_config(path)
+    assert cfg.lexical_types == ("episodic", "facts")
+    assert cfg.link_expansion_cap == 0  # 0 disables the step, not "unset"
+    assert cfg.attach_sources_top_r == 4
+    assert cfg.graph_expansion_cap == 3
+
+    bare = tmp_path / "bare.toml"
+    bare.write_text('[profile]\nname = "lite"\n')
+    defaults = AgmemConfig()
+    got = load_config(bare)
+    assert (got.lexical_types, got.link_expansion_cap, got.attach_sources_top_r) == (
+        defaults.lexical_types,
+        defaults.link_expansion_cap,
+        defaults.attach_sources_top_r,
+    )

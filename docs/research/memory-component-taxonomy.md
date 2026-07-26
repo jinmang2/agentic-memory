@@ -198,6 +198,41 @@ task 기반에도 적용된다).
 정책을 가진 wrapped(MemoryOS)가 chained 일반 경로로 라우팅된다. admission 논문들은 모두 직접
 메시지 경로를 대상으로 하므로 이 조합은 **지원이 아니라 범위 외**로 둔다.
 
+## 2.6 memory type은 방법론 전용이 아니다 — 세 번째 어휘 충돌 (2026-07-26 추가)
+
+§2.4.1이 "consolidation"이 3가지를 가리킨다고 정리했는데, **같은 처방이 필요한 용어가 하나 더
+있었다**: memory type 자체다. 우리 8 organizer의 `produces`를 실제로 세어보면 두 타입이 공유된다.
+
+| type | 생산자 | 실제로 담는 것 |
+|---|---|---|
+| `semantic` | Nemori | predict-calibrate로 증류한 fact |
+| | MemoryOS | LPM profile fact (`kind="profile"`) |
+| `strategies` | ReasoningBank | 궤적에서 증류한 전략 아이템 |
+| | G-Memory | trajectory(`kind="trajectory"`) + insight rule(`kind="insight"`) |
+
+타입만으로 소유자를 알 수 없는데 **store 질의는 타입 키로만 이뤄지므로**, 조합 설정에서 조용히
+서로를 침범한다. 실제로 발견된 두 자리:
+
+1. **Nemori의 semantic 통합기** — `ThreeWayIntegrator`가 `memory_type="semantic"`로 후보를 검색해
+   LLM에게 merge/conflict를 물으므로 MemoryOS의 profile fact를 INVALIDATE할 수 있었고,
+   `DedupIdReuseIntegrator`는 top-1 id를 재사용하므로 **내용을 통째로 덮어쓸** 수 있었다.
+   `SemanticOfflineConsolidator`는 *선택* 측에 `op.actor` 가드가 이미 있었는데 *후보* 측엔 없었다.
+2. **`report_feedback`** — `target_type`으로 분기해 `strategies`면 G-Memory의 +1/−2를 적용했다.
+   ReasoningBank는 논문상 append-only(피드백 루프 없음)인데도 점수가 붙었다. 반대로 G-Memory의
+   served-insight 게이트(round-5 W-4)는 호출자 없는 `backward()` 안에만 있어 실경로엔 없었다.
+
+**처방**: 새 어휘를 발명하지 않고 **이미 있는 `actor`를 쓴다.** op에 이미 실려 있고 evolution log가
+기록하던 것이므로, 파사드가 ADD 적용 시 아이템에도 함께 남기면 소유권 질의가 가능해진다
+(`memory.py::_apply_one`). 두 자리를 그것으로 고쳤다 — `nemori/stages.py::own_items`,
+그리고 피드백을 organizer의 `on_feedback`으로 팬아웃(docs/04 §3.4). `actor`가 없는 과거 아이템은
+자기 것으로 취급하므로 기존 스토어·측정치 해석은 불변이고, 실제로 측정된 run은 전부 단일
+organizer라 **수치 영향은 0**이다.
+
+**남는 판단**: 타입을 쪼개는(`semantic_profile` 신설) 쪽이 더 근본적이지만
+`results/locomo-conv0-memoryos.json`을 포함한 저장 아티팩트의 타입 키가 바뀌므로 하지 않았다.
+`kind`가 이미 read 경로(`bench/locomo.py`)의 디스크리미네이터로 쓰이고 있어 어휘가 셋(`type` /
+`kind` / `actor`)으로 늘어난 상태다 — 이 축 정리는 Phase 5 비교표를 그리기 전에 한 번 더 봐야 한다.
+
 ## 3. 채택한 레이아웃
 
 ```
@@ -237,9 +272,16 @@ src/agmem/
    `from agmem.organizers.nemori import NemoriOrganizer`가 단일 모듈 시절과 동일하게 해석된다 —
    import 6곳 무변경.
 
-**불변식을 테스트로 강제**: `tests/test_organizers.py::test_organizers_package_root_holds_only_organizers`
-가 `organizers/` 직하 모듈 전부가 Organizer를 정의하는지 검사하고,
-`::test_policies_declare_no_memory_type_and_emit_no_ops`가 policy 판정 기준을 검사한다.
+**불변식을 테스트로 강제** (`tests/test_organizers.py`, 이름은 실제 함수명):
+
+| 테스트 | 강제하는 것 |
+|---|---|
+| `test_organizers_root_is_framework_only_and_methodologies_are_packages` | 루트=프레임워크, 방법론=패키지 (§3의 위치 규칙) |
+| `test_methodology_packages_keep_their_single_module_import_path` | 패키지화가 import 경로를 바꾸지 않음 |
+| `test_policies_declare_no_memory_type_and_emit_no_ops` | policy 판정 기준 |
+| `test_no_mechanism_imports_the_policies_package` | 직교성 — `gated.py` 외 어떤 organizer도 `policies`를 import하지 않음 |
+| `test_feedback_is_owned_by_the_producing_organizer` | 공유 타입에서 피드백 규칙이 생산자 소유임 (§2.6) |
+
 문서 규칙이 아니라 실행되는 규칙이다.
 
 ---

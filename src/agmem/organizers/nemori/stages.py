@@ -415,6 +415,25 @@ class EpisodeMerger:
         return ops, merged_id, merged_title, merged_narrative
 
 
+OWNER = "nemori"
+
+# "semantic" is not Nemori's alone: MemoryOS writes its LPM profile facts to the
+# same type (``kind="profile"``), and the bench read path already discriminates
+# them (``bench/locomo.py``). The integrators below search that shared pool by
+# memory type, so under ``organizers=["nemori", "memoryos"]`` a MemoryOS fact
+# could be offered as a merge candidate and get INVALIDATEd — or, in the dedup
+# integrator, have its content overwritten — under the ``nemori`` actor.
+# ``SemanticOfflineConsolidator`` already guards the *selection* side by
+# ``op.actor``; this is the same guard on the *candidate* side, using the same
+# vocabulary. Items with no ``actor`` predate the field and are treated as own,
+# so single-organizer stores (every measured run) resolve unchanged.
+
+
+def own_items(items: list[dict], owner: str = OWNER) -> list[dict]:
+    """Drop items another organizer authored. See the note above ``OWNER``."""
+    return [i for i in items if i.get("actor", owner) == owner]
+
+
 class AppendIntegrator:
     """Current default: every distilled fact becomes its own semantic ADD.
     No dedup, no LLM call — this is the repo's pre-v4 main path, kept as the
@@ -537,7 +556,7 @@ class ThreeWayIntegrator:
         ]
         candidates = [
             c
-            for c in ctx.doc_store.get_items([h[0] for h in hits], "semantic")
+            for c in own_items(ctx.doc_store.get_items([h[0] for h in hits], "semantic"))
             if not c.get("invalid_at")
         ]
         add = AppendIntegrator().integrate(fact, episode_id, source_ids, ctx)
@@ -622,7 +641,12 @@ class DedupIdReuseIntegrator:
         returns one UPDATE op that overwrites its content/provenance
         (id reused, latest content wins). Otherwise falls back to
         `AppendIntegrator` and returns a plain ADD. ``exclude_ids`` removes
-        ids from consideration before the top-1 check."""
+        ids from consideration before the top-1 check.
+
+        Overwriting a *foreign* top-1 would be the most destructive form of the
+        shared-``semantic`` collision (see ``OWNER``) — the item's content is
+        replaced outright, not merely superseded — so the hit is hydrated and
+        ownership-checked before it is reused."""
         query_embedding = ctx.embedder.embed([fact])[0]
         hits = [
             (hit_id, s)
@@ -631,6 +655,8 @@ class DedupIdReuseIntegrator:
             )
             if exclude_ids is None or hit_id not in exclude_ids
         ]
+        if hits and not own_items(ctx.doc_store.get_items([hits[0][0]], "semantic")):
+            hits = []  # top-1 belongs to another organizer: do not reuse its id
         if hits and hits[0][1] >= self.threshold:
             return [
                 MemoryOp(

@@ -12,6 +12,22 @@ mem = AgenticMemory(
     profile="lite",                            # lite | standard | full
     config=AgmemConfig(sync_write=False),      # 또는 "agmem.toml" 경로
 )
+```
+
+`organizers`는 **레지스트리 이름과 `Organizer` 인스턴스를 섞어 받는다.** 합성(policy 부착,
+체이닝)은 인스턴스로만 표현되므로 — 생성자 인자로 두면 policy가 그 mechanism 하나에서만
+도달 가능해진다(docs/04 §1.2) — 이 형태가 유일한 진입점이다:
+
+```python
+from agmem.organizers.amem import AMemOrganizer
+from agmem.organizers.gated import AdmissionGated
+from agmem.organizers.experimental.chained import ChainedConsumer
+from agmem.policies import AdmissionGate
+
+mem = AgenticMemory(organizers=[
+    AdmissionGated(AMemOrganizer(), AdmissionGate()),   # write-admission policy 부착
+    ChainedConsumer(AMemOrganizer(), "semantic"),       # 상류 organizer 출력을 입력으로 (experimental)
+])
 
 # ---- write ----
 mem.add_message(content="...", role="user", timestamp=..., meta={...})
@@ -25,11 +41,18 @@ mem.consolidate()                              # 유예 위상 명시 트리거:
 # ---- read ----
 bundle = mem.search("사용자가 선호하는 여행지?",
                     memory_types=["episodic", "semantic", "facts"], k=10)
+                                               # 생략 시 default_memory_types =
+                                               #   episodic + 활성 organizer들의 produces
+                                               # 주의: search는 on_retrieval 되먹임으로
+                                               #   쓰기도 한다 (docs/04 §2 Read)
 bundle.render(budget_tokens=1600)              # 프롬프트 주입용 텍스트
 bundle.items                                   # 구조화 접근 (provenance 포함)
 
 # ---- feedback / introspection ----
-mem.report_feedback([...], helpful=True)       # 사용 결과 되먹임 (ACE/G-Memory/RB)
+mem.report_feedback([...], helpful=True)       # 사용 결과 되먹임 → 각 organizer의 on_feedback
+                                               #   (ACE 카운터 / G-Memory reward). 규칙은
+                                               #   생산자 소유이므로 해당 organizer가
+                                               #   비활성이면 0을 반환하는 no-op
 mem.get_playbook()                             # ACE playbook 렌더
 mem.log.tail(20)                               # evolution_log (append-only 연산 로그)
 mem.stats()                                    # 항목 수, LLM calls/tokens 누계
@@ -52,8 +75,9 @@ mem.capabilities()                             # 감지 결과 + 활성 어댑�
 4. **라이프사이클 훅 2종 (인라인/유예)** — `on_memory_event`(다른 organizer의 ADD/UPDATE/
    MERGE를 `consumes` 구독으로 수신, chaining)와 `consolidate`(명시적 `mem.consolidate()`
    호출로만 실행되는 배치 dedup/merge 훅, evolution log seq 커서로 재개)가 매 organizer에
-   기본 no-op으로 제공된다 — Nemori(방출)·MemoryOS/A-Mem(`input="episodes"` 소비)가
-   현재 이 계약을 쓰는 조합이다 (docs/04 §2–3).
+   기본 no-op으로 제공된다. **구독 측을 native로 구현한 방법론은 없다** — 구 `input="episodes"`
+   생성자 모드는 제거됐고, 소비는 전부 `experimental.ChainedConsumer` 어댑터가 담당한다
+   (방출 측 Nemori는 그대로). 훅별 실제 구현 매트릭스는 docs/04 §3.1.
 5. **LLM 비용의 위상별 계측** — `ctx.llm.call(..., phase=...)`은 예산 항목을
    `f"{role}/{phase}"`로 태깅해(`llm/structured.py`) segment/narrate/merge/integrate/
    predict_calibrate/consolidate 단계별 calls/tokens를 역할(role)과 별개로 분리 집계한다
@@ -88,6 +112,11 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 - **stdio** (Claude Desktop/Code, Cursor) + **streamable HTTP** (`:8765/mcp`) 겸용 — FastMCP로 구현.
 - namespace = Graphiti `group_id` 패턴 (기본 `"main"`), 클라이언트별 격리.
 - 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` (Graphiti와 동일 규칙).
+- `agmem.toml`이 읽는 테이블: `[profile]` `[storage]` `[embed]` `[override]` `[write]`
+  `[retrieval]` `[llm.<role>]`. `[retrieval]`은 read-path 스텝의 노브
+  (`lexical_types` / `link_expansion_cap` / `attach_sources_top_r` / `graph_expansion_cap`)를
+  받는다 — `retrieval/steps.py`가 upstream 이탈을 "config로 ablatable"이라 주장하는데 그게
+  Python API에서만 참이고 TOML(재현 런북이 쓰는 경로)에선 조용히 무시되고 있었다.
 - `SEMAPHORE_LIMIT` 상당의 `worker_concurrency` 노출 (로컬 LLM 데몬 보호).
 - 배포 3형태: ① `uvx agmem-mcp` (로컬 stdio) ② Docker compose (agmem + vLLM) ③ 기존 Claude Code 세션 연동 예제.
 

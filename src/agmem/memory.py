@@ -420,6 +420,16 @@ class AgenticMemory:
                 data = dict(existing[0]) if existing else {}
                 data.update(op.payload)
             data.setdefault("id", op.target_id)
+            # Who wrote this item, persisted from the op's attribution. Two
+            # methodologies can share one memory type (Nemori + MemoryOS both
+            # write "semantic"; ReasoningBank + G-Memory both write
+            # "strategies"), and a store query keyed on the type alone cannot
+            # tell them apart — which let Nemori's integrators consider a
+            # MemoryOS profile fact a merge candidate. ``setdefault`` after the
+            # UPDATE/MERGE merge above keeps the original author when someone
+            # else revises the item, and leaves pre-existing items (no ``actor``
+            # key) untouched so old stores keep resolving as before.
+            data.setdefault("actor", op.actor)
             self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
             text = data.get("embedding_text") or data.get("content")
             if text:
@@ -516,48 +526,22 @@ class AgenticMemory:
     def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:
         """Close the loop: usage outcome adjusts memory quality signals.
 
-        Playbook bullets get helpful/harmful counters (ACE); strategy items
-        get reward-shaped scores +1/-2 (G-Memory backward). Returns the
-        number of memories updated."""
-        ops: list[MemoryOp] = []
-        for mid in memory_ids:
-            bullets = self.doc_store.get_items([mid], "playbook")
-            if bullets:
-                field = "helpful" if helpful else "harmful"
-                ops.append(
-                    MemoryOp(
-                        op=OpType.UPDATE,
-                        target_type="playbook",
-                        target_id=mid,
-                        payload={field: int(bullets[0].get(field, 0)) + 1},
-                    )
-                )
-                continue
-            strategies = self.doc_store.get_items([mid], "strategies")
-            if strategies:
-                delta = 1.0 if helpful else -2.0
-                new_score = float(strategies[0].get("score", 0)) + delta
-                ops.append(
-                    MemoryOp(
-                        op=OpType.UPDATE,
-                        target_type="strategies",
-                        target_id=mid,
-                        payload={"score": new_score},
-                    )
-                )
-                # G-Memory clear_insights: reward closes the loop — an
-                # insight at score <= 0 stops being served (round-5 W-2)
-                if new_score <= 0 and strategies[0].get("kind") == "insight":
-                    ops.append(
-                        MemoryOp(
-                            op=OpType.DELETE,
-                            target_type="strategies",
-                            target_id=mid,
-                            payload={"reason": "score_pruned"},
-                        )
-                    )
-        self._apply_ops(ops, actor="feedback")
-        return len(ops)
+        Dispatches to each active organizer's ``on_feedback`` and returns the
+        total op count. The rules themselves are methodology-owned — ACE counts
+        helpful/harmful per bullet, G-Memory reward-shapes served insights and
+        prunes at score <= 0 — so an organizer that declares no feedback
+        semantics contributes nothing.
+
+        This used to branch on ``target_type`` here instead, which conflated the
+        two methodologies that share the ``strategies`` type: a ReasoningBank
+        item (append-only by design, no feedback loop in the paper) picked up
+        G-Memory's +1/-2, and G-Memory's own served-insight gate was bypassed.
+        The consequence of the fan-out is that feedback now requires the owning
+        organizer to be active — feeding back a playbook bullet with no ACE
+        organizer configured is a no-op returning 0, where it previously
+        updated the counter."""
+        ids = list(memory_ids)
+        return self._apply_from_all(lambda org: org.on_feedback(ids, helpful, self._ctx))
 
     def get_playbook(self, section: str | None = None) -> str:
         """Render the ACE playbook (ALL bullets, grouped by section).

@@ -116,6 +116,11 @@ class AdmissionGated(Organizer):
     ) -> list[MemoryOp]:
         return self.wrapped.on_retrieval(hits, ctx)
 
+    def on_feedback(
+        self, memory_ids: list[str], helpful: bool, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        return self.wrapped.on_feedback(memory_ids, helpful, ctx)
+
     def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:
         return self.wrapped.on_memory_event(ev, ctx)
 

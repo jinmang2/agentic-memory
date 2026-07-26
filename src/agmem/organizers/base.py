@@ -6,7 +6,7 @@ That keeps methodology code decoupled from storage and makes every
 mutation auditable/replayable (docs/04 §2).
 
 Lifecycle hooks (spec §1):
-- ``on_message``, ``on_task_end``, ``on_retrieval``: entry points
+- ``on_message``, ``on_task_end``, ``on_retrieval``, ``on_feedback``: entry points
 - ``on_memory_event``: chaining hook for subscribed organizers
 - ``consolidate``: deferred management pass with cursor recovery
 - ``flush_buffer``: end-of-ingestion drain for organizers that buffer
@@ -103,6 +103,25 @@ class Organizer:
         the round-5 audit found missing — MemoryOS visit-heat (N_visit),
         G-Memory served-insight cache for backward reward. Must be cheap:
         no LLM calls here."""
+        return []
+
+    def on_feedback(
+        self, memory_ids: list[str], helpful: bool, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Usage outcome for previously served memories, from
+        ``AgenticMemory.report_feedback``.
+
+        Feedback semantics are methodology-owned, so they live here rather than
+        in the facade: ACE counts helpful/harmful per bullet, G-Memory shapes
+        insight scores by reward. The facade used to branch on ``target_type``
+        itself, which meant a ReasoningBank strategy item — whose paper is
+        deliberately append-only, with no feedback loop at all — silently
+        received G-Memory's +1/-2 because the two share the ``strategies`` type.
+        Fanning out to organizers instead makes "who owns this rule" the same
+        question as "which organizer is active".
+
+        ``memory_ids`` may name items this organizer knows nothing about;
+        implementations filter and ignore the rest."""
         return []
 
     def on_memory_event(self, ev: MemoryEvent, ctx: OrganizerContext) -> list[MemoryOp]:

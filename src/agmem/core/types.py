@@ -26,16 +26,23 @@ def utcnow() -> datetime:
 
 
 # Memory type tags used for namespacing collections and filtering search.
+# Must stay exhaustive: `core/ops.py` declares `MemoryOp.target_type` to be one
+# of these, and a type missing here is a type nobody can find by reading the
+# vocabulary (`experiences` was absent for as long as ReasoningBank has emitted
+# it). Not enforced at runtime — `test_stores.py` checks it against every
+# organizer's `produces` instead, which is the declaration that can go stale.
 MEMORY_TYPES = (
-    "episodic",  # raw episodes (always present)
+    "episodic",  # raw episodes (always present, written by the facade itself)
     "episodes",  # Nemori derived narrative episodes
     "notes",  # A-Mem zettelkasten notes
     "pages",  # MemoryOS dialogue pages / segments
-    "semantic",  # Nemori distilled facts, MemoryOS knowledge
+    "semantic",  # Nemori distilled facts, MemoryOS LPM profile facts (kind="profile")
     "entities",  # Zep-graph entity nodes
     "facts",  # Zep-graph bi-temporal edges
-    "strategies",  # ReasoningBank items, G-Memory insights
+    "strategies",  # ReasoningBank items, G-Memory trajectories/insights
+    "experiences",  # ReasoningBank task records (expand to their member strategies)
     "playbook",  # ACE bullets
+    "state",  # internal bookkeeping, not a memory: consolidate cursors (base.cursor_key)
 )
 
 

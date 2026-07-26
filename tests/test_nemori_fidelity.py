@@ -157,9 +157,15 @@ def test_episode_merger_merges_and_supersedes():
 # ---------------- SemanticIntegrator: Dedup / ThreeWay (v4 §3.3.3) ----------------
 
 
-def _seed_semantic(mem, entries):
+def _seed_semantic(mem, entries, actor="nemori"):
     """entries: list of (id, content) -> ADD each via the facade so both
-    doc + vec stores are populated, exactly as a real Stage-3 ADD would."""
+    doc + vec stores are populated, exactly as a real Stage-3 ADD would.
+
+    The actor matters: the facade persists it onto the item, and Nemori's
+    integrators only consider their own items as merge candidates (stages.py
+    ``OWNER``). Seeding under any other name models a *foreign* organizer's
+    fact, which is what ``test_integrators_ignore_another_organizers_semantic``
+    does deliberately."""
     mem._apply_ops(
         [
             MemoryOp(
@@ -170,7 +176,7 @@ def _seed_semantic(mem, entries):
             )
             for sid, content in entries
         ],
-        actor="test",
+        actor=actor,
     )
 
 
@@ -481,5 +487,70 @@ def test_semantic_offline_consolidate_cursor_respects_scan_limit():
         calls_before = len(llm.calls)
         mem.consolidate()
         assert len(llm.calls) == calls_before == 0
+    finally:
+        mem.close()
+
+
+def test_integrators_ignore_another_organizers_semantic():
+    """ "semantic" is shared with MemoryOS, so a foreign fact must never be a
+    merge/reuse target — see stages.py ``OWNER``.
+
+    Both searching integrators are covered because they fail differently:
+    ThreeWay would INVALIDATE the foreign fact, DedupIdReuse would overwrite
+    its content in place under the ``nemori`` actor."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "decision": "conflict",
+                    "target_indexes": [0],
+                    "statement": "User now lives in Busan",
+                }
+            ]
+        }
+    )
+    mem = make_mem(NemoriOrganizer(), llm)
+    try:
+        foreign_id = new_id()
+        _seed_semantic(mem, [(foreign_id, "User lives in Seattle")], actor="memoryos")
+
+        # ThreeWay: identical text, but the only candidate is foreign -> plain
+        # ADD, no LLM verdict consumed, foreign fact untouched.
+        ops = ThreeWayIntegrator().integrate("User lives in Seattle", "ep", ["s"], mem._ctx)
+        assert [o.op for o in ops] == [OpType.ADD]
+        assert llm.calls == []
+
+        # DedupIdReuse: top-1 is the foreign fact above threshold, yet its id
+        # must not be reused.
+        ops = DedupIdReuseIntegrator(threshold=0.85).integrate(
+            "User lives in Seattle", "ep", ["s"], mem._ctx
+        )
+        assert [o.op for o in ops] == [OpType.ADD]
+        assert ops[0].target_id != foreign_id
+
+        assert mem.doc_store.get_items([foreign_id], "semantic")[0] == {
+            **mem.doc_store.get_items([foreign_id], "semantic")[0],
+            "content": "User lives in Seattle",
+            "actor": "memoryos",
+        }
+    finally:
+        mem.close()
+
+
+def test_legacy_items_without_actor_stay_own():
+    """Stores written before ``actor`` was persisted must keep resolving as
+    Nemori's own, so no past run's behavior shifts under the ownership guard."""
+    mem = make_mem(NemoriOrganizer(), StubLLM({}))
+    try:
+        old_id = new_id()
+        _seed_semantic(mem, [(old_id, "User likes hiking")])
+        data = mem.doc_store.get_items([old_id], "semantic")[0]
+        del data["actor"]  # simulate a pre-field item
+        mem.doc_store.put_item(old_id, "semantic", mem.namespace, data)
+
+        ops = DedupIdReuseIntegrator(threshold=0.85).integrate(
+            "User likes hiking", "ep-new", ["s-new"], mem._ctx
+        )
+        assert ops[0].op == OpType.UPDATE and ops[0].target_id == old_id
     finally:
         mem.close()

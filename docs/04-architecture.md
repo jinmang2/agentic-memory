@@ -208,27 +208,101 @@ search(query, memory_types=[...], k=...)
 - QueryExpansion(time-range 추출 등, docs/03 §1.2)은 로드맵 — 현재 파이프라인은 recall부터 시작.
 - recall은 memory_type별로 순차 실행(스레드/async 병렬화 없음); dense는 항상, lexical은
   `episodic`과 `lexical_types`에 포함된 타입만 BM25/FTS 채널을 추가로 RRF 융합한다.
+- `memory_types`를 생략하면 `default_memory_types` — `episodic` + 활성 organizer들의
+  `produces`를 선언 순서대로 dedup한 것 — 이 쓰인다. `produces`의 **순서가 load-bearing**이다:
+  확장 스텝이 이미 번들에 있는 id를 제외하므로, 다른 타입의 스텝이 끌어오는 타입이 먼저 와야
+  한다(zep_graph의 facts→entities).
+
+**read→write 되먹임 (읽기가 쓰기이기도 하다)**: `search()`는 서빙된 `(item_id, memory_type,
+score)`를 각 organizer의 `on_retrieval`에 넘기고, 반환된 op를 **호출자 스레드에서 동기 적용한
+뒤** 리턴한다. 즉 그 op는 진행 중인 검색이 아니라 *다음* 검색에 반영된다. 두 가지가 따라온다:
+
+- async 모드에서 다른 모든 쓰기는 워커 큐를 거치지만 **이 경로만 큐를 우회한다.** store는
+  RLock으로 보호되나 organizer의 in-memory 상태는 아니다 — 워커가 `on_message`에서
+  MemoryOS `_heat`를 갱신하는 동안 호출자가 `on_retrieval`에서 같은 dict를 건드릴 수 있다.
+  손실되는 것은 heat 카운터 갱신 한 건 수준이고 자료구조는 깨지지 않는다.
+- 그래서 `on_retrieval`은 **싸야 한다**(LLM 호출 금지 — base docstring의 계약).
 
 - `MemoryBundle.render(budget_tokens)` — 타입별 우선순위/토큰 예산으로 프롬프트 주입용 텍스트 생성 (Zep의 context block, ReasoningBank의 system prompt 주입 형식 지원).
 
 ## 3. 방법론 → 공통 추상화 매핑 검증
 
-| 방법론 | on_message | on_task_end | consumes / on_memory_event | consolidate | 사용하는 MemoryOp | 필요 store |
-|---|---|---|---|---|---|---|
-| A-Mem | note 생성+링크+진화 (`input="messages"`, 기본) | — | `input="episodes"`: `consumes=("episodes",)`, `on_message` no-op, episode가 note 원문이 됨; MERGE의 `supersedes` 수신 시 흡수된 episode의 note를 INVALIDATE | — (base no-op) | ADD(note), LINK, UPDATE(이웃) | doc+vec |
-| MemoryOS | STM append; 방출 시 배치 조직화 (`input="messages"`, 기본) | — | `input="episodes"`: `consumes=("episodes",)`, `on_message` no-op, `on_memory_event`가 STM append 대체(episode→page 역매핑 유지); `supersedes` 수신 시 해당 page의 source가 전부 superseded일 때만 INVALIDATE | — (base no-op) | ADD(page/segment), MERGE, UPDATE(profile), DELETE(LFU) | doc+vec |
-| Nemori | buffer; boundary 시 episode+증류 (distiller 역할 — `consumes=()`, 구독 없음) | — | 자신은 구독하지 않고 **방출**만 함: episode merge 시 MERGE(신규 병합 episode)+INVALIDATE(흡수된 구 episode)를 같은 배치로 반환, MERGE op의 `payload["supersedes"]`에 흡수 id들을 명시 | `consolidation="semantic_offline"`: semantic 전수/증분 클러스터링→LLM merge/conflict 판정→INVALIDATE+ADD, 커서(`consolidate:nemori`) 전진 | ADD(episode), ADD(semantic), MERGE(episode/semantic)+INVALIDATE(supersedes) | doc+vec |
-| Zep-graph | episode→entity/fact 파이프라인 | — | — (base no-op) | — (base no-op) | ADD(entity/fact), MERGE(dedup), INVALIDATE(모순) | doc+vec+graph |
-| ACE | — | reflect→curate | — (base no-op) | — (base no-op) | ADD(bullet), UPDATE(카운터), MERGE(dedup) | doc+vec(dedup용) |
-| ReasoningBank | — | judge→증류 | — (base no-op) | — (base no-op) | ADD(strategy) | doc+vec |
-| G-Memory | — (MAS 메시지 수집) | sparsify→insight | — (base no-op) | — (base no-op) | ADD(traj/insight), UPDATE(reward), MERGE(FINCH) | doc+vec+graph |
+### 3.1 훅 구현 매트릭스
 
-→ 7개 방법론 모두 `(2개 훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서 A-Mem/ReasoningBank로 먼저 검증.
-→ `on_memory_event`/`consolidate`는 이번 라이프사이클 재설계(스펙:
-  `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`)에서 Nemori(distiller)
-  +MemoryOS·A-Mem(`input="episodes"` consumer) 2개 조합만 마이그레이션했고, 나머지 5개
-  organizer는 base 디폴트(no-op)로 무변경 — management-agnostic 계약이 참여 organizer 수와
-  무관하게 성립함을 최소 조합으로 검증하는 단계.
+`Organizer`의 훅은 전부 base에 no-op 디폴트가 있으므로, ✓는 **서브클래스가 실제로 오버라이드한
+것**을 뜻한다(`base.overrides()`가 판정하는 것과 같은 의미).
+
+| 방법론 | on_message | on_task_end | on_retrieval | on_feedback | consolidate | flush_buffer | retire / patch_unit | warm_start |
+|---|---|---|---|---|---|---|---|---|
+| passthrough | ✓ (no-op 반환) | — | — | — | — | — | — | — |
+| A-Mem | ✓ | — | — | — | — | — | — | — |
+| Nemori | ✓ | — | — | — | ✓ | ✓ | — | ✓ |
+| MemoryOS | ✓ | — | ✓ | — | — | ✓ | ✓ | ✓ |
+| Zep-graph | ✓ | — | — | — | — | — | — | — |
+| ACE | — | ✓ | — | ✓ | — | — | — | — |
+| ReasoningBank | — | ✓ | — | — | — | — | — | — |
+| G-Memory | — | ✓ | ✓ | ✓ | — | — | — | — |
+
+읽는 법 세 가지:
+
+- **`on_message` 계열 5종과 `on_task_end` 계열 3종은 입력 단위가 다르다** — 대화 벤치
+  (LoCoMo/LongMemEval)는 앞의 5종만 측정하고 뒤의 3종은 아무 것도 생산하지 않는다. Phase 5
+  비교표를 하나의 벤치로 그릴 수 없는 이유이고, admission policy가 뒤의 3종에 적용 불가인
+  이유이기도 하다(§1.2, taxonomy §2.5).
+- **`consolidate`를 구현한 방법론은 Nemori 하나뿐이다.** 여러 논문이 "consolidation"이라 부르는
+  것은 대부분 `on_message` 안의 인라인 승격/병합이다 — 용어가 최소 3가지를 가리키므로
+  taxonomy §2.4.1의 **언제**(inline/deferred) × **무엇을**(요약/통합/승격/무효화) 두 축으로
+  갈라서 봐야 한다.
+- **`on_memory_event`/`consumes`를 native로 구현한 방법론은 없다.** 체이닝은 전부
+  `experimental.ChainedConsumer` 어댑터가 담당한다(§3.3).
+
+### 3.2 MemoryOp / store 요구
+
+| 방법론 | 사용하는 MemoryOp | 쓰는 memory type | 필요 store |
+|---|---|---|---|
+| passthrough | — (raw episode는 파사드가 기록) | — | doc+vec |
+| A-Mem | ADD(note), LINK, UPDATE(이웃) | `notes` | doc+vec |
+| Nemori | ADD(episode/semantic), MERGE(episode/semantic)+INVALIDATE(supersedes) | `episodes`, `semantic` | doc+vec |
+| MemoryOS | ADD(page/segment), MERGE, ADD(profile fact), DELETE(LFU) | `pages`, `semantic` | doc+vec |
+| Zep-graph | ADD(entity/fact), MERGE(dedup), INVALIDATE(모순) | `entities`, `facts` | doc+vec+graph |
+| ACE | ADD(bullet), UPDATE(카운터), MERGE(dedup) | `playbook` | doc+vec(dedup용) |
+| ReasoningBank | ADD(strategy), ADD(experience) | `strategies`, `experiences` | doc+vec |
+| G-Memory | ADD(traj/insight), UPDATE(reward), DELETE(prune) | `strategies` | doc+vec+graph |
+
+→ 8개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
+A-Mem/ReasoningBank로 먼저 검증.
+
+**memory type은 방법론 전용이 아니다**: `semantic`을 Nemori와 MemoryOS가, `strategies`를
+ReasoningBank와 G-Memory가 공유한다. 타입만으로 소유자를 알 수 없으므로 파사드가 ADD 적용 시
+op의 `actor`를 아이템에 함께 기록하고(`memory.py::_apply_one`), 소유권이 필요한 곳은 그것으로
+판정한다 — Nemori의 semantic 통합기가 후보를 자기 것으로 한정하는 것
+(`nemori/stages.py::own_items`)과 피드백이 생산자에게 팬아웃되는 것(§3.4)이 그 두 자리다.
+`actor` 필드가 없는 과거 아이템은 자기 것으로 취급되므로 기존 스토어의 해석은 불변이다.
+
+### 3.3 체이닝은 어댑터가 담당한다 (native 구독 아님)
+
+구 `input="episodes"` 생성자 모드는 **제거**됐다. A-Mem/MemoryOS는 이제 `consumes=()`이고
+`on_memory_event`를 구현하지 않는다 — 대신 `experimental.ChainedConsumer`가 wrapped organizer를
+감싸 `consumes=(source_type,)`를 선언하고, 상류 이벤트를 `Episode`로 평탄화해 wrapped의 평범한
+`on_message`에 먹인다. 방출 측(Nemori)은 그대로다: episode merge 시 MERGE(신규 병합)+
+INVALIDATE(흡수된 구 episode)를 같은 배치로 반환하고 MERGE op의 `payload["supersedes"]`에 흡수
+id를 명시한다.
+
+    ChainedConsumer(AMemOrganizer(), "semantic")   # Nemori v4 Table 7
+    ChainedConsumer(MemoryOSOrganizer(), "episodes")
+
+이 배치의 이유는 §1.2와 같다 — **합성 어댑터는 프레임워크이지 방법론이 아니고**, 게다가 이 조합은
+논문 재현이 아니므로 `experimental/`에 격리된다. wrapped가 `retire`/`patch_unit`을 오버라이드하면
+자기 은퇴 정책을 쓰고(MemoryOS), 아니면 어댑터의 일반 1:1 INVALIDATE로 떨어진다.
+
+### 3.4 피드백은 생산자 소유다
+
+`report_feedback`은 `target_type`으로 분기하지 않고 각 organizer의 `on_feedback`으로 팬아웃한다.
+타입 분기는 공유 타입에서 곧바로 오염됐다 — ReasoningBank 아이템(논문상 append-only, 피드백 루프
+자체가 없음)이 `strategies`를 공유한다는 이유로 G-Memory의 +1/−2를 받았고, 반대로 G-Memory의
+served-insight 게이트(round-5 W-4)는 호출자 없는 `backward()` 안에만 있어 실경로에서 빠져 있었다.
+팬아웃 이후 "이 규칙은 누구 것인가"가 "어느 organizer가 활성인가"와 같은 질문이 된다. 대가는
+명시적이다: **소유 organizer가 활성이 아니면 피드백은 0을 반환하는 no-op**이다.
 
 ## 4. 프로세스 토폴로지
 

@@ -151,7 +151,32 @@ class ACEOrganizer(Organizer):
             )
         return "\n".join(f"## {s}\n" + "\n".join(lines) for s, lines in sorted(by_section.items()))
 
-    # -- hook ----------------------------------------------------------------
+    # -- hooks ---------------------------------------------------------------
+
+    def on_feedback(
+        self, memory_ids: list[str], helpful: bool, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Bump each named bullet's ``helpful``/``harmful`` counter by one.
+
+        These counters are ACE's own (§3.3: bullets carry usage statistics that
+        the curator reads back), so they belong to this organizer rather than to
+        the facade. Ids that are not playbook bullets are ignored — another
+        organizer owns them, or nothing does."""
+        field = "helpful" if helpful else "harmful"
+        ops: list[MemoryOp] = []
+        for mid in memory_ids:
+            bullets = ctx.doc_store.get_items([mid], "playbook")
+            if not bullets:
+                continue
+            ops.append(
+                MemoryOp(
+                    op=OpType.UPDATE,
+                    target_type="playbook",
+                    target_id=mid,
+                    payload={field: int(bullets[0].get(field, 0)) + 1},
+                )
+            )
+        return ops
 
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext

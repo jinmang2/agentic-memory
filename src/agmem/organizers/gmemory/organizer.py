@@ -318,12 +318,26 @@ class GMemoryOrganizer(Organizer):
         )
         return [str(i) for i in result["insights"]] if result else insights
 
-    def backward(self, insight_items: list[dict], reward: float) -> list[MemoryOp]:
+    def on_feedback(
+        self, memory_ids: list[str], helpful: bool, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
         """Reward shaping on served insights (+1 success / -2 failure),
         followed by upstream clear_insights: score <= 0 is pruned. Applies
-        only to items served since the last backward (``self._served``)."""
+        only to items served since the last feedback (``self._served``).
+
+        This was previously a ``backward(insight_items, reward)`` method with no
+        caller anywhere, while the facade's ``report_feedback`` reimplemented the
+        same rule *without* the ``_served`` gate — so the round-5 W-4 fix
+        ("reward applies only to insights the agent actually saw") lived in dead
+        code, and ``_served`` was never cleared, growing for the process
+        lifetime. Reaching the rule through the organizer hook makes the live
+        path and the fidelity fix the same code."""
+        reward = 1.0 if helpful else -2.0
+        insight_items = ctx.doc_store.get_items(list(memory_ids), "strategies")
         ops: list[MemoryOp] = []
         for i in insight_items:
+            if i.get("deleted"):
+                continue
             if self._served and i["id"] not in self._served:
                 continue
             new_score = float(i.get("score", 0)) + reward

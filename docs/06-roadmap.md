@@ -157,6 +157,33 @@
    검색 불가가 된다. 실 run의 id는 uuid4라 충돌 확률이 사실상 0이므로 **측정 리스크는 없다**;
    고치려면 5개 백엔드 스키마를 모두 건드리고 재색인이 필요하므로 별도 결정으로 남긴다.
 
+### 2026-07-26 재점검에서 처리한 것 (수치 영향 0 — 측정 run은 전부 단일 organizer)
+
+- **공유 memory type 오염 차단.** `semantic`(Nemori+MemoryOS)·`strategies`(RB+G-Memory)는 타입만으로
+  소유자를 알 수 없어 조합 설정에서 서로를 침범했다. 파사드가 ADD 적용 시 op의 `actor`를 아이템에
+  기록하고, Nemori 통합기의 후보 검색(`own_items`)과 피드백 라우팅이 그것으로 판정한다.
+  `actor` 없는 과거 아이템은 자기 것으로 취급 → 기존 스토어 해석 불변. 조사: taxonomy §2.6.
+- **`report_feedback` → `Organizer.on_feedback` 팬아웃.** 호출자 없는 `GMemoryOrganizer.backward()`가
+  round-5 W-4(served-insight 게이트)를 품은 채 죽어 있었고, `_served`는 clear되지 않아 프로세스
+  수명 내내 누적됐으며, 실경로인 파사드는 그 게이트 없이 RB 아이템에도 reward를 적용했다.
+  **대가**: 소유 organizer가 비활성이면 피드백이 no-op(0 반환)이 된다.
+- **`MEMORY_TYPES` 누락 보정** — `experiences`(RB가 계속 발행 중이던 것)와 `state`를 추가.
+  `core/ops.py`가 "target_type은 MEMORY_TYPES 중 하나"라고 선언하면서 검증이 없어 드리프트가
+  잡히지 않았다. `test_stores.py`가 `produces` 대비 전수 검사한다.
+- **TOML이 read-path 노브를 읽게 함** (`[retrieval]`) — "config로 ablatable"이 Python API에서만
+  참이었다. 재현 런북은 TOML 경로를 쓴다.
+- **문서 교정**: docs/04 §3이 제거된 `input="episodes"` 생성자 모드를 여전히 서술하고 있었다
+  (docs/10·13은 이미 갱신됨). 훅 매트릭스를 실제 구현 기준으로 재작성하고
+  `on_retrieval`/`on_feedback`/`flush_buffer`를 추가, `search()`가 되먹임으로 쓰기도 한다는 사실을
+  §2 Read에 명시. docs/05에 합성 API(`AdmissionGated`/`ChainedConsumer`)와
+  `default_memory_types` 추가.
+
+**남긴 판단 2건**: ① 타입을 쪼개는 것(`semantic_profile` 신설)이 `actor` 필터보다 근본적이지만
+저장 아티팩트의 타입 키가 바뀌므로 보류 — 어휘가 `type`/`kind`/`actor` 셋으로 늘어난 상태이고
+Phase 5 비교표 전에 재검토. ② `search()`의 `on_retrieval` 적용이 호출자 스레드에서 write 큐를
+우회하므로 organizer in-memory 상태(MemoryOS `_heat`)에 경합이 있다 — 자료구조는 깨지지 않고
+heat 카운터 갱신 손실 수준이라 문서화만 했다(docs/04 §2).
+
 ### 문서 교정 잔여
 12. `docs/09-results-summary.md`의 conv0 4-way 표는 0.6B 시절 수치이고 read-path P0 수정 전에
    측정된 것 — 재측정 보류 중임이 표 위에 명기돼 있다.
