@@ -295,9 +295,9 @@ LongMemEval/
 3. `.eval-results-gpt-4o` 로그에 `autoeval_label` 추가
 4. `print_qa_metrics.py`로 question_type별 집계
 
-### 집계 함정 3건 (2026-07-26 포팅 중 `print_qa_metrics.py` 통독으로 추가)
+### 함정 4건 (2026-07-26 포팅 중 `print_qa_metrics.py`·`run_generation.py` 통독으로 추가)
 
-조사 1차본이 놓친 부분이고, 셋 다 **수치 해석을 바꾼다**.
+조사 1차본이 놓친 부분이고, 넷 다 **수치 해석을 바꾸거나 수치 자체를 바꾼다**.
 
 1. **"정확도"가 두 개이고 서로 다르다.** 스크립트는 `Task-averaged Accuracy`(6개 타입 평균의
    평균)와 `Overall Accuracy`(전체 질문 평균)를 **둘 다** 출력한다(:31-33). 타입별 문항 수가
@@ -310,6 +310,14 @@ LongMemEval/
    'gpt-4o-2024-08-06'`(:20). 관례가 아니라 강제이고, 다른 judge로 매긴 결과는 공식 집계기가
    읽기를 거부한다. 우리 포트는 `JUDGE_MODEL_PIN`/`check_judge_model`로 이를 500콜 지출
    **전에** 실패시킨다.
+
+4. **컨텍스트에서 `has_answer`를 떼고 포맷한다** (2026-07-26 재대조에서 추가). `run_generation.py`는
+   프롬프트 조립 전에 모든 turn에서 `turn_entry.pop('has_answer')`한다(:177-191). 이 라벨은
+   **정답이 든 turn을 지목**하므로 남겨두면 모델에게 답의 위치를 알려주는 것이고, 에러가 아니라
+   **점수 상승**으로 나타난다 — full-context 베이스라인(60.6%)을 재현한다면서 그보다 쉬운 문제를
+   푸는 셈. 우리 첫 포트가 정확히 이 누락을 냈고 `longmemeval.render_sessions`에서 교정했다.
+   (upstream은 in-place `pop`이지만 우리는 복사본에 strip한다 — 같은 인스턴스의 turn-level
+   recall 골드를 파괴하지 않기 위해.)
 
 부수 확인: `get_anscheck_prompt`는 미지의 question_type에 **`raise NotImplementedError`**로
 응답하고 기본 템플릿으로 떨어지지 않는다(:38-39). knowledge-update 분기가 다른 분기의

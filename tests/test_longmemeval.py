@@ -20,8 +20,10 @@ from agmem.bench.longmemeval import (
     iter_turns,
     render_sessions,
     run_instance,
+    upstream_max_history_tokens,
 )
 from agmem.embed.fake import FakeEmbedder
+from agmem.llm.client import RoleConfig
 
 INSTANCE = {
     "question_id": "q1",
@@ -104,6 +106,14 @@ def test_max_sessions_truncates_the_haystack():
         mem.close()
 
 
+def test_max_sessions_zero_means_zero_not_all():
+    """`sessions[:max_sessions or len(sessions)]` reads 0 as "no cap" and
+    silently runs the FULL haystack — the smallest ablation point turning into
+    the largest run is the kind of error that only shows up in the bill."""
+    assert list(iter_turns(INSTANCE, max_sessions=0)) == []
+    assert render_sessions(INSTANCE, max_sessions=0) == ""
+
+
 # ---------------- abstention ----------------
 
 
@@ -160,6 +170,48 @@ def test_judge_model_pin_is_enforced():
         check_judge_model("gpt-4o-mini-2024-07-18")
 
 
+def _stub_with_judge_model(model):
+    stub = _StubLLM({"generate": "x", "judge": "yes"})
+    stub.roles = {"judge": RoleConfig(endpoint="http://localhost:8001/v1", model=model)}
+    return stub
+
+
+def test_an_offpin_judge_fails_before_it_is_ever_called():
+    """The pin is worth nothing as a constant nobody reads: a 500-question run
+    judged by gpt-4o-mini produces a file the official aggregator asserts
+    against. It has to fail on call zero, not after the spend."""
+    mem = _mem()
+    try:
+        mem.llm = _stub_with_judge_model("gpt-4o-mini-2024-07-18")
+        with pytest.raises(ValueError, match="gpt-4o-2024-08-06"):
+            run_instance(mem, INSTANCE)
+        assert [c["role"] for c in mem.llm.calls] == ["generate"]  # no judge call spent
+    finally:
+        mem.close()
+
+
+def test_the_pinned_judge_runs_and_the_pin_can_be_waived():
+    mem = _mem()
+    try:
+        mem.llm = _stub_with_judge_model(JUDGE_MODEL_PIN)
+        assert run_instance(mem, INSTANCE)["label"] is True
+        mem.llm = _stub_with_judge_model("gpt-4o-mini-2024-07-18")
+        assert run_instance(mem, INSTANCE, enforce_pin=False)["label"] is True
+    finally:
+        mem.close()
+
+
+def test_a_client_that_does_not_expose_its_model_is_not_treated_as_pinned():
+    """`None` from `configured_judge_model` means "cannot be checked". Blocking
+    on it would make every stub-driven and non-role-based client unjudgeable."""
+    mem = _mem()
+    try:
+        mem.llm = _StubLLM({"generate": "x", "judge": "yes"})  # no `roles` attribute
+        assert run_instance(mem, INSTANCE)["label"] is True
+    finally:
+        mem.close()
+
+
 # ---------------- metrics ----------------
 
 
@@ -193,6 +245,28 @@ def test_abstention_is_a_crosscut_not_a_seventh_type():
     assert out["abstention"] == {"acc": 0.0, "n": 1}
     assert out["overall"] == 50.0  # and in the overall
     assert out["n"] == 2
+
+
+def test_task_average_is_taken_over_unrounded_type_means():
+    """Upstream averages the raw per-type means and rounds once (:31). Averaging
+    the *reported* percentages instead drifts the headline by up to 0.01pp — in
+    the one module whose premise is that a LongMemEval number is only readable
+    if you know exactly which statistic it is."""
+    counts = {  # (hits, n) chosen so per-type means do not land on 2 decimals
+        "single-session-user": (30, 43),
+        "single-session-preference": (20, 30),
+        "single-session-assistant": (40, 56),
+        "multi-session": (50, 77),
+        "temporal-reasoning": (60, 88),
+        "knowledge-update": (50, 78),
+    }
+    records = [
+        {"question_id": f"q{qtype}{i}", "question_type": qtype, "label": i < hits}
+        for qtype, (hits, n) in counts.items()
+        for i in range(n)
+    ]
+    exact = sum(100 * hits / n for hits, n in counts.values()) / len(counts)
+    assert aggregate(records)["task_averaged"] == round(exact, 2) == 67.51
 
 
 def test_unjudged_rows_are_excluded_not_counted_wrong():
@@ -269,6 +343,41 @@ def test_full_context_history_bypasses_retrieval():
         assert "### Session 1:" in prompt and "### Session 2:" in prompt
         assert "Session Date: 2023/05/01 (Mon) 09:00" in prompt
         assert '"role": "user"' in prompt  # history_format=json
+    finally:
+        mem.close()
+
+
+def test_full_context_never_shows_the_model_which_turns_hold_the_answer():
+    """Upstream pops `has_answer` off every turn before formatting
+    (run_generation.py:177-191). Rendering the raw session instead marks the
+    evidence turns in the prompt, which does not crash — it inflates the very
+    baseline this path reproduces (GPT-4o 60.6% on _s)."""
+    rendered = render_sessions(INSTANCE)
+    assert "has_answer" not in rendered
+    assert "I am going to Paris in May" in rendered  # the content itself stays
+
+
+def test_stripping_the_evidence_label_does_not_destroy_the_recall_gold():
+    """Upstream can pop in place because it never scores turn-level recall in
+    the same process. We yield `has_answer` from `iter_turns` for exactly that,
+    so the strip has to be on a copy."""
+    render_sessions(INSTANCE)
+    assert INSTANCE["haystack_sessions"][0][0]["has_answer"] is True
+    assert [t[4] for t in iter_turns(INSTANCE)] == [True, False, False]
+
+
+def test_history_can_be_capped_the_way_upstream_caps_it():
+    """`budget_tokens` governs the retrieved bundle only, so an explicit
+    `history` reaches the API unbounded — on _m that is ~1.5M tokens."""
+    assert upstream_max_history_tokens(128000, "con") == 126200  # 128000 - 800 - 1000
+    assert upstream_max_history_tokens(128000, "direct") == 126500
+    mem = _mem()
+    try:
+        mem.llm = _StubLLM()
+        long_history = "x" * 4000
+        answer(mem, INSTANCE, history=long_history, max_history_tokens=100)
+        sent = mem.llm.calls[-1]["prompt"]
+        assert "x" * 400 in sent and "x" * 401 not in sent  # 100 tokens * 4 chars
     finally:
         mem.close()
 

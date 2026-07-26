@@ -38,8 +38,9 @@
       비용 841 calls/946s vs 0 calls/6.3s. multi-hop은 오히려 -1.6 — organizer 모델
       품질 종속성 실증. 상세: `docs/08-amem-implementation-review.md` §4
 - [x] LoCoMo conv0 4-way 완료 (passthrough/A-Mem/Nemori/MemoryOS — docs/09-results-summary.md)
-- [~] **LongMemEval_S** 파이프라인 — **라이브러리 배선 완료**(`bench/longmemeval.py`, 2026-07-26).
-      judge pin `gpt-4o-2024-08-06`는 `check_judge_model`로 강제(공식 집계기가 assert하는 값),
+- [~] **LongMemEval_S** 파이프라인 — **라이브러리 배선 완료**(`bench/longmemeval.py`, 2026-07-26.
+      같은 날 공식 소스 재대조 감사로 5건 수정 — 아래 §2026-07-26 감사).
+      judge pin `gpt-4o-2024-08-06`는 `judge_answer`가 첫 콜 전에 강제(공식 집계기가 assert하는 값),
       reading `con` + history `json`은 공식 프롬프트 원문 그대로, full-context 베이스라인
       (`render_sessions`)까지 포함. **미작성**: CLI 드라이버와 ingest 아티팩트 캐시 —
       인스턴스마다 메모리를 새로 만드는 구조라 500질문 = 500 ingest이고, 측정 승인 전에는
@@ -203,6 +204,34 @@ upstream과 일치), **D2** ingest 단위(upstream은 ingest가 없고 haystack�
 테스트 23건이 이 계약을 고정한다(`tests/test_longmemeval.py`). `has_answer` 누출 테스트는
 **실제로 누출을 주입해 실패하는지 확인**했다 — 첫 판은 `list_items("episodic")`이 항상 `[]`를
 반환해(raw episode는 별도 테이블) vacuous였다.
+
+#### 2026-07-26 감사 (공식 소스 재대조) — 5건 수정, 테스트 31건
+
+포팅 직후 공식 저장소를 다시 받아 대조했다. 프롬프트는 **judge 5분기 + abstention = 8케이스,
+answer `con`/`direct` 2종 모두 바이트 동일**이었고(공식 `get_anscheck_prompt`를 떼어내 출력 비교),
+`run_generation.sh`의 `con` alias가 `--con`이 아니라 `--cot true`라는 함정도 통과해 있었다.
+반면 다음 5건이 나왔다. 앞의 4건은 **수정 전 코드에서 회귀 테스트가 실제로 실패함을 확인**했다.
+
+1. **`render_sessions`가 `has_answer` 골드 라벨을 유출**했다 — upstream은 포맷 직전에 전 turn에서
+   `pop`한다(run_generation.py:177-191). 재현 대상이 정확히 full-context 베이스라인(60.6%)인데
+   정답이 든 turn을 표시해 주는 셈이라 **수치가 위로 왜곡**된다. ingest 경로엔 누출 테스트가
+   있었지만 이 경로엔 없어서 조용히 통과했다. upstream과 달리 **복사본에 strip**한다 — 인스턴스의
+   turn-level recall 골드를 파괴하면 안 되기 때문(그 불변식도 테스트로 고정).
+2. **`check_judge_model`에 호출부가 없었다.** "500콜 지출 전에 실패시킨다"는 주장에 실제 경로가
+   없었다. `judge_answer`가 `configured_judge_model`로 role 설정을 읽어 첫 콜 전에 강제한다.
+   모델명을 읽을 수 없는 클라이언트는 "검사 불가"이지 "통과"가 아니며, `enforce_pin=False`로
+   의도적 off-pin judge(disagreement 연구)를 남긴다.
+3. **full-context 경로에 길이 상한이 없었다** — `budget_tokens`는 검색 번들에만 걸린다.
+   upstream은 `model_max_length - gen_length - 1000`으로 자른다(:343, :266-279). 토크나이저가
+   없으므로 상한은 opt-in(`max_history_tokens`)이고, 그 산술은 `upstream_max_history_tokens`로
+   노출했다. `_m`은 이게 없으면 ~1.5M 토큰이 그대로 API로 간다.
+4. **`max_sessions=0`이 전체 haystack을 돌렸다** (`sessions[:max_sessions or len(...)]`).
+   가장 작은 ablation 지점이 가장 큰 run이 되는 종류의 버그라 `_capped`로 `None`만 무제한으로.
+5. **`task_averaged`가 이중 반올림**이었다(타입별 pct를 반올림한 뒤 평균). upstream은 raw 평균을
+   한 번만 반올림한다(:31). 현실적 분포에서 67.52 vs 67.51 — 0.01pp지만 "어느 accuracy인지
+   모르는 수치는 비교 불가"를 논지로 삼은 모듈에서 스스로 만든 drift다.
+
+인용 오타 1건도 교정: `print_qa_metrics.py:15` → 실제 `:17`.
 
 ### 2026-07-26 재점검에서 처리한 것 (수치 영향 0 — 측정 run은 전부 단일 organizer)
 

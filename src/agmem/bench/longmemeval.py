@@ -34,8 +34,13 @@ official code rather than the paper:
 3. **The judge model is pinned by an assert**, not by convention:
    ``assert entry['autoeval_label']['model'] == 'gpt-4o-2024-08-06'``. Judging
    with anything else produces numbers the official aggregator refuses to read.
-   ``JUDGE_MODEL_PIN`` and ``check_judge_model`` carry that forward instead of
-   letting it be a comment.
+   ``judge_answer`` enforces the pin on its first call so a mis-configured judge
+   costs zero calls, not 500.
+4. **The context is scrubbed of ``has_answer`` before formatting.**
+   run_generation.py pops the turn-level evidence label off every chunk
+   (:177-191) before it reaches the prompt. Skipping that hands the model the
+   gold location, and it inflates the full-context baseline rather than
+   crashing -- see ``render_sessions``.
 
 Deviations from upstream, deliberate and listed so results can be caveated:
 
@@ -56,13 +61,17 @@ Deviations from upstream, deliberate and listed so results can be caveated:
 from __future__ import annotations
 
 import json
+import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator
 
+from agmem.core.types import MemoryBundle
 from agmem.memory import AgenticMemory
 
-# print_qa_metrics.py:15 initialises type2acc with exactly these six, in this
+logger = logging.getLogger("agmem.bench.longmemeval")
+
+# print_qa_metrics.py:17 initialises type2acc with exactly these six, in this
 # order -- it is also the report order, and a type absent from the data would
 # make the official script emit nan rather than skip it.
 QUESTION_TYPES = (
@@ -84,6 +93,15 @@ JUDGE_MAX_TOKENS = 10
 GEN_MAX_TOKENS_CON = 800
 GEN_MAX_TOKENS_DIRECT = 500
 GEN_TEMPERATURE = 0.0
+# run_generation.py:343 -- `max_retrieval_length = model_max_length - gen_length - 1000`,
+# the headroom upstream leaves for the answer plus the non-history prompt text.
+UPSTREAM_CONTEXT_RESERVE = 1000
+
+# The turn-level evidence label the benchmark ships. Upstream strips it from
+# every chunk before formatting (run_generation.py:177-191,
+# `turn_entry.pop('has_answer')`) -- it marks WHICH turns hold the answer, so
+# leaving it in the prompt hands the model the gold location.
+EVIDENCE_LABEL_KEY = "has_answer"
 
 
 def is_abstention(question_id: str) -> bool:
@@ -97,6 +115,12 @@ def is_abstention(question_id: str) -> bool:
 
 
 # ---------------- data loading ----------------
+
+
+def _capped(items: list[Any], max_items: int | None) -> list[Any]:
+    """``items`` truncated to ``max_items``, where ``None`` (not ``0``) is the
+    "no cap" sentinel."""
+    return items if max_items is None else items[:max_items]
 
 
 def load_longmemeval(path: str | Path) -> list[dict[str, Any]]:
@@ -117,11 +141,15 @@ def iter_turns(
     ``haystack_sessions``/``_dates``/``_session_ids`` are parallel arrays
     (run_generation.py:75-81). ``has_answer`` is the turn-level evidence label
     the benchmark ships for retrieval recall; it is metadata about the gold, so
-    it must never reach the memory -- it is yielded for recall scoring only."""
+    it must never reach the memory -- it is yielded for recall scoring only.
+
+    ``max_sessions=None`` means the whole haystack; ``0`` means zero sessions
+    and is NOT a synonym for "all" (a truthiness fallback here would turn the
+    smallest ablation point into a silent full run)."""
     sessions = instance.get("haystack_sessions", [])
     dates = instance.get("haystack_dates", [])
     ids = instance.get("haystack_session_ids", [])
-    for idx, session in enumerate(sessions[: max_sessions or len(sessions)]):
+    for idx, session in enumerate(_capped(sessions, max_sessions)):
         date = dates[idx] if idx < len(dates) else ""
         session_id = ids[idx] if idx < len(ids) else f"session_{idx}"
         for turn in session:
@@ -177,25 +205,47 @@ def render_sessions(instance: dict[str, Any], max_sessions: int | None = None) -
     """Full-history context in upstream's ``history_format=json`` shape.
 
     Block layout is run_generation.py:252 and the per-session value is
-    ``'\\n' + json.dumps(chunk_entry)`` (:238) where ``chunk_entry`` is the raw
-    session (a list of ``{role, content}``). Sessions are emitted in haystack
+    ``'\\n' + json.dumps(chunk_entry)`` (:238) where ``chunk_entry`` is the
+    session as a list of ``{role, content}``. Sessions are emitted in haystack
     order, which is already chronological for the ``_s``/``_m`` variants --
     ``longmemeval_oracle.json`` is NOT sorted, a documented upstream quirk, so
     an oracle run must sort before calling this.
 
-    This reproduces the paper's full-context baseline (GPT-4o 60.6% on _s), the
-    one configuration that needs no memory system at all."""
+    ``has_answer`` is stripped from every turn first, as upstream's clean-up
+    loop does before formatting (:177-191). That is not cosmetic: the label
+    marks which turns hold the answer, so rendering the raw session tells the
+    model where to look and inflates the very baseline this function exists to
+    reproduce (the paper's GPT-4o 60.6% on ``_s``, the one configuration that
+    needs no memory system at all). Upstream ``pop``s in place; we strip onto a
+    copy so the instance keeps its turn-level recall gold for scoring."""
     sessions = instance.get("haystack_sessions", [])
     dates = instance.get("haystack_dates", [])
     out = []
-    for i, session in enumerate(sessions[: max_sessions or len(sessions)]):
+    for i, session in enumerate(_capped(sessions, max_sessions)):
         date = dates[i] if i < len(dates) else ""
+        cleaned = [
+            {k: v for k, v in turn.items() if k != EVIDENCE_LABEL_KEY}
+            if isinstance(turn, dict)
+            else turn
+            for turn in session
+        ]
         out.append(
             "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n".format(
-                i + 1, date, "\n" + json.dumps(session)
+                i + 1, date, "\n" + json.dumps(cleaned)
             )
         )
     return "".join(out)
+
+
+def upstream_max_history_tokens(model_max_length: int, reading_method: str = "con") -> int:
+    """Upstream's context arithmetic: ``model_max_length - gen_length - 1000``
+    (run_generation.py:343), where ``gen_length`` is 800 for ``con`` and 500 for
+    ``direct``. Exposed rather than inlined because the full-context path has no
+    other bound -- ``budget_tokens`` governs the retrieved bundle only -- and a
+    caller reinventing the reserve would silently reproduce a different prompt
+    length. For gpt-4o (128k) with ``con`` that is 126,200."""
+    gen_length = GEN_MAX_TOKENS_CON if reading_method == "con" else GEN_MAX_TOKENS_DIRECT
+    return model_max_length - gen_length - UPSTREAM_CONTEXT_RESERVE
 
 
 def answer(
@@ -206,6 +256,7 @@ def answer(
     budget_tokens: int = 6000,
     reading_method: str = "con",
     history: str | None = None,
+    max_history_tokens: int | None = None,
     capture: dict[str, Any] | None = None,
 ) -> str:
     """One QA turn: retrieve, then generate with the official answer prompt.
@@ -222,6 +273,15 @@ def answer(
     baseline runs (``history=render_sessions(instance)``, no memory read at all).
     Otherwise the context is ``mem.search(...).render(budget_tokens)`` -- see D1
     for the ordering deviation.
+
+    ``max_history_tokens`` caps whichever history is used, mirroring upstream's
+    truncation of the assembled history string (run_generation.py:266-279) --
+    which it does unconditionally, having the model's tokenizer to hand. We do
+    not, so the cap is opt-in and measured with ``MemoryBundle``'s chars-per-
+    token estimate; ``upstream_max_history_tokens`` computes the value upstream
+    would use. It matters on the full-context path: ``budget_tokens`` never
+    reaches an explicit ``history``, so an uncapped ``_m`` haystack (~1.5M
+    tokens) goes to the API whole.
 
     ``memory_types=None`` defers to the memory's ``default_memory_types``, so a
     caller does not have to know what the configured organizers produce.
@@ -257,6 +317,16 @@ def answer(
                 }
                 for s in bundle.items
             ]
+    if max_history_tokens is not None:
+        limit = max_history_tokens * MemoryBundle.CHARS_PER_TOKEN
+        if len(history) > limit:
+            logger.warning(
+                "longmemeval: truncating history from %d to %d chars (~%d tokens)",
+                len(history),
+                limit,
+                max_history_tokens,
+            )
+            history = history[:limit]
     if capture is not None:
         capture["history"] = history
     if mem.llm is None:
@@ -364,13 +434,38 @@ def check_judge_model(model: str) -> None:
         raise ValueError(
             f"judge model {model!r} is not the pinned {JUDGE_MODEL_PIN!r}; "
             "the official aggregator asserts this, so results judged otherwise are "
-            "not comparable with published numbers. Pass the pin explicitly to override."
+            "not comparable with published numbers. Pass enforce_pin=False to judge "
+            "anyway (and label the result as not officially comparable)."
         )
 
 
-def judge_answer(mem: AgenticMemory, instance: dict[str, Any], hypothesis: str) -> bool | None:
+def configured_judge_model(mem: AgenticMemory) -> str | None:
+    """The model name configured for the ``judge`` role, or ``None`` when the
+    client does not expose one (a stub, or a client without ``roles``).
+
+    ``None`` means "cannot be checked", never "checked and fine" -- the pin is
+    only enforceable against a name we can actually read."""
+    roles = getattr(mem.llm, "roles", None)
+    role_config = roles.get("judge") if isinstance(roles, dict) else None
+    model = getattr(role_config, "model", None)
+    return str(model) if model else None
+
+
+def judge_answer(
+    mem: AgenticMemory,
+    instance: dict[str, Any],
+    hypothesis: str,
+    enforce_pin: bool = True,
+) -> bool | None:
     """Binary judge verdict for one answered instance, or ``None`` when no
     ``judge`` role is configured.
+
+    The pin is enforced here, on the first call, so a mis-configured judge costs
+    zero calls instead of 500 (``check_judge_model``). It can only fire when the
+    client exposes its role config -- see ``configured_judge_model`` -- so an
+    unreadable client still runs, and ``enforce_pin=False`` runs a deliberately
+    off-pin judge (e.g. the release's ``gpt-4o-mini`` or local-vLLM entries) for
+    a cheap disagreement study.
 
     Deliberately NOT routed through ``mem.structured``: the official judge is a
     free-text call with ``max_tokens=10`` scored by ``'yes' in
@@ -381,6 +476,10 @@ def judge_answer(mem: AgenticMemory, instance: dict[str, Any], hypothesis: str) 
     disagreement rate."""
     if mem.llm is None or not mem.llm.has_role("judge"):
         return None
+    if enforce_pin:
+        model = configured_judge_model(mem)
+        if model is not None:
+            check_judge_model(model)
     prompt = get_anscheck_prompt(
         str(instance["question_type"]),
         str(instance["question"]),
@@ -413,7 +512,13 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
     equally while ``overall`` weights questions equally -- so on the unequal
     official type counts they are different numbers. A type with no judged rows
     is omitted from ``by_type`` and from the task average (upstream would emit
-    nan for it)."""
+    nan for it).
+
+    ``task_averaged`` averages the UNROUNDED type means and rounds once, as
+    upstream does (``round(np.mean(task_acc), 4)`` over raw means, :31).
+    Averaging the reported per-type percentages instead shifts the headline by
+    up to 0.01pp -- small, but self-inflicted drift in the one number this
+    module exists to report unambiguously."""
     by_type: dict[str, list[int]] = defaultdict(list)
     abstention: list[int] = []
     everything: list[int] = []
@@ -427,15 +532,18 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
         if is_abstention(str(row["question_id"])):
             abstention.append(hit)
 
+    def mean(values: list[int]) -> float:
+        return 100 * sum(values) / len(values)
+
     def pct(values: list[int]) -> float:
-        return round(100 * sum(values) / len(values), 2)
+        return round(mean(values), 2)
 
     ordered = [t for t in QUESTION_TYPES if by_type.get(t)]
     extra = sorted(t for t in by_type if t not in QUESTION_TYPES)
     return {
         "by_type": {t: {"acc": pct(by_type[t]), "n": len(by_type[t])} for t in [*ordered, *extra]},
         "task_averaged": (
-            round(sum(pct(by_type[t]) for t in ordered) / len(ordered), 2) if ordered else None
+            round(sum(mean(by_type[t]) for t in ordered) / len(ordered), 2) if ordered else None
         ),
         "overall": pct(everything) if everything else None,
         "abstention": {"acc": pct(abstention), "n": len(abstention)} if abstention else None,
@@ -454,8 +562,10 @@ def run_instance(
     budget_tokens: int = 6000,
     reading_method: str = "con",
     max_sessions: int | None = None,
+    max_history_tokens: int | None = None,
     full_context: bool = False,
     judge: bool = True,
+    enforce_pin: bool = True,
     capture_retrieval: bool = False,
 ) -> dict[str, Any]:
     """Ingest one instance's haystack into ``mem``, answer its question, judge it.
@@ -467,10 +577,13 @@ def run_instance(
     ``full_context=True`` skips retrieval and feeds the whole haystack via
     ``render_sessions`` -- the paper's no-memory baseline. Ingest still runs, so
     write-path cost stays measurable and comparable against the retrieval runs;
-    pass a ``passthrough`` memory to keep that cost at zero.
+    pass a ``passthrough`` memory to keep that cost at zero. That path is the
+    one that needs ``max_history_tokens`` (see ``answer``): nothing else bounds
+    it, and on ``_m`` the whole haystack would go to the API uncapped.
 
     Judging is on by default because there is no string metric to fall back to:
-    an unjudged LongMemEval run has no score at all, only hypotheses."""
+    an unjudged LongMemEval run has no score at all, only hypotheses.
+    ``enforce_pin`` is forwarded to ``judge_answer``."""
     turns = ingest(mem, instance, max_sessions)
     capture: dict[str, Any] | None = {} if capture_retrieval else None
     hypothesis = answer(
@@ -481,6 +594,7 @@ def run_instance(
         budget_tokens=budget_tokens,
         reading_method=reading_method,
         history=render_sessions(instance, max_sessions) if full_context else None,
+        max_history_tokens=max_history_tokens,
         capture=capture,
     )
     row = {
@@ -489,7 +603,7 @@ def run_instance(
         "question": str(instance["question"]),
         "answer": str(instance["answer"]),
         "hypothesis": hypothesis,
-        "label": judge_answer(mem, instance, hypothesis) if judge else None,
+        "label": judge_answer(mem, instance, hypothesis, enforce_pin) if judge else None,
         "turns": turns,
     }
     if capture is not None:
