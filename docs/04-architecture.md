@@ -56,7 +56,8 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   │                            #   ::test_organizers_root_is_framework_only_...
 │   │   ├── base.py                  # [프레임워크] Organizer Protocol:
 │   │   │                            #   on_message / on_task_end → list[MemoryOp]
-│   │   │                            #   (+ warm_start, on_retrieval, flush_buffer,
+│   │   │                            #   (+ warm_start, on_retrieval, on_feedback,
+│   │   │                            #   flush_buffer, retire/patch_unit,
 │   │   │                            #   on_memory_event(consumes 구독)/consolidate — §2)
 │   │   ├── gated.py                 # [프레임워크] AdmissionGated: policies/의 결정을
 │   │   │                            #   임의 organizer에 적용하는 합성 어댑터
@@ -189,8 +190,8 @@ _propagate_events: target_type ∈ consumes 인 다른 organizer에 순서대로
 
 - Organizer는 store를 직접 만지지 않고 **MemoryOp만 반환** → 방법론 코드와 스토리지가 완전 분리, 로그 재생으로 상태 복원/디버깅 가능.
 - 동기 모드(`sync_write=True`)도 지원 — 원논문 재현 실험은 동기로 돌려 원 구현과 조건을 맞춘다.
-- **인라인 vs 유예 위상**: `on_message`/`on_task_end`/`on_retrieval`/`on_memory_event`/
-  `flush_buffer`는 인라인(ingest 경로에서 즉시 실행, 방법론 원형 재현의 자리)이고
+- **인라인 vs 유예 위상**: `on_message`/`on_task_end`/`on_retrieval`/`on_feedback`/
+  `on_memory_event`/`flush_buffer`는 인라인(ingest 경로에서 즉시 실행, 방법론 원형 재현의 자리)이고
   `consolidate`는 유예(명시적 API 호출로만 실행, 배치 dedup/merge/재조직의 자리) —
   두 위상은 서로를 강제하지 않는다 (스펙 §1.1).
 - INVALIDATE는 기존 `invalid_at`을 보존(최초 시각 유지)하며, bi-temporal 렌더 타입

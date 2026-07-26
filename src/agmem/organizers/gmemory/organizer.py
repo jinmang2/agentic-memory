@@ -124,14 +124,14 @@ class GMemoryOrganizer(Organizer):
         self.finetune_every = finetune_every
         self.insight_max = insight_max
         self._task_count = 0
-        # upstream insights_cache: ids served since the last backward() —
+        # upstream insights_cache: ids served since the last on_feedback —
         # reward applies only to insights the agent actually saw (round-5 W-4)
         self._served: set[str] = set()
 
     def on_retrieval(
         self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
     ) -> list[MemoryOp]:
-        """Records served insight ids into ``_served`` for ``backward()``
+        """Records served insight ids into ``_served`` for ``on_feedback``
         reward attribution (round-5 W-4); always returns [] — no store
         writes, no LLM calls."""
         self._served.update(i for i, mt, _ in hits if mt == "strategies")
