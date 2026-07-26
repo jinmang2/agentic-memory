@@ -9,6 +9,7 @@ import pytest
 from agmem import AgenticMemory
 from agmem.config import AgmemConfig
 from agmem.core.ops import MemoryOp, OpType
+from agmem.core.types import Bullet
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.base import Organizer, OrganizerContext
 
@@ -153,6 +154,103 @@ def test_profile_resolution(kwargs, expected):
     try:
         assert mem.config.profile == expected
         assert mem.stats()["profile"] == expected
+    finally:
+        mem.close()
+
+
+def test_consolidate_drains_buffered_units_first():
+    """An organizer's consolidate() resumes from the evolution log, so units
+    still sitting in a segment/STM buffer are invisible to it — they have
+    produced no ops yet. ``consolidate()`` alone used to scan an empty log and
+    report success (0 ops, 0 items for three buffered messages)."""
+
+    class Buffered(Organizer):
+        name = "buffered"
+        produces = ("semantic",)
+
+        def __init__(self):
+            self.buf = []
+
+        def on_message(self, episode, ctx):
+            self.buf.append(episode)
+            return []
+
+        def flush_buffer(self, ctx):
+            ops = [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id=f"b{i}",
+                    payload={"content": e.content},
+                )
+                for i, e in enumerate(self.buf)
+            ]
+            self.buf = []
+            return ops
+
+    mem = AgenticMemory(namespace="t", organizers=[Buffered()], embedder=FakeEmbedder(dim=64))
+    try:
+        for text in ("one", "two", "three"):
+            mem.add_message(text)
+        assert mem.consolidate() == 3  # buffer drain is counted in the applied ops
+        assert len(mem.doc_store.list_items("semantic", namespace="t")) == 3
+    finally:
+        mem.close()
+
+
+def test_get_playbook_requires_an_active_producer():
+    """Reading the playbook was type-owned while writing to it is producer-owned
+    (docs/04 §3.4), so with ACE deconfigured one session would render a bullet
+    and then return 0 from the feedback call meant to update it."""
+    bullet = MemoryOp(
+        op=OpType.ADD,
+        target_type="playbook",
+        target_id="p1",
+        payload={"content": "check the log", "section": "ops"},
+    )
+
+    inactive = AgenticMemory(
+        namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=64)
+    )
+    try:
+        inactive._apply_ops([bullet], actor="ace")
+        assert inactive.get_playbook() == ""
+        assert inactive.report_feedback(["p1"], helpful=True) == 0
+    finally:
+        inactive.close()
+
+    active = AgenticMemory(namespace="t2", organizers=["ace"], embedder=FakeEmbedder(dim=64))
+    try:
+        active._apply_ops([bullet], actor="ace")
+        assert active.get_playbook() == "## ops\n[ops-p1] helpful=0 harmful=0 :: check the log"
+        assert active.report_feedback(["p1"], helpful=True) == 1
+    finally:
+        active.close()
+
+
+def test_playbook_line_format_is_shared_with_bullet_render():
+    """The facade rendered bullets from stored dicts with its own copy of the
+    f-string; the format is part of ACE's prompt contract, so one copy."""
+    b = Bullet(content="check the log", section="ops", id="p1abcdef", helpful=2, harmful=1)
+    mem = AgenticMemory(namespace="t", organizers=["ace"], embedder=FakeEmbedder(dim=64))
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="playbook",
+                    target_id=b.id,
+                    payload={
+                        "content": b.content,
+                        "section": b.section,
+                        "helpful": b.helpful,
+                        "harmful": b.harmful,
+                    },
+                )
+            ],
+            actor="ace",
+        )
+        assert b.render() in mem.get_playbook()
     finally:
         mem.close()
 

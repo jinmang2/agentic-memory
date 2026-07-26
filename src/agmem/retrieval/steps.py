@@ -23,8 +23,30 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from agmem.core.types import ScoredItem
+from agmem.core.types import BITEMPORAL_TYPES, ScoredItem
 from agmem.stores.base import DocStore
+
+
+def is_servable(data: dict, memory_type: str) -> bool:
+    """Whether a stored item may still be returned by retrieval.
+
+    Two exclusions, and the reason this is one function rather than a check at
+    each site: DELETE leaves a tombstone (``{"id": ..., "deleted": True}``) and
+    INVALIDATE leaves the item intact but out of service unless its type is
+    bi-temporal. Every read path that pulls items BY ID has to apply both, and
+    the checks were previously copied per step — ``_hydrate`` and
+    ``ExpandExperiences`` and ``GraphRecall`` each tested ``deleted`` on their
+    own, and ``LinkExpansion`` tested neither. So an A-Mem note retired by
+    ``ChainedConsumer`` (INVALIDATE on ``notes``) came straight back through its
+    inbound link, and a deleted one came back as an empty ghost hit — the
+    round-5 X1 failure the other three sites had already been fixed for.
+
+    ``facts`` stay servable after invalidation on purpose: Zep renders them with
+    their validity range so they read as historical rather than current
+    (``_DictItem.render``). That is why this cannot be a bare ``deleted`` test."""
+    if data.get("deleted"):
+        return False
+    return not (data.get("invalid_at") and memory_type not in BITEMPORAL_TYPES)
 
 
 @dataclass
@@ -72,6 +94,8 @@ class LinkExpansion(ReadStep):
         by_id = dict(wanted)
         out = list(hits)
         for data in ctx.doc_store.get_items(list(by_id), "notes"):
+            if not is_servable(data, "notes"):
+                continue
             out.append(
                 ScoredItem(
                     item=_DictItem(data),
@@ -112,7 +136,7 @@ class ExpandExperiences(ReadStep):
         for s in hits:
             ids = s.item.data.get("item_ids", [])
             for data in ctx.doc_store.get_items(ids, "strategies"):
-                if data.get("deleted"):
+                if not is_servable(data, "strategies"):
                     continue
                 out.append(
                     ScoredItem(
@@ -165,7 +189,10 @@ class GraphRecall(ReadStep):
             key=lambda d: (str(d.get("valid_at") or ""), str(d.get("content") or "")),
         )
         for data in pulled:
-            if data.get("deleted"):
+            # `facts` is bi-temporal, so is_servable keeps invalidated edges here
+            # on purpose — GraphRecall already asks the graph for ACTIVE edges,
+            # and this only drops tombstones.
+            if not is_servable(data, "facts"):
                 continue
             out.append(
                 ScoredItem(

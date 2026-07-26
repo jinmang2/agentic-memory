@@ -49,8 +49,9 @@ mem.add_task_result(trajectory=[...], outcome="success",   # ReasoningBank/ACE/G
                     task="...", agent_id="planner")
 mem.warm_start(corpus)                         # cold-start 해소: 백필/offline 학습 공통 진입점
 mem.flush()                                    # 큐 드레인 대기 (테스트/벤치용)
-mem.consolidate()                              # 유예 위상 명시 트리거: organizer별 consolidate()
-                                                #   일괄 호출(dedup/merge/재조직), 적용된 op 수 반환
+mem.consolidate()                              # 유예 위상 명시 트리거: 큐 드레인 + 버퍼 드레인
+                                                #   후 organizer별 consolidate() 일괄 호출
+                                                #   (dedup/merge/재조직), 적용된 op 수 반환
 
 # ---- read ----
 bundle = mem.search("사용자가 선호하는 여행지?",
@@ -67,7 +68,9 @@ mem.report_feedback([...], helpful=True)       # 사용 결과 되먹임 → 각
                                                #   (ACE 카운터 / G-Memory reward). 규칙은
                                                #   생산자 소유이므로 해당 organizer가
                                                #   비활성이면 0을 반환하는 no-op
-mem.get_playbook()                             # ACE playbook 렌더
+mem.get_playbook()                             # ACE playbook 렌더. playbook을 produces하는
+                                                #   organizer가 비활성이면 "" — 읽기도 쓰기와
+                                                #   같은 생산자 소유 규칙을 따른다 (docs/04 §3.4)
 mem.log.tail(20)                               # evolution_log (append-only 연산 로그)
 mem.stats()                                    # 항목 수, LLM calls/tokens 누계
 mem.capabilities()                             # 감지 결과 + 활성 어댑터 + 강등 이력

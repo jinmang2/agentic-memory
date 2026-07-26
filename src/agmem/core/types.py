@@ -45,6 +45,14 @@ MEMORY_TYPES = (
     "state",  # internal bookkeeping, not a memory: consolidate cursors (base.cursor_key)
 )
 
+# Types that stay servable after INVALIDATE, rendered with their validity range
+# instead of dropping out (Zep bi-temporal: facts are never deleted, only
+# invalidated). Every other type disappears from retrieval the moment it is
+# invalidated. Lives here rather than in memory.py because both the write side
+# (`_apply_one` decides whether to drop the vector) and the read side
+# (`retrieval.steps.is_servable`) need it, and retrieval cannot import the facade.
+BITEMPORAL_TYPES = ("facts",)
+
 
 @dataclass(frozen=True)
 class Episode:
@@ -171,6 +179,20 @@ class StrategyItem:
         return f"## {self.title}\n{self.description}\n{self.content}"
 
 
+def render_bullet_line(
+    content: str, section: str, bullet_id: str, helpful: int, harmful: int
+) -> str:
+    """The one playbook-line format, shared by `Bullet.render` and
+    `AgenticMemory.get_playbook`.
+
+    The facade renders bullets straight from stored dicts rather than rebuilding
+    `Bullet`s, so it had its own copy of this f-string. Two identical formats in
+    two files is one silent divergence away from a playbook that reads
+    differently depending on which entry point produced it — and the format is
+    part of ACE's prompt contract (the Generator picks bullets out of it)."""
+    return f"[{section}-{bullet_id[:5]}] helpful={helpful} harmful={harmful} :: {content}"
+
+
 @dataclass
 class Bullet:
     """ACE playbook bullet with helpful/harmful counters."""
@@ -190,7 +212,7 @@ class Bullet:
     def render(self) -> str:
         """Playbook-line form injected into LLM context, tagged with section
         and the helpful/harmful counters ACE's reflect step updates."""
-        return f"[{self.section}-{self.id[:5]}] helpful={self.helpful} harmful={self.harmful} :: {self.content}"
+        return render_bullet_line(self.content, self.section, self.id, self.helpful, self.harmful)
 
 
 @dataclass

@@ -228,6 +228,24 @@ score)`를 각 organizer의 `on_retrieval`에 넘기고, 반환된 op를 **호�
 
 - `MemoryBundle.render(budget_tokens)` — 타입별 우선순위/토큰 예산으로 프롬프트 주입용 텍스트 생성 (Zep의 context block, ReasoningBank의 system prompt 주입 형식 지원).
 
+#### 서빙 가능성 판정은 한 곳에서만 — `retrieval/steps.py::is_servable`
+
+id로 아이템을 끌어오는 read 경로는 **전부** 두 가지를 걸러야 한다: DELETE가 남긴 톰스톤
+(`{"deleted": True}`)과, bi-temporal 타입이 아닌데 INVALIDATE된 아이템. 이 판정이 스텝마다
+복제돼 있었고 그래서 갈라졌다 — `_hydrate`/`ExpandExperiences`/`GraphRecall`은 각자 `deleted`만
+검사했고 `LinkExpansion`은 **둘 다 없었다**. 결과:
+
+- `ChainedConsumer`가 은퇴시킨 A-Mem 노트(`notes`에 INVALIDATE, §3.3의 문서화된 조합)가
+  인바운드 링크를 타고 원문 그대로 되살아났다.
+- DELETE된 노트는 빈 ghost hit(`content=""`)으로 서빙됐다 — `_apply_one`과 `_hydrate`가 이미
+  고쳤던 round-5 X1과 같은 계열인데 이 스텝만 그 수정에서 빠져 있었다.
+- 그리고 dense 경로는 INVALIDATE 시 벡터를 지우므로 멀쩡했지만 **lexical 채널은 id로 다시
+  끌어오므로** `[retrieval] lexical_types`에 파생 타입을 넣는 순간 같은 아이템이 되살아났다.
+
+`facts`는 예외로 남는다 — `BITEMPORAL_TYPES`(이제 `core/types.py` 소유: write 쪽 `_apply_one`과
+read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드를 import할 수 없다)에 속하므로
+무효화 후에도 validity 구간과 함께 계속 렌더된다. 그래서 이 판정은 단순 `deleted` 검사가 될 수 없다.
+
 ## 3. 방법론 → 공통 추상화 매핑 검증
 
 ### 3.1 훅 구현 매트릭스
@@ -306,6 +324,24 @@ id를 명시한다.
 served-insight 게이트(round-5 W-4)는 호출자 없는 `backward()` 안에만 있어 실경로에서 빠져 있었다.
 팬아웃 이후 "이 규칙은 누구 것인가"가 "어느 organizer가 활성인가"와 같은 질문이 된다. 대가는
 명시적이다: **소유 organizer가 활성이 아니면 피드백은 0을 반환하는 no-op**이다.
+
+### 3.5 알려진 잠복 사항 (버그 아님, 관측된 상태로 기록)
+
+파사드 감사에서 나왔지만 **현재 실경로가 없어 고치지 않은** 것들. 고치지 않은 이유가 곧
+재발 조건이므로 남긴다.
+
+- **`UPDATE`는 upsert다.** 없는 id에 UPDATE하면 아이템이 생긴다. 우연이 아니라 load-bearing:
+  `base.cursor_op`이 UPDATE로 consolidate 커서를 *처음* 만든다. 지금 안전한 이유는 organizer의
+  UPDATE 발행 지점이 전부 대상을 먼저 읽기 때문이고, 외부 id를 받는 두 경로(ACE·G-Memory의
+  `on_feedback`)는 `get_items` + `continue`로 명시적으로 가드한다. 위험은 "가드를 잊은 다음
+  organizer가 실패 대신 유령 아이템을 조용히 쓴다"는 것이다.
+- **`on_retrieval` 반환 op는 전파된다.** `base.py`가 "must be cheap: no LLM calls here"를
+  계약으로 걸었지만 그 계약은 organizer 본인에게만 걸린다 — 반환 op가 MemoryEvent로 전파되면
+  구독자의 `on_memory_event`가 임의 작업(`ChainedConsumer`는 wrapped의 `on_message` = LLM)을
+  읽기 경로에서 돌린다. 지금 안전한 이유는 `memoryos`/`gmemory` 두 구현 모두 명시적으로 `[]`를
+  반환하기 때문이다 — **구조가 아니라 구현이 지키고 있다.**
+- **`warm_start`는 프로덕션 호출자가 없다.** 큐 드레인은 `consolidate`와 맞추기 위해 넣었지만,
+  이 훅 전체가 테스트에서만 불린다.
 
 ## 4. 프로세스 토폴로지
 

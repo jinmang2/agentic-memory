@@ -11,7 +11,13 @@ from __future__ import annotations
 from agmem.core.types import MemoryBundle, ScoredItem
 from agmem.embed.base import Embedder
 from agmem.retrieval.fusion import rrf_fuse
-from agmem.retrieval.steps import ReadContext, ReadStep, _DictItem, default_read_steps
+from agmem.retrieval.steps import (
+    ReadContext,
+    ReadStep,
+    _DictItem,
+    default_read_steps,
+    is_servable,
+)
 from agmem.stores.base import DocStore, VectorStore
 
 
@@ -160,8 +166,13 @@ class RetrievalPipeline:
                 )
         else:
             for data in self.doc_store.get_items(ids, memory_type):
-                if data.get("deleted"):
-                    continue  # tombstone (round-5 X1: legacy ghost guard)
+                # Tombstones (round-5 X1) and invalidated non-bi-temporal items.
+                # The vector is dropped on INVALIDATE, so dense recall already
+                # misses these; the lexical channel does not, and neither did
+                # this hydrate — an invalidated `semantic` item came back the
+                # moment its type was added to `lexical_types`.
+                if not is_servable(data, memory_type):
+                    continue
                 item_id = data.get("id", "?")
                 out.append(
                     ScoredItem(

@@ -18,7 +18,13 @@ from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
 from agmem.config import AgmemConfig, load_config
 from agmem.core.ops import MemoryOp, OpType
-from agmem.core.types import Episode, MemoryBundle, utcnow
+from agmem.core.types import (
+    BITEMPORAL_TYPES,
+    Episode,
+    MemoryBundle,
+    render_bullet_line,
+    utcnow,
+)
 from agmem.embed import EMBEDDER_CANDIDATES
 from agmem.embed.base import Embedder
 from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
@@ -29,7 +35,11 @@ from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
 
 logger = logging.getLogger("agmem")
 
-BITEMPORAL_TYPES = ("facts",)  # Types kept in vector store even after INVALIDATE (Zep bi-temporal)
+# BITEMPORAL_TYPES now lives in core.types (imported above, so
+# `memory.BITEMPORAL_TYPES` still resolves — docs/04 §2 cites that path). It
+# moved because the write side here (drop the vector on INVALIDATE, or keep it)
+# and the read side (retrieval.steps.is_servable) must agree on one list, and
+# retrieval cannot import this module.
 
 # Poison pill that tells the background worker to exit; enqueued only by close().
 # A plain sentinel rather than a flag because the worker blocks in queue.get(),
@@ -306,17 +316,25 @@ class AgenticMemory:
         them. That asymmetry was kept "so op counts stay comparable with past runs",
         but no script or bench harness calls ``warm_start`` at all, so there were no
         such runs; it is now logged like any other ingest, marked ``warm_start`` so the
-        backfill is still distinguishable from live traffic."""
+        backfill is still distinguishable from live traffic.
+
+        Drains the write queue first, for the reason ``consolidate()`` does: this
+        replay runs on the caller's thread, so without the drain a backfill issued
+        while the worker still holds live-traffic work would interleave two threads
+        through the same organizer's in-memory state."""
+        self._drain_queue()
         for episode in corpus:
             self._ingest_episode(episode, {"role": episode.role, "warm_start": True})
         self._apply_from_all(lambda org: org.warm_start(corpus, self._ctx))
 
-    def _ingest_episode(self, episode: Episode, log_payload: dict | None) -> None:
+    def _ingest_episode(self, episode: Episode, log_payload: dict) -> None:
         """Store + index one raw episode synchronously, so it is searchable the
         moment the caller returns (write-then-organize, docs/04 §2).
 
-        ``log_payload`` is the ingest ADD op's payload; ``None`` skips the log
-        entry entirely (warm-start backfill)."""
+        ``log_payload`` is the ingest ADD op's payload. It used to accept ``None``
+        to skip the log entry, for warm-start backfill; that skip was removed when
+        warm_start started logging like any other ingest, leaving a branch no
+        caller could take."""
         self.doc_store.add_episode(episode)
         self.vector_store.add(
             episode.id,
@@ -324,18 +342,17 @@ class AgenticMemory:
             memory_type="episodic",
             namespace=self.namespace,
         )
-        if log_payload is not None:
-            self.doc_store.append(
-                [
-                    MemoryOp(
-                        op=OpType.ADD,
-                        target_type="episodic",
-                        target_id=episode.id,
-                        actor="ingest",
-                        payload=log_payload,
-                    )
-                ]
-            )
+        self.doc_store.append(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodic",
+                    target_id=episode.id,
+                    actor="ingest",
+                    payload=log_payload,
+                )
+            ]
+        )
 
     def _apply_from_all(self, hook: Callable[[Organizer], list[MemoryOp]]) -> int:
         """Run one hook across every organizer in list order, applying each
@@ -402,14 +419,26 @@ class AgenticMemory:
 
         Runs each organizer's consolidate() in list order and applies the
         returned ops through the evolution log. Benchmarks call this at
-        deterministic points (end of ingest / between sessions).
+        deterministic points (end of ingest / between sessions). Returns the
+        total ops applied, buffer drain included.
 
-        Drains the async write queue first (review I3): consolidate() runs on
-        the caller's thread and reads the log via ops_since, so any organizer
-        work still queued must land before the cursor scan to avoid missing
-        just-appended-but-not-yet-applied facts."""
+        Two things must land before the cursor scan, for one reason — an
+        organizer's consolidate() resumes from the evolution log, so anything
+        not yet IN the log is invisible to it:
+
+        - queued organizer work (review I3), since consolidate() runs on the
+          caller's thread while the worker may still be applying;
+        - buffered units. Nemori's segment buffer and MemoryOS's STM hold the
+          tail of the stream until a boundary or capacity trigger fires, and
+          those units have produced no ops yet. ``consolidate()`` alone used to
+          scan an empty log and report success: three buffered messages yielded
+          0 ops and 0 items, where ``flush()`` first yielded 3. Every caller
+          already flushed beforehand (``locomo.ingest`` does it internally), so
+          this makes the working order the only order rather than changing what
+          correct callers observe."""
         self._drain_queue()
-        return self._apply_from_all(lambda org: org.consolidate(self._ctx))
+        applied = self._apply_from_all(lambda org: org.flush_buffer(self._ctx))
+        return applied + self._apply_from_all(lambda org: org.consolidate(self._ctx))
 
     def _apply_ops(self, ops: list[MemoryOp], actor: str, propagate: bool = True) -> None:
         """Stamp ``actor``, log, apply, then propagate — in that order.
@@ -587,16 +616,32 @@ class AgenticMemory:
 
         This full render IS the methodology's read contract: ACE injects
         the whole playbook and lets the Generator LLM pick bullets
-        (round-5 ACE §2) — do not swap it for top-k retrieval."""
+        (round-5 ACE §2) — do not swap it for top-k retrieval.
+
+        Empty when no active organizer produces ``playbook``. Without that gate
+        the two halves of the playbook loop disagreed: reading was type-owned
+        (this method queries the store directly) while writing is producer-owned
+        (``report_feedback`` fans out to ``on_feedback``, docs/04 §3.4). With ACE
+        deconfigured but its bullets still in the store, one MCP session would
+        render a bullet and then silently return 0 from the feedback call meant
+        to update it. Same rule as ``default_memory_types``: what the active
+        methodology actually produced."""
+        if not any("playbook" in org.produces for org in self.organizers):
+            return ""
         bullets = self.doc_store.list_items("playbook", namespace=self.namespace)
         if section:
             bullets = [b for b in bullets if b.get("section") == section]
         by_section: dict[str, list[str]] = {}
         for b in bullets:
-            by_section.setdefault(b.get("section", "general"), []).append(
-                f"[{b.get('section', 'general')}-{b['id'][:5]}] "
-                f"helpful={b.get('helpful', 0)} harmful={b.get('harmful', 0)} "
-                f":: {b.get('content', '')}"
+            bullet_section = b.get("section", "general")
+            by_section.setdefault(bullet_section, []).append(
+                render_bullet_line(
+                    b.get("content", ""),
+                    bullet_section,
+                    b["id"],
+                    b.get("helpful", 0),
+                    b.get("harmful", 0),
+                )
             )
         return "\n".join(f"## {s}\n" + "\n".join(lines) for s, lines in sorted(by_section.items()))
 

@@ -35,6 +35,83 @@ def test_amem_one_hop_link_expansion():
         mem.close()
 
 
+def test_link_expansion_does_not_resurrect_retired_notes():
+    """``LinkExpansion`` was the one read step with neither guard: it pulled
+    neighbours by id and appended them unfiltered, so an invalidated note came
+    back with full content and a deleted one came back as an empty ghost hit —
+    the round-5 X1 failure ``_hydrate``/``ExpandExperiences``/``GraphRecall``
+    were already fixed for. Reachable in the default config: ``ChainedConsumer``
+    retires a wrapped A-Mem's notes with INVALIDATE (docs/04 §3.3)."""
+    from agmem.core.ops import MemoryOp, OpType
+
+    mem = make_mem()
+    try:
+        put_indexed(mem, "n1", "notes", {"content": "paris travel museums", "links": ["n2", "n3"]})
+        put_indexed(mem, "n2", "notes", {"content": "budget three million won"})
+        put_indexed(mem, "n3", "notes", {"content": "flight departs at nine"})
+        assert {
+            s.item.data["id"]
+            for s in mem.search("paris museums", memory_types=["notes"], k=1).items
+        } == {
+            "n1",
+            "n2",
+            "n3",
+        }
+
+        mem._apply_ops(
+            [MemoryOp(op=OpType.INVALIDATE, target_type="notes", target_id="n2", payload={})],
+            actor="chained",
+        )
+        mem._apply_ops(
+            [MemoryOp(op=OpType.DELETE, target_type="notes", target_id="n3", payload={})],
+            actor="chained",
+        )
+        served = mem.search("paris museums", memory_types=["notes"], k=1).items
+        assert {s.item.data["id"] for s in served} == {"n1"}
+        assert all(s.item.content for s in served)  # no empty ghost
+    finally:
+        mem.close()
+
+
+def test_lexical_channel_drops_invalidated_items_but_keeps_facts():
+    """The vector is dropped on INVALIDATE, so dense recall misses these — but
+    the lexical channel re-fetches by id, and ``_hydrate`` only filtered
+    tombstones. Adding a derived type to ``lexical_types`` (the documented Zep
+    hybrid knob) therefore resurrected invalidated items. ``facts`` must NOT be
+    dropped: Zep renders them with their validity range instead."""
+    from agmem.config import AgmemConfig
+    from agmem.core.ops import MemoryOp, OpType
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(lexical_types=("episodic", "semantic", "facts")),
+    )
+    try:
+        put_indexed(mem, "s1", "semantic", {"content": "user lives in Paris"})
+        put_indexed(
+            mem, "f1", "facts", {"content": "user lives in Paris", "valid_at": "2024-01-01"}
+        )
+        for target_type, target_id in (("semantic", "s1"), ("facts", "f1")):
+            mem._apply_ops(
+                [
+                    MemoryOp(
+                        op=OpType.INVALIDATE,
+                        target_type=target_type,
+                        target_id=target_id,
+                        payload={"t_invalid": "2025-06-01"},
+                    )
+                ],
+                actor="nemori",
+            )
+        bundle = mem.search("Paris", memory_types=["semantic", "facts"])
+        assert [s.item.data["id"] for s in bundle.items] == ["f1"]
+        assert "Date range: 2024-01-01 - 2025-06-01" in bundle.render(200)
+    finally:
+        mem.close()
+
+
 def test_link_expansion_capped():
     mem = make_mem()
     try:
