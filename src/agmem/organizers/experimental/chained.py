@@ -42,11 +42,13 @@ opt into two lifecycle hooks (both declared on ``Organizer`` as no-ops, so
   (MemoryOS STM). Not overridden -> an UPDATE event leaves the derived item
   stale rather than re-ingesting (documented staleness, spec §3).
 
-Known gap: ``flush_buffer`` drains this adapter's own pending batch but is
-deliberately NOT forwarded to the wrapped organizer, so a chained MemoryOS's
-partial STM tail is still stranded at ``AgenticMemory.flush()``. Forwarding it
-would change the measured ``nemori_memoryos`` numbers, so it stays a separate
-decision rather than a refactor side effect.
+``flush_buffer`` forwards to the wrapped organizer (own pending batch first, so
+the wrapped drain sees the unit just handed over). It used to stop at this
+adapter, stranding a chained MemoryOS's partial STM tail forever, and was left
+that way because forwarding "would change the measured ``nemori_memoryos``
+numbers" — but no run of any chained variant was ever stored under ``results/``,
+so the comparison being protected did not exist. Checked before fixing rather
+than inherited.
 """
 
 from __future__ import annotations
@@ -127,10 +129,21 @@ class ChainedConsumer(Organizer):
         return ops
 
     def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
-        """Feed the last accumulating batch, which has no following event to
-        close it. NOT forwarded to the wrapped organizer — see the module
-        docstring's known gap."""
-        return self._flush_pending(ctx) if self._pending else []
+        """Feed the last accumulating batch — which has no following event to
+        close it — and then drain the wrapped organizer's own buffer.
+
+        Order is load-bearing: flushing this adapter's pending batch runs the
+        wrapped organizer's ``on_message``, which may itself buffer (MemoryOS
+        appends to STM), so the wrapped drain has to come second or it would
+        miss exactly the unit just handed over.
+
+        The wrapped organizer's flush ops are not recorded in ``_produced`` /
+        ``_members``, so the adapter's *generic* 1:1 retirement cannot retire
+        them. That is not a new gap: the only wrapped organizer with a buffer is
+        MemoryOS, which overrides ``retire`` and owns its own policy."""
+        ops = self._flush_pending(ctx) if self._pending else []
+        ops.extend(self.wrapped.flush_buffer(ctx))
+        return ops
 
     # ---- internals ----------------------------------------------------------
 

@@ -143,19 +143,34 @@
 > 분류 근거와 조사 전문: `docs/research/memory-component-taxonomy.md`. 새 논문을 어디에 넣을지는
 > docs/04 §1.1의 판정 기준(메모리 타입 미선언 + MemoryOp 미발행 → policy)으로 결정한다.
 
-### 별도 판단이 필요한 미수정 버그 3건 (코드에 문서화됨)
-9. `ChainedConsumer`가 `flush_buffer`를 **wrapped에** 전달하지 않아 체이닝된 MemoryOS의 부분 STM
-   tail이 영구 미방출 (`experimental/chained.py` "Known gap"). 고치면 `nemori_memoryos` 수치 변동.
-   (어댑터 자신의 `_pending` 배치는 정상 방출되므로 `nemori_amem_k_batched`의 마지막 배치는
-   안전하다 — 2026-07-26 확인.)
-10. `warm_start`가 raw episode의 ingest ADD op를 evolution log에 남기지 않음 (`add_message`는 남김,
-   `memory.py:warm_start` docstring). 고치면 과거 run과 op 카운트 비교가 깨진다.
+### 별도 판단이 필요한 미수정 버그 1건 (코드에 문서화됨)
+
+> **9·10은 2026-07-26 해소.** 둘 다 "고치면 수치가 바뀐다"를 이유로 미뤄뒀는데, **보호하려던 비교가
+> 실재하지 않았다.** 미루기 전에 확인했어야 할 것을 이번에 확인한 결과다:
+>
+> - #9(`ChainedConsumer`가 `flush_buffer`를 wrapped에 미전달 → 체이닝된 MemoryOS의 부분 STM tail
+>   영구 미방출)의 근거는 "`nemori_memoryos` 수치 변동"이었으나, `results/`에 **chained variant의
+>   저장 결과가 하나도 없다**(conv0는 amem/memoryos/nemori/passthrough 4종뿐). 전달하도록 고쳤고
+>   순서가 load-bearing이다 — 어댑터의 `_pending`을 먼저 흘려보낸 뒤 wrapped를 비워야 방금 넘긴
+>   유닛을 놓치지 않는다.
+> - #10(`warm_start`가 ingest ADD op를 남기지 않음)의 근거는 "과거 run과 op 카운트 비교가 깨진다"
+>   였으나, **`warm_start`는 scripts/·bench/ 어디에서도 호출되지 않는다**(src와 테스트에만 존재).
+>   비교 대상 run 자체가 없다. 이제 `{"role", "warm_start": True}` payload로 기록하므로 로그가
+>   스토어의 완전한 기록이 되고(재생으로 복원 가능), 백필과 실트래픽은 여전히 구분된다.
+>
+> 회귀 테스트 2건이 `tests/test_lifecycle.py`에 있고, **수정 전 상태에서 실제로 실패함을 확인**했다.
+
 11. **doc store와 vector store의 키 단위 불일치** (2026-07-26 발견). `items` 테이블 PK는
    `(id, memory_type)`인데 **모든 벡터 백엔드는 `item_id` 단독 upsert**(numpy/sqlite-vec의
    `ON CONFLICT(item_id)`, chroma/qdrant/lance upsert-by-id)이고 `memory_type`은 필터 메타데이터로만
    저장한다. 같은 id를 두 타입으로 쓰면 벡터 인덱스에서 나중 것이 앞의 것을 덮어써 한쪽이 조용히
    검색 불가가 된다. 실 run의 id는 uuid4라 충돌 확률이 사실상 0이므로 **측정 리스크는 없다**;
    고치려면 5개 백엔드 스키마를 모두 건드리고 재색인이 필요하므로 별도 결정으로 남긴다.
+   **이 건은 9·10과 달리 근거를 재확인해도 유지된다** (2026-07-26): 코드베이스에서 유일한
+   비-uuid4 `target_id`는 consolidate 커서(`consolidate:{name}`, type `state`)인데, 그 payload에
+   `content`/`embedding_text`가 없어 `_apply_one`이 벡터를 만들지 않으므로 애초에 벡터 인덱스에
+   도달하지 않는다. 확률 논증이 조용히 썩지 않도록
+   `test_consolidate_cursor_is_the_only_deterministic_id_and_never_gets_a_vector`가 전제를 고정한다.
 
 ### 2026-07-26 재점검에서 처리한 것 (수치 영향 0 — 측정 run은 전부 단일 organizer)
 

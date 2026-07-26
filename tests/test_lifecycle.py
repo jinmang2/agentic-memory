@@ -755,3 +755,84 @@ def test_k_to_amem_batched_retires_only_when_all_facts_superseded():
     assert consumer._retire({"f1"}) == []  # partially absorbed -> note stands
     retired = consumer._retire({"f2"})
     assert [(o.op, o.target_id) for o in retired] == [(OpType.INVALIDATE, note_id)]
+
+
+# ---------------- previously-deferred bugs (roadmap #9 / #10) ----------------
+
+
+def test_chained_flush_drains_the_wrapped_organizers_buffer():
+    """``ChainedConsumer.flush_buffer`` used to stop at the adapter, so a
+    chained MemoryOS's partial STM tail was stranded forever.
+
+    ``stm_capacity=3`` with a single fed unit means no capacity trigger ever
+    fires, which is exactly the tail case: only the flush can emit it."""
+    from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3), "episodes")
+    mem = _mk(organizers=[mos])
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodes",
+                    target_id="ep1",
+                    payload={"id": "ep1", "content": "a narrated episode", "date": "2026-01-01"},
+                )
+            ],
+            actor="nemori",
+        )
+        assert mos.wrapped._stm, "unit is buffered below capacity — nothing emitted yet"
+        assert [o for o in mem.log.tail(30) if o.target_type == "pages"] == []
+
+        mem.flush()
+
+        pages = [o for o in mem.log.tail(30) if o.target_type == "pages"]
+        assert pages, "flush must reach the wrapped organizer's buffer"
+        assert not mos.wrapped._stm
+    finally:
+        mem.close()
+
+
+def test_warm_start_logs_ingest_ops_like_add_message():
+    """Backfilled episodes used to carry no ingest ADD op, which made the
+    evolution log an incomplete record of the stores — replaying it could not
+    rebuild them."""
+    mem = _mk()
+    try:
+        mem.warm_start([Episode(content="backfilled one"), Episode(content="backfilled two")])
+        ingest = [
+            o
+            for o in mem.log.tail(30)
+            if o.actor == "ingest" and o.target_type == "episodic" and o.op is OpType.ADD
+        ]
+        assert len(ingest) == 2
+        assert all(o.payload.get("warm_start") for o in ingest)  # distinguishable from live ingest
+
+        mem.add_message("live traffic")
+        live = [
+            o for o in mem.log.tail(30) if o.actor == "ingest" and not o.payload.get("warm_start")
+        ]
+        assert len(live) == 1
+    finally:
+        mem.close()
+
+
+def test_consolidate_cursor_is_the_only_deterministic_id_and_never_gets_a_vector():
+    """Roadmap #11 (doc PK is ``(id, memory_type)``, every vector backend
+    upserts by ``item_id`` alone) is deferred on the grounds that real ids are
+    uuid4, so a cross-type collision cannot happen. The consolidate cursor is
+    the one deterministic id in the codebase — pin that it stays out of the
+    vector store, so the premise cannot rot silently."""
+    from agmem.organizers.nemori import NemoriOrganizer
+
+    org = NemoriOrganizer()
+    mem = _mk(organizers=[org])
+    try:
+        before = mem.vector_store.count()
+        mem._apply_ops([org.cursor_op(7)], actor="nemori")
+        assert org.read_cursor(mem._ctx) == 7
+        assert mem.vector_store.count() == before, "state items must never be indexed"
+    finally:
+        mem.close()

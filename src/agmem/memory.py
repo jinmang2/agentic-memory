@@ -272,14 +272,18 @@ class AgenticMemory:
     def warm_start(self, corpus: list[Episode]) -> None:
         """Bulk-ingest ``corpus`` into the stores, then replay it through each organizer.
 
-        Two things differ from ``add_message``: indexing and organizer work both run
-        synchronously on the caller's thread (bypassing the write queue), and the
-        backfilled episodes get NO ingest ADD op in the evolution log
-        (``log_payload=None``). The latter is a pre-existing asymmetry, kept as-is so op
-        counts stay comparable with past runs. Intended for backfilling history before
-        serving traffic, not for steady-state ingest."""
+        One thing differs from ``add_message``: indexing and organizer work both run
+        synchronously on the caller's thread, bypassing the write queue. Intended for
+        backfilling history before serving traffic, not for steady-state ingest.
+
+        Backfilled episodes used to get NO ingest ADD op, which made the evolution log
+        an incomplete record of what is in the stores — replaying it could not rebuild
+        them. That asymmetry was kept "so op counts stay comparable with past runs",
+        but no script or bench harness calls ``warm_start`` at all, so there were no
+        such runs; it is now logged like any other ingest, marked ``warm_start`` so the
+        backfill is still distinguishable from live traffic."""
         for episode in corpus:
-            self._ingest_episode(episode, None)
+            self._ingest_episode(episode, {"role": episode.role, "warm_start": True})
         self._apply_from_all(lambda org: org.warm_start(corpus, self._ctx))
 
     def _ingest_episode(self, episode: Episode, log_payload: dict | None) -> None:
