@@ -30,6 +30,7 @@ find_related_memories_raw) is implemented in retrieval/pipeline.py.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, Note
@@ -113,6 +114,33 @@ Return JSON: {{"should_evolve": true/false,
 "actions": ["strengthen", "update_neighbor"],
 "connections": ["<id>", ...], "new_note_tags": [...],
 "neighbor_updates": [{{"id": "<id>", "new_context": "...", "new_tags": [...]}}]}}"""
+
+
+def _verdict_id(entry: Any) -> str | None:
+    """Neighbor id out of one evolution-verdict entry, whichever shape it has.
+
+    ``EVOLVE_SCHEMA`` declares ``connections`` as id strings and
+    ``neighbor_updates`` as objects, but nothing enforces it —
+    ``use_guided_json`` is off for the local-model experiments, so the schema is
+    advisory. Small models routinely swap the two shapes, and each swap used to
+    raise inside ``_ingest`` (``dict`` is unhashable for the ``valid_ids``
+    membership test; ``str`` has no ``.get``). Because the exception escaped
+    after the note ADD op was built, and both the async worker and
+    ``_propagate_events`` log-and-continue, the note was **silently lost** —
+    corrupting the note counts that Nemori v4 Table 7 is measured on. Observed
+    with Qwen3-0.6B on LoCoMo conv0.
+
+    Recovering the id keeps the note and its link instead of discarding a verdict
+    the model did express, in the same spirit as the ``str()`` coercions the
+    surrounding code already applies to ``actions``/tags."""
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        for key in ("id", "memory_id", "note_id"):
+            value = entry.get(key)
+            if isinstance(value, str):
+                return value
+    return None
 
 
 class AMemOrganizer(Organizer):
@@ -220,7 +248,14 @@ class AMemOrganizer(Organizer):
         valid_ids = set(by_id)
 
         if "strengthen" in actions:
-            connections = [c for c in evolution_verdict.get("connections", []) if c in valid_ids]
+            seen_conn: set[str] = set()
+            connections = []
+            for entry in evolution_verdict.get("connections", []) or []:
+                conn_id = _verdict_id(entry)
+                # dedup: an object-shaped verdict can name the same neighbor twice
+                if conn_id in valid_ids and conn_id not in seen_conn:
+                    seen_conn.add(conn_id)
+                    connections.append(conn_id)
             if connections:
                 # unidirectional, as upstream: only the new note gains links
                 ops.append(
@@ -258,9 +293,16 @@ class AMemOrganizer(Organizer):
                 )
 
         if "update_neighbor" in actions:
-            for upd in evolution_verdict.get("neighbor_updates", []):
-                note_id = upd.get("id")
+            for upd in evolution_verdict.get("neighbor_updates", []) or []:
+                note_id = _verdict_id(upd)
                 if note_id not in valid_ids:
+                    continue
+                # A bare-id entry names a neighbor without saying how to rewrite
+                # it, so there is nothing to apply. Skip rather than emit an
+                # UPDATE that rewrites the neighbor's values to themselves — a
+                # no-op op would still inflate the evolution-log op counts that
+                # the repro experiments compare against upstream.
+                if not isinstance(upd, dict):
                     continue
                 old = by_id[note_id]
                 new_context = str(upd.get("new_context") or old.get("context", ""))

@@ -190,6 +190,77 @@ def test_amem_hallucinated_neighbor_ids_ignored():
         mem.close()
 
 
+def test_amem_object_shaped_connections_still_link():
+    """Small models return `connections` as objects instead of id strings, which
+    made `c in valid_ids` raise TypeError (dict is unhashable). The exception
+    escaped `_ingest` after the note ADD was built, and both the background
+    worker and `_propagate_events` swallow exceptions, so **the note vanished
+    entirely** — silently corrupting note counts, which is exactly the Table 7
+    storage metric. Observed with Qwen3-0.6B on locomo conv0."""
+    from agmem.organizers.amem import AMemOrganizer
+
+    llm = StubLLM(
+        {
+            "extract": [
+                {"keywords": ["a"], "context": "c1", "tags": ["t"]},
+                {"keywords": ["a"], "context": "c2", "tags": ["t"]},
+            ],
+            "distill": [
+                {
+                    "should_evolve": True,
+                    # the malformation: objects, not id strings
+                    "connections": [{"id": "__FIRST__", "reason": "same topic"}],
+                },
+            ],
+        }
+    )
+    mem = make_mem(AMemOrganizer(), llm)
+    try:
+        mem.add_message("first note about topic alpha")
+        first_id = next(o.target_id for o in mem.log.tail(10) if o.target_type == "notes")
+        llm.responses["distill"][0]["connections"] = [{"id": first_id, "reason": "same topic"}]
+
+        mem.add_message("second note about topic alpha")
+        notes = mem.doc_store.list_items("notes", namespace=mem.namespace)
+        assert len(notes) == 2, "the second note must survive a malformed verdict"
+        linked = next(n for n in notes if n["id"] != first_id)
+        assert first_id in linked["links"], "the id inside the object is still usable"
+    finally:
+        mem.close()
+
+
+def test_amem_string_shaped_neighbor_updates_do_not_lose_the_note():
+    """Mirror malformation: `neighbor_updates` as bare id strings, where
+    `upd.get("id")` raised AttributeError and lost the note the same way."""
+    from agmem.organizers.amem import AMemOrganizer
+
+    llm = StubLLM(
+        {
+            "extract": [
+                {"keywords": ["a"], "context": "c1", "tags": ["t"]},
+                {"keywords": ["a"], "context": "c2", "tags": ["t"]},
+            ],
+            "distill": [
+                {"should_evolve": True, "connections": [], "neighbor_updates": ["__FIRST__"]},
+            ],
+        }
+    )
+    mem = make_mem(AMemOrganizer(), llm)
+    try:
+        mem.add_message("first note about topic alpha")
+        first_id = next(o.target_id for o in mem.log.tail(10) if o.target_type == "notes")
+        llm.responses["distill"][0]["neighbor_updates"] = [first_id]
+
+        mem.add_message("second note about topic alpha")
+        notes = mem.doc_store.list_items("notes", namespace=mem.namespace)
+        assert len(notes) == 2
+        # a bare id carries no new context/tags, so the neighbor keeps its own
+        first = mem.doc_store.get_items([first_id], "notes")[0]
+        assert first["context"] == "c1"
+    finally:
+        mem.close()
+
+
 def test_amem_degrades_without_llm():
     from agmem.organizers.amem import AMemOrganizer
 

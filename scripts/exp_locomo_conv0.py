@@ -32,6 +32,74 @@ OUT = Path(__file__).resolve().parent.parent / "results"
 
 NOTHINK = {"chat_template_kwargs": {"enable_thinking": False}}
 
+# Derived item types the snapshot enumerates, mirroring exp_amem_repro.py so the
+# two experiments' memory_capacity blocks stay comparable. Empty types are
+# skipped, so listing extras is harmless.
+SNAPSHOT_ITEM_TYPES = (
+    "notes",
+    "semantic",
+    "facts",
+    "entities",
+    "episodes",
+    "pages",
+    "playbook",
+    "strategies",
+    "experiences",
+    "state",
+)
+
+
+def capture_memory(mem, snapshot_path: Path) -> dict:
+    """Per-type counts + stored bytes after ingest, and a full item snapshot.
+
+    Storage is the verdict criterion for Nemori v4 Table 7 (does a granularity
+    land in the paper's 45-64% reduction band?), and neither F1 nor the LLM
+    budget can answer it — so counts and bytes are captured here rather than
+    re-derived from a re-run. `bytes` is the utf-8 length of each item's JSON
+    form: `data_dir=None` makes every store in-memory, so an on-disk footprint
+    would be 0 and meaningless. Excludes `state` from the totals — consolidate
+    cursors are bookkeeping, not stored memory."""
+    counts: dict[str, int] = {}
+    nbytes: dict[str, int] = {}
+    with snapshot_path.open("w") as out:
+        episodes = mem.doc_store.list_episodes(mem.namespace)
+        if episodes:
+            counts["episodic"] = len(episodes)
+            nbytes["episodic"] = 0
+            for ep in episodes:
+                line = json.dumps(
+                    {
+                        "memory_type": "episodic",
+                        "id": ep.id,
+                        "role": ep.role,
+                        "content": ep.content,
+                        "timestamp": str(ep.timestamp),
+                        "meta": ep.meta,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+                nbytes["episodic"] += len(line.encode())
+                out.write(line + "\n")
+        for mtype in SNAPSHOT_ITEM_TYPES:
+            items = mem.doc_store.list_items(mtype, namespace=mem.namespace)
+            if not items:
+                continue
+            counts[mtype] = len(items)
+            nbytes[mtype] = 0
+            for item in items:
+                line = json.dumps({"memory_type": mtype, **item}, ensure_ascii=False, default=str)
+                nbytes[mtype] += len(line.encode())
+                out.write(line + "\n")
+    derived = {t: n for t, n in counts.items() if t not in ("episodic", "state")}
+    return {
+        "counts": counts,
+        "bytes": nbytes,
+        "derived_item_count": sum(derived.values()),
+        "derived_bytes": sum(v for t, v in nbytes.items() if t not in ("episodic", "state")),
+        "snapshot": snapshot_path.name,
+    }
+
 
 def make_roles(overrides: dict[str, dict] | None = None) -> dict[str, RoleConfig]:
     """Build the 4-role (extract/distill/judge/generate) local llama.cpp
@@ -109,6 +177,10 @@ def run(
         # also covers future consolidate users (ACE refine, Zep refresh).
         mem.consolidate()
         ingest_s = time.perf_counter() - t0
+        # Capture before eval: on_retrieval feedback hooks can mutate memory
+        # during evaluate(), and the storage question is about what ingest built.
+        OUT.mkdir(exist_ok=True)
+        capacity = capture_memory(mem, OUT / f"locomo-conv0-{config_name}.memory.jsonl")
 
         questions = locomo.select_questions(sample, max_sessions=max_sessions, limit=limit)
         t0 = time.perf_counter()
@@ -140,6 +212,7 @@ def run(
             "overall": res["overall"],
             "by_category": res["by_category"],
             "llm_budget": mem.budget.summary(),
+            "memory_capacity": capacity,
             "structured_drops": dict(mem.structured.drops) if mem.structured else {},
             "stamp": {
                 "embedder": mem.embedder.name,
@@ -170,7 +243,9 @@ def run(
         ov = res["overall"]
         jtxt = f" j={ov['j_score']}" if "j_score" in ov else ""
         print(
-            f"[{config_name}] overall={ov}{jtxt} ingest={ingest_s:.0f}s eval={eval_s:.0f}s",
+            f"[{config_name}] overall={ov}{jtxt} ingest={ingest_s:.0f}s eval={eval_s:.0f}s"
+            f" items={capacity['counts']} derived={capacity['derived_item_count']}"
+            f" derived_bytes={capacity['derived_bytes']}",
             flush=True,
         )
         return result
