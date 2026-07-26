@@ -1,7 +1,8 @@
 """Lifecycle contract: events, cursor, consolidate (spec §1)."""
 
 from agmem.core.ops import MemoryOp, OpType
-from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
+from agmem.core.types import Episode
+from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext, overrides
 from helpers import StubLLM, make_mem_multi
 
 
@@ -236,6 +237,104 @@ def test_consolidate_drains_async_queue_first():
         assert seen == [1]  # queue was drained before consolidate finished
     finally:
         mem.close()
+
+
+# ---- hook contract: every hook lives on the base, probed via overrides() -------
+
+
+def test_buffer_and_chaining_hooks_default_to_noop():
+    """flush_buffer/retire/patch_unit are declared on Organizer, so callers
+    invoke them unconditionally instead of getattr-probing."""
+    org = Organizer()
+    assert org.flush_buffer(None) == []
+    assert org.retire({"e1"}) == []
+    assert org.patch_unit(Episode(content="x")) is None
+
+
+def test_overrides_separates_real_impl_from_inherited_noop():
+    class Buffered(Organizer):
+        name = "buffered"
+
+        def flush_buffer(self, ctx):
+            return []
+
+    assert overrides(Buffered(), "flush_buffer")
+    assert not overrides(Buffered(), "retire")  # inherited no-op
+    assert not overrides(Organizer(), "flush_buffer")
+
+
+def test_flush_drains_every_organizers_buffer():
+    """flush() applies each organizer's flush_buffer ops under its own name."""
+
+    class Buffered(Organizer):
+        name = "buffered"
+
+        def flush_buffer(self, ctx):
+            return [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id="tail",
+                    payload={"id": "tail", "content": "tail fact", "embedding_text": "tail fact"},
+                )
+            ]
+
+    mem = _mk(organizers=[Buffered(), Organizer()])  # base organizer contributes nothing
+    mem.flush()
+    stored = mem.doc_store.get_items(["tail"], "semantic")
+    assert stored and stored[0]["content"] == "tail fact"
+    assert mem.doc_store.tail(1)[0].actor == "buffered"
+
+
+# ---- consolidate cursor scoping ------------------------------------------------
+
+
+def test_single_instance_keeps_bare_cursor_key():
+    """One instance per name -> unsuffixed key, so cursors persisted before
+    instance scoping existed still resolve."""
+
+    class Solo(Organizer):
+        name = "solo"
+
+    org = Solo()
+    mem = _mk(organizers=[org])
+    assert org.cursor_key == "consolidate:solo"
+    assert mem.organizers[0].cursor_key == "consolidate:solo"
+
+
+def test_duplicate_organizers_get_distinct_cursor_keys():
+    """Two instances of one organizer would otherwise share a cursor id and
+    clobber each other's consolidate progress (base.cursor_key)."""
+
+    class Twin(Organizer):
+        name = "twin"
+
+    a, b, other = Twin(), Twin(), Organizer()
+    mem = _mk(organizers=[a, b, other])
+    assert (a.cursor_key, b.cursor_key) == ("consolidate:twin#0", "consolidate:twin#1")
+    assert other.cursor_key == "consolidate:base"  # unique name stays bare
+    # the keys must actually separate persisted progress, not just differ
+    mem._apply_ops([a.cursor_op(5)], actor="twin")
+    mem._apply_ops([b.cursor_op(9)], actor="twin")
+    assert (a.read_cursor(mem._ctx), b.read_cursor(mem._ctx)) == (5, 9)
+
+
+# ---- op attribution is non-destructive ----------------------------------------
+
+
+def test_apply_ops_does_not_mutate_callers_ops():
+    """Organizers keep references to the ops they return (Nemori's within-batch
+    supersession guard), so attribution must be stamped on copies."""
+    mem = _mk()
+    op = MemoryOp(
+        op=OpType.ADD,
+        target_type="semantic",
+        target_id="s1",
+        payload={"id": "s1", "content": "fact", "embedding_text": "fact"},
+    )
+    mem._apply_ops([op], actor="stamped")
+    assert op.actor == "system"  # caller's object untouched
+    assert mem.doc_store.tail(1)[0].actor == "stamped"  # log carries the actor
 
 
 # ---------------- MemoryOS via ChainedConsumer (Task 12, experimental) ------

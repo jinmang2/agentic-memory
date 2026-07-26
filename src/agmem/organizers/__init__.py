@@ -6,7 +6,7 @@ pre-built ``Organizer`` instances."""
 
 from agmem.organizers.ace import ACEOrganizer
 from agmem.organizers.amem import AMemOrganizer
-from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext
+from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext, overrides
 from agmem.organizers.gmemory import GMemoryOrganizer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
@@ -30,6 +30,7 @@ __all__ = [
     "Organizer",
     "OrganizerContext",
     "ORGANIZERS",
+    "overrides",
     "PassthroughOrganizer",
     "ReasoningBankOrganizer",
     "AMemOrganizer",

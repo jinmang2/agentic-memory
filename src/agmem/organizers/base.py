@@ -9,6 +9,15 @@ Lifecycle hooks (spec §1):
 - ``on_message``, ``on_task_end``, ``on_retrieval``: entry points
 - ``on_memory_event``: chaining hook for subscribed organizers
 - ``consolidate``: deferred management pass with cursor recovery
+- ``flush_buffer``: end-of-ingestion drain for organizers that buffer
+- ``retire``, ``patch_unit``: derived-state upkeep under chained composition
+
+Every hook is declared on ``Organizer`` with a no-op default, so callers
+invoke them unconditionally instead of probing with ``getattr``/``hasattr``.
+Where a caller must distinguish "the subclass really implements this" from
+"the base no-op ran" — ``ChainedConsumer``'s custom-vs-generic retirement
+split is the only such case — use ``overrides()`` rather than attribute
+presence.
 """
 
 from __future__ import annotations
@@ -98,24 +107,60 @@ class Organizer:
         cursor_op(new_seq) so progress survives restarts (spec §1.4)."""
         return []
 
-    def read_cursor(self, ctx: OrganizerContext) -> int:
-        """Read this organizer's consolidate cursor seq (0 if unset).
+    def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
+        """End-of-ingestion drain, called by ``AgenticMemory.flush()``.
 
-        The cursor id is scoped to ``self.name`` only, so two instances of the
-        same organizer class in one memory would share (and clobber) one
-        cursor; and ``get_items`` is not namespace-filtered, so a doc store
-        shared across namespaces could collide too. Both are harmless in the
-        current configs (one instance per class; per-namespace db files)."""
-        items = ctx.doc_store.get_items([f"consolidate:{self.name}"], "state")
+        Organizers that hold a buffer (Nemori's segment buffer, MemoryOS's STM)
+        override this to emit whatever a boundary/capacity trigger would never
+        reach, so a partial tail is not stranded. Buffer-less organizers keep
+        the no-op."""
+        return []
+
+    def retire(self, superseded: set[str]) -> list[MemoryOp]:
+        """Retire derived state whose source units were absorbed by a MERGE.
+
+        Only reached under chained composition (``ChainedConsumer``), which
+        falls back to a generic 1:1 INVALIDATE when this hook is not overridden
+        — so overriding it means "I own my retirement policy" (MemoryOS
+        invalidates a page only once *all* its sources are gone)."""
+        return []
+
+    def patch_unit(self, unit: Episode) -> None:
+        """Revise a not-yet-consolidated buffered unit in place.
+
+        Only reached under chained composition, when an upstream organizer
+        UPDATEs a unit this one has buffered but not yet turned into a derived
+        memory. The no-op default means the derived item is left stale —
+        documented staleness (spec §3), not an error."""
+
+    # ---- consolidate cursor -------------------------------------------------
+
+    @property
+    def cursor_key(self) -> str:
+        """Doc-store id of this organizer's consolidate cursor.
+
+        Defaults to the organizer name; ``AgenticMemory`` overwrites the
+        backing ``_cursor_scope`` with ``name#idx`` when one memory holds
+        several instances of the same organizer (they would otherwise share
+        and clobber one cursor). Single-instance configs keep the bare name, so
+        cursors persisted before instance scoping existed still resolve.
+        ``get_items`` is not namespace-filtered, so a doc store shared across
+        namespaces could still collide — harmless with per-namespace db files."""
+        return f"consolidate:{self._cursor_scope or self.name}"
+
+    _cursor_scope: str | None = None
+
+    def read_cursor(self, ctx: OrganizerContext) -> int:
+        """Read this organizer's consolidate cursor seq (0 if unset)."""
+        items = ctx.doc_store.get_items([self.cursor_key], "state")
         return int(items[0].get("seq", 0)) if items else 0
 
     def cursor_op(self, seq: int) -> MemoryOp:
-        """Emit the cursor-advance op (see read_cursor for the name/namespace
-        scope constraint — same ``consolidate:{self.name}`` id)."""
+        """Emit the cursor-advance op for ``cursor_key``."""
         return MemoryOp(
             op=OpType.UPDATE,
             target_type="state",
-            target_id=f"consolidate:{self.name}",
+            target_id=self.cursor_key,
             payload={"seq": seq},
         )
 
@@ -125,3 +170,12 @@ class Organizer:
         for episode in corpus:
             ops.extend(self.on_message(episode, ctx))
         return ops
+
+
+def overrides(organizer: Organizer, hook: str) -> bool:
+    """True when ``organizer``'s class really implements ``hook``.
+
+    Since every hook now has a no-op default, ``hasattr`` can no longer answer
+    "did the subclass opt in?" — this compares the bound function against
+    ``Organizer``'s to tell a real implementation from the inherited no-op."""
+    return getattr(type(organizer), hook, None) is not getattr(Organizer, hook, None)

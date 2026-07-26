@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -131,6 +132,10 @@ class AgenticMemory:
             self.structured = StructuredCaller(self.llm, self.config.use_guided_json)
 
         # --- organizers -----------------------------------------------------
+        # Plural is load-bearing for chaining only: one producer plus N
+        # consumers that subscribe to its output types via ``consumes``
+        # (_propagate_events). Several organizers reading the raw stream
+        # side by side is allowed but has no paper counterpart.
         self.organizers: list[Organizer] = []
         for org in organizers:
             if isinstance(org, str):
@@ -139,6 +144,16 @@ class AgenticMemory:
                 self.organizers.append(ORGANIZERS[org]())
             else:
                 self.organizers.append(org)
+        # Two instances of the same organizer would share one consolidate
+        # cursor id and clobber each other's progress (base.cursor_key), so
+        # give same-named instances a positional suffix. Names that occur once
+        # keep the bare key, so cursors persisted by earlier runs still resolve.
+        seen_names: dict[str, int] = {}
+        for org in self.organizers:
+            if sum(x.name == org.name for x in self.organizers) > 1:
+                idx = seen_names.get(org.name, 0)
+                org._cursor_scope = f"{org.name}#{idx}"
+                seen_names[org.name] = idx + 1
 
         # --- graph store (Zep temporal KG; persistent under data_dir — X4) --
         from agmem.stores import GRAPH_STORE_CANDIDATES
@@ -226,31 +241,8 @@ class AgenticMemory:
             timestamp=timestamp or utcnow(),
             meta=meta or {},
         )
-        # sync: raw episode is immediately searchable
-        self.doc_store.add_episode(episode)
-        self.vector_store.add(
-            episode.id,
-            self.embedder.embed([episode.embedding_text()])[0],
-            memory_type="episodic",
-            namespace=self.namespace,
-        )
-        self.doc_store.append(
-            [
-                MemoryOp(
-                    op=OpType.ADD,
-                    target_type="episodic",
-                    target_id=episode.id,
-                    actor="ingest",
-                    payload={"role": role},
-                )
-            ]
-        )
-        self._dispatch(
-            lambda: [
-                self._apply_ops(org.on_message(episode, self._ctx), actor=org.name)
-                for org in self.organizers
-            ]
-        )
+        self._ingest_episode(episode, {"role": role})
+        self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
         return episode
 
     def add_task_result(
@@ -267,6 +259,32 @@ class AgenticMemory:
             namespace=self.namespace,
             meta={"outcome": outcome, "agent_id": agent_id, "steps": len(trajectory)},
         )
+        self._ingest_episode(episode, {"outcome": outcome})
+        self._dispatch(
+            lambda: self._apply_from_all(
+                lambda org: org.on_task_end(trajectory, outcome, task, self._ctx)
+            )
+        )
+
+    def warm_start(self, corpus: list[Episode]) -> None:
+        """Bulk-ingest ``corpus`` into the stores, then replay it through each organizer.
+
+        Two things differ from ``add_message``: indexing and organizer work both run
+        synchronously on the caller's thread (bypassing the write queue), and the
+        backfilled episodes get NO ingest ADD op in the evolution log
+        (``log_payload=None``). The latter is a pre-existing asymmetry, kept as-is so op
+        counts stay comparable with past runs. Intended for backfilling history before
+        serving traffic, not for steady-state ingest."""
+        for episode in corpus:
+            self._ingest_episode(episode, None)
+        self._apply_from_all(lambda org: org.warm_start(corpus, self._ctx))
+
+    def _ingest_episode(self, episode: Episode, log_payload: dict | None) -> None:
+        """Store + index one raw episode synchronously, so it is searchable the
+        moment the caller returns (write-then-organize, docs/04 §2).
+
+        ``log_payload`` is the ingest ADD op's payload; ``None`` skips the log
+        entry entirely (warm-start backfill)."""
         self.doc_store.add_episode(episode)
         self.vector_store.add(
             episode.id,
@@ -274,43 +292,31 @@ class AgenticMemory:
             memory_type="episodic",
             namespace=self.namespace,
         )
-        self.doc_store.append(
-            [
-                MemoryOp(
-                    op=OpType.ADD,
-                    target_type="episodic",
-                    target_id=episode.id,
-                    actor="ingest",
-                    payload={"outcome": outcome},
-                )
-            ]
-        )
-        self._dispatch(
-            lambda: [
-                self._apply_ops(
-                    org.on_task_end(trajectory, outcome, task, self._ctx),
-                    actor=org.name,
-                )
-                for org in self.organizers
-            ]
-        )
-
-    def warm_start(self, corpus: list[Episode]) -> None:
-        """Bulk-ingest ``corpus`` into the stores, then replay it through each organizer.
-
-        Unlike ``add_message``, indexing and organizer work both run synchronously on the
-        caller's thread (bypassing the write queue) — intended for backfilling history
-        before serving traffic, not for steady-state ingest."""
-        for episode in corpus:
-            self.doc_store.add_episode(episode)
-            self.vector_store.add(
-                episode.id,
-                self.embedder.embed([episode.embedding_text()])[0],
-                memory_type="episodic",
-                namespace=self.namespace,
+        if log_payload is not None:
+            self.doc_store.append(
+                [
+                    MemoryOp(
+                        op=OpType.ADD,
+                        target_type="episodic",
+                        target_id=episode.id,
+                        actor="ingest",
+                        payload=log_payload,
+                    )
+                ]
             )
+
+    def _apply_from_all(self, hook: Callable[[Organizer], list[MemoryOp]]) -> int:
+        """Run one hook across every organizer in list order, applying each
+        organizer's ops under its own name, and return the total op count.
+
+        The single place organizers are fanned out over — so hook call sites stay
+        one line and can never drift on ordering or actor attribution."""
+        applied = 0
         for org in self.organizers:
-            self._apply_ops(org.warm_start(corpus, self._ctx), actor=org.name)
+            ops = hook(org)
+            self._apply_ops(ops, actor=org.name)
+            applied += len(ops)
+        return applied
 
     def _dispatch(self, work: Callable[[], Any]) -> None:
         """Run organizer work sync or hand it to the background worker.
@@ -321,6 +327,15 @@ class AgenticMemory:
             self._queue.put(work)
         else:
             work()
+
+    def _drain_queue(self) -> None:
+        """Block until every queued organizer work item has been applied.
+
+        No-op in sync-write mode. Callers that read state the queue may still be
+        writing (``flush``, ``consolidate``) or that tear down stores
+        (``close``) must go through here first."""
+        if self._queue is not None:
+            self._queue.join()
 
     def _drain(self) -> None:
         assert self._queue is not None
@@ -336,12 +351,8 @@ class AgenticMemory:
     def flush(self) -> None:
         """Block until all queued organizer work is applied, then flush
         any organizer-held buffers (Nemori/MemoryOS tail segments)."""
-        if self._queue is not None:
-            self._queue.join()
-        for org in self.organizers:
-            flush_buffer = getattr(org, "flush_buffer", None)
-            if callable(flush_buffer):
-                self._apply_ops(flush_buffer(self._ctx), actor=org.name)
+        self._drain_queue()
+        self._apply_from_all(lambda org: org.flush_buffer(self._ctx))
         self.vector_store.persist()
 
     def consolidate(self) -> int:
@@ -355,20 +366,18 @@ class AgenticMemory:
         the caller's thread and reads the log via ops_since, so any organizer
         work still queued must land before the cursor scan to avoid missing
         just-appended-but-not-yet-applied facts."""
-        if self._queue is not None:
-            self._queue.join()
-        applied = 0
-        for org in self.organizers:
-            ops = org.consolidate(self._ctx)
-            self._apply_ops(ops, actor=org.name)
-            applied += len(ops)
-        return applied
+        self._drain_queue()
+        return self._apply_from_all(lambda org: org.consolidate(self._ctx))
 
     def _apply_ops(self, ops: list[MemoryOp], actor: str, propagate: bool = True) -> None:
+        """Stamp ``actor``, log, apply, then propagate — in that order.
+
+        Attribution is stamped onto copies, so an organizer's returned ops are
+        never mutated behind its back (it may still hold references to them, as
+        Nemori does while building its within-batch supersession guard)."""
         if not ops:
             return
-        for op in ops:
-            op.actor = actor
+        ops = [replace(op, actor=actor) for op in ops]
         self.doc_store.append(ops)  # log first — replayable audit trail
         for op in ops:
             self._apply_one(op)
@@ -478,8 +487,7 @@ class AgenticMemory:
             )
             for s in bundle.items
         ]
-        for org in self.organizers:
-            self._apply_ops(org.on_retrieval(hits, self._ctx), actor=org.name)
+        self._apply_from_all(lambda org: org.on_retrieval(hits, self._ctx))
         return bundle
 
     def report_feedback(self, memory_ids: Sequence[str], helpful: bool) -> int:
@@ -594,8 +602,7 @@ class AgenticMemory:
         """Drain pending async organizer work, then close stores in order (vector, graph,
         doc). The queue must join first — closing a store while queued work still
         references it would touch a closed handle."""
-        if self._queue is not None:
-            self._queue.join()  # drain pending organizer work before closing
+        self._drain_queue()
         self.vector_store.close()
         self.graph_store.close()
         self.doc_store.close()
