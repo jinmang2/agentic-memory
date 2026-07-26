@@ -9,9 +9,23 @@ from agmem.config import AgmemConfig
 mem = AgenticMemory(
     namespace="jinmang2/coding-agent",
     organizers=["nemori", "reasoning_bank"],   # 방법론 조합 가능 (스택형)
-    profile="lite",                            # lite | standard | full
-    config=AgmemConfig(sync_write=False),      # 또는 "agmem.toml" 경로
+    config=AgmemConfig(profile="lite",         # lite | standard | full
+                       sync_write=False),      # 또는 "agmem.toml" 경로
 )
+```
+
+`profile=`은 `AgmemConfig(profile=...)`의 축약이고 **`config=`가 없을 때만** 쓴다
+(`AgenticMemory(profile="standard")`). 둘 다 주면서 값이 다르면 `ValueError`다 — 예전엔
+`profile=`이 조용히 버려져서 슬롯 해석과 `resolved_embed_model`이 config 쪽 profile로 가는데
+`stats()`/`capabilities()` 어디에도 요청한 profile의 흔적이 남지 않았다. 라이브러리에는
+적용할 우선순위 규칙이 없으므로(config 객체는 하나고 병합 순서가 없다) 불일치는 호출자 버그다.
+CLI 우선순위가 정의된 곳은 MCP 서버뿐이다 (§2.2).
+
+`close()`는 스토어 핸들과 write 워커를 모두 정리하므로 **필수**이고, `with` 형태를 지원한다:
+
+```python
+with AgenticMemory(organizers=["amem"], config=cfg) as mem:
+    ...
 ```
 
 `organizers`는 **레지스트리 이름과 `Organizer` 인스턴스를 섞어 받는다.** 합성(policy 부착,
@@ -111,7 +125,10 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 
 - **stdio** (Claude Desktop/Code, Cursor) + **streamable HTTP** (`:8765/mcp`) 겸용 — FastMCP로 구현.
 - namespace = Graphiti `group_id` 패턴 (기본 `"main"`), 클라이언트별 격리.
-- 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` (Graphiti와 동일 규칙).
+- 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` (Graphiti와 동일 규칙). 이 규칙이 실제로
+  적용되는 곳은 `mcp/server.py::main`이다 — `--config`를 주면 `--profile`이 통째로 무시돼
+  TOML의 profile로 뜨면서 로그엔 플래그 값을 찍고 있었다(규칙의 정반대). 이제 `--profile`이
+  주어지면 로드한 config의 profile을 덮어쓰고 그 사실을 로그에 남긴다.
 - `agmem.toml`이 읽는 테이블: `[profile]` `[storage]` `[embed]` `[override]` `[write]`
   `[retrieval]` `[llm.<role>]`. `[retrieval]`은 read-path 스텝의 노브
   (`lexical_types` / `link_expansion_cap` / `attach_sources_top_r` / `graph_expansion_cap`)를

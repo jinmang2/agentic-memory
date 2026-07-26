@@ -12,7 +12,7 @@ import queue
 import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Self, Sequence
 
 from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
@@ -31,6 +31,11 @@ logger = logging.getLogger("agmem")
 
 BITEMPORAL_TYPES = ("facts",)  # Types kept in vector store even after INVALIDATE (Zep bi-temporal)
 
+# Poison pill that tells the background worker to exit; enqueued only by close().
+# A plain sentinel rather than a flag because the worker blocks in queue.get(),
+# so nothing short of an item can wake it.
+_SHUTDOWN = object()
+
 
 class AgenticMemory:
     """Public facade: one namespace's stores + embedder + organizers, wired by capability.
@@ -45,7 +50,7 @@ class AgenticMemory:
         self,
         namespace: str = "main",
         organizers: Sequence[str | Organizer] = ("passthrough",),
-        profile: str = "lite",
+        profile: str | None = None,
         config: AgmemConfig | str | Path | None = None,
         embedder: Embedder | None = None,
         caps: HostCapabilities | None = None,
@@ -54,10 +59,27 @@ class AgenticMemory:
 
         ``organizers`` may mix registry names and pre-built ``Organizer`` instances.
         Unless ``config.sync_write`` is set, a daemon thread is started to run organizer
-        work off the caller's thread — see ``close()``/``flush()`` for the drain contract."""
+        work off the caller's thread — see ``close()``/``flush()`` for the drain contract.
+
+        ``profile`` is a shorthand for ``AgmemConfig(profile=...)`` and is only usable
+        when no ``config`` is given. Passing both used to drop ``profile`` silently, so
+        ``AgenticMemory(profile="full", config=AgmemConfig())`` resolved every backend
+        slot — and ``resolved_embed_model`` — as ``lite`` while ``stats()`` reported
+        ``lite`` too, leaving no trace of the requested profile anywhere. There is no
+        precedence rule to apply here (the library has one config object, not a merge
+        order), so a disagreement is a caller bug and raises. Agreement is allowed so
+        the redundant-but-harmless form keeps working."""
         if isinstance(config, (str, Path)):
             config = load_config(config)
-        self.config = config or AgmemConfig(profile=profile)
+        if config is None:
+            self.config = AgmemConfig() if profile is None else AgmemConfig(profile=profile)
+        else:
+            if profile is not None and profile != config.profile:
+                raise ValueError(
+                    f"profile={profile!r} conflicts with config.profile={config.profile!r}; "
+                    "pass only one (the config wins otherwise, silently)"
+                )
+            self.config = config
         self.namespace = namespace
         self.caps = caps or detect()
         self._degradations: list[str] = []
@@ -214,11 +236,14 @@ class AgenticMemory:
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------
-        self._queue: queue.Queue[Callable[[], None]] | None = None
+        # Any, not Callable: close() enqueues the _SHUTDOWN sentinel on this queue.
+        self._queue: queue.Queue[Any] | None = None
         self._worker: threading.Thread | None = None
         if not self.config.sync_write:
             self._queue = queue.Queue()
-            self._worker = threading.Thread(target=self._drain, daemon=True, name="agmem-worker")
+            self._worker = threading.Thread(
+                target=self._drain, args=(self._queue,), daemon=True, name="agmem-worker"
+            )
             self._worker.start()
 
     # ---- write ------------------------------------------------------------
@@ -344,16 +369,26 @@ class AgenticMemory:
         if self._queue is not None:
             self._queue.join()
 
-    def _drain(self) -> None:
-        assert self._queue is not None
+    @staticmethod
+    def _drain(work_queue: queue.Queue[Any]) -> None:
+        """Background worker loop, until ``close()`` enqueues ``_SHUTDOWN``.
+
+        Static, taking the queue as an argument, so the thread never holds a
+        reference to the memory: ``Thread(target=self._drain)`` stores the BOUND
+        method, which kept a closed ``AgenticMemory`` — with its embedder, stores
+        and organizers — reachable for the process lifetime. ``close()`` freed the
+        handles, but the object itself was never collected."""
         while True:
-            work = self._queue.get()
+            work = work_queue.get()
+            if work is _SHUTDOWN:
+                work_queue.task_done()
+                return
             try:
                 work()
             except Exception:
                 logger.exception("organizer work failed in background worker")
             finally:
-                self._queue.task_done()
+                work_queue.task_done()
 
     def flush(self) -> None:
         """Block until all queued organizer work is applied, then flush
@@ -610,10 +645,38 @@ class AgenticMemory:
         }
 
     def close(self) -> None:
-        """Drain pending async organizer work, then close stores in order (vector, graph,
-        doc). The queue must join first — closing a store while queued work still
-        references it would touch a closed handle."""
+        """Drain pending async organizer work, stop the worker, then close stores in
+        order (vector, graph, doc).
+
+        The queue must join before the worker is stopped and the stores closed —
+        closing a store while queued work still references it would touch a closed
+        handle. The worker used to be left running (``_drain`` loops forever, and the
+        thread is a daemon so the process still exits): harmless for the MCP server's
+        one process-wide memory, but every benchmark that builds a memory per config
+        or per question would accumulate one live thread — and one unreachable-but-
+        retained memory — per instance. That is latent only while ``sync_write``
+        defaults to True.
+
+        Idempotent: a second call finds no worker and re-closes stores, which every
+        store adapter tolerates."""
         self._drain_queue()
+        if self._worker is not None and self._queue is not None:
+            self._queue.put(_SHUTDOWN)
+            self._worker.join(timeout=5)
+            self._worker = None
+            # Dropping the queue puts _dispatch back on its inline path, so work
+            # submitted after close() fails loudly on the closed store instead of
+            # queueing onto a worker that is gone (flush() would hang forever).
+            self._queue = None
         self.vector_store.close()
         self.graph_store.close()
         self.doc_store.close()
+
+    def __enter__(self) -> Self:
+        """``with AgenticMemory(...) as mem:`` — close() is mandatory (store handles
+        plus the write worker), so the guarded form exists rather than leaving every
+        call site to hand-roll try/finally as the bench scripts do."""
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()

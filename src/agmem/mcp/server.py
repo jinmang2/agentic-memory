@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from dataclasses import replace
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -143,7 +144,11 @@ def main() -> None:
     admin tools are registered before `mcp.run()` only if `--enable-admin-tools` is set."""
     ap = argparse.ArgumentParser(description="agmem MCP server")
     ap.add_argument("--namespace", default="main")
-    ap.add_argument("--profile", default="lite")
+    ap.add_argument(
+        "--profile",
+        default=None,
+        help="lite|standard|full (default lite); overrides [profile].name in --config",
+    )
     ap.add_argument(
         "--organizers",
         default="nemori,reasoning_bank",
@@ -156,10 +161,23 @@ def main() -> None:
     ap.add_argument("--enable-admin-tools", action="store_true")
     args = ap.parse_args()
 
+    # docs/05 §2.2 precedence: CLI arg > agmem.toml. `--profile` used to be dropped
+    # entirely whenever `--config` was given, which inverted that rule silently — the
+    # server ran the TOML's profile while reporting the flag back in its log line.
+    # Resolved here rather than in the facade: the precedence rule is a property of
+    # this CLI, and AgenticMemory now rejects a profile/config disagreement outright.
     if args.config:
         config = load_config(args.config)
+        if args.profile is not None and args.profile != config.profile:
+            logger.info(
+                "profile: --profile=%s overrides [profile].name=%s from %s",
+                args.profile,
+                config.profile,
+                args.config,
+            )
+            config = replace(config, profile=args.profile)
     else:
-        config = AgmemConfig(profile=args.profile, sync_write=False)
+        config = AgmemConfig(profile=args.profile or "lite", sync_write=False)
     if config.data_dir is None:
         config.data_dir = Path(args.data_dir)
 
@@ -179,11 +197,17 @@ def main() -> None:
     if args.enable_admin_tools:
         register_admin_tools()
 
-    if args.transport == "http":
-        mcp.settings.port = args.port
-        mcp.run(transport="streamable-http")
-    else:
-        mcp.run()
+    # close() on the way out: it drains queued organizer work (this server runs
+    # sync_write=False, so a shutdown mid-queue would otherwise discard whatever
+    # the worker had not applied yet) and then stops the worker and the stores.
+    try:
+        if args.transport == "http":
+            mcp.settings.port = args.port
+            mcp.run(transport="streamable-http")
+        else:
+            mcp.run()
+    finally:
+        _mem.close()
 
 
 if __name__ == "__main__":

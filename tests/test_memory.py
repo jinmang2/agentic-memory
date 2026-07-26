@@ -1,8 +1,13 @@
 """Phase 0 exit criterion: add -> search works end-to-end with passthrough."""
 
+import gc
+import threading
+import weakref
+
 import pytest
 
 from agmem import AgenticMemory
+from agmem.config import AgmemConfig
 from agmem.core.ops import MemoryOp, OpType
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.base import Organizer, OrganizerContext
@@ -120,6 +125,72 @@ def test_namespace_isolation():
 def test_unknown_organizer_raises():
     with pytest.raises(KeyError):
         AgenticMemory(organizers=["nope"], embedder=FakeEmbedder(dim=8))
+
+
+def test_profile_arg_conflicting_with_config_raises():
+    """``profile=`` used to be dropped whenever ``config=`` was given, so every
+    backend slot — and ``resolved_embed_model`` — resolved from the config's
+    profile while the caller believed it had asked for another one, with no
+    trace of the request left in ``stats()`` or ``capabilities()``."""
+    with pytest.raises(ValueError, match="conflicts with config.profile"):
+        AgenticMemory(
+            profile="full", config=AgmemConfig(profile="lite"), embedder=FakeEmbedder(dim=8)
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs, expected",
+    [
+        ({}, "lite"),
+        ({"profile": "standard"}, "standard"),
+        # agreement is allowed: docs/05 §1's example passes both, redundantly
+        ({"profile": "lite", "config": AgmemConfig(profile="lite")}, "lite"),
+        ({"config": AgmemConfig(profile="standard")}, "standard"),
+    ],
+)
+def test_profile_resolution(kwargs, expected):
+    mem = AgenticMemory(embedder=FakeEmbedder(dim=8), **kwargs)
+    try:
+        assert mem.config.profile == expected
+        assert mem.stats()["profile"] == expected
+    finally:
+        mem.close()
+
+
+def test_close_stops_the_write_worker_and_releases_the_memory():
+    """``close()`` left ``_drain`` looping forever on a daemon thread, and
+    ``Thread(target=self._drain)`` held the bound method — so a closed memory
+    (embedder, stores, organizers) stayed resident for the process lifetime.
+    Latent only while ``sync_write`` defaults to True; a per-question or
+    per-config benchmark loop would retain one memory per instance."""
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        config=AgmemConfig(sync_write=False),
+        embedder=FakeEmbedder(dim=64),
+    )
+    mem.add_message("hello")
+    mem.flush()
+    ref = weakref.ref(mem)
+
+    mem.close()
+    mem.close()  # idempotent
+
+    assert not [t for t in threading.enumerate() if t.name == "agmem-worker"]
+    del mem
+    gc.collect()
+    assert ref() is None
+
+
+def test_context_manager_closes():
+    with AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        config=AgmemConfig(sync_write=False),
+        embedder=FakeEmbedder(dim=64),
+    ) as mem:
+        mem.add_message("hello")
+    assert not [t for t in threading.enumerate() if t.name == "agmem-worker"]
 
 
 def test_delete_op_leaves_no_ghost_hit(mem):
