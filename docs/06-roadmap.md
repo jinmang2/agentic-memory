@@ -38,7 +38,12 @@
       비용 841 calls/946s vs 0 calls/6.3s. multi-hop은 오히려 -1.6 — organizer 모델
       품질 종속성 실증. 상세: `docs/08-amem-implementation-review.md` §4
 - [x] LoCoMo conv0 4-way 완료 (passthrough/A-Mem/Nemori/MemoryOS — docs/09-results-summary.md)
-- [ ] **LongMemEval_S** 파이프라인 (judge pin `gpt-4o-2024-08-06`, reading `con`+`json` 고정, cleaned 버전 명시, ingest 아티팩트 캐시)
+- [~] **LongMemEval_S** 파이프라인 — **라이브러리 배선 완료**(`bench/longmemeval.py`, 2026-07-26).
+      judge pin `gpt-4o-2024-08-06`는 `check_judge_model`로 강제(공식 집계기가 assert하는 값),
+      reading `con` + history `json`은 공식 프롬프트 원문 그대로, full-context 베이스라인
+      (`render_sessions`)까지 포함. **미작성**: CLI 드라이버와 ingest 아티팩트 캐시 —
+      인스턴스마다 메모리를 새로 만드는 구조라 500질문 = 500 ingest이고, 측정 승인 전에는
+      드라이버를 쓸 이유가 없다. 데이터 버전(cleaned 여부)은 결과와 함께 기록 필요.
 - [ ] 1차 재현 실험 (PC, 0.6B extract + API judge):
   - A-Mem × LoCoMo — 원논문 GPT-4o-mini 수치와 방향성 비교
   - ReasoningBank류 × 간단 태스크(수학/코딩 스트림, reasoning-bank-slm 프로토콜 참고)
@@ -171,6 +176,33 @@
    `content`/`embedding_text`가 없어 `_apply_one`이 벡터를 만들지 않으므로 애초에 벡터 인덱스에
    도달하지 않는다. 확률 논증이 조용히 썩지 않도록
    `test_consolidate_cursor_is_the_only_deterministic_id_and_never_gets_a_vector`가 전제를 고정한다.
+
+### 2026-07-26 LongMemEval 배선 (측정 없음)
+
+공식 저장소를 클론해 `evaluate_qa.py` / `print_qa_metrics.py` / `run_generation.py`를 통독하고
+포팅했다. **논문만 읽었으면 놓쳤을 것 4건**이 나왔고, 그게 이 작업의 실제 산출물이다:
+
+1. **정확도 정의가 둘** — task-averaged(타입 평균의 평균) vs overall(질문 평균). 타입별 문항
+   수가 불균등해 값이 다르다. `aggregate()`가 **항상 둘 다** 반환한다.
+2. **abstention은 교차 절단면** — 자기 question_type에도 계수되고 abstention 버킷에도 들어간다.
+3. **judge 모델이 assert로 고정** — `check_judge_model`이 500콜 지출 전에 실패시킨다.
+4. **`_abs` 판정이 부분문자열** — 조사 1차본의 "`_abs`로 끝나면"은 오류였고
+   `docs/research/ace-longmemeval.md`에서 교정했다.
+
+부수: 미지의 question_type에 upstream이 `raise NotImplementedError`하는 것(기본 템플릿 fallback
+없음)도 그대로 옮겼다 — knowledge-update 분기는 다른 분기의 "부분집합이면 no" 규칙을 빼고 있어서
+오분기하면 KU가 테스트하는 행동이 감점된다.
+
+명시적 이탈 2건: **D1** 컨텍스트 정렬(upstream은 검색 청크를 시간순 정렬, 우리 번들은 융합 점수
+순 — organizer 산출물엔 비교 가능한 날짜가 없는 경우가 많다. full-context 경로는 시간순으로
+upstream과 일치), **D2** ingest 단위(upstream은 ingest가 없고 haystack을 검색한다; 우리는 turn당
+`add_message`로 LoCoMo와 같은 write 경로를 태운다). `con-separate` reading method는 세션별 노트
+추출 LLM 패스가 필요해 **포팅하지 않고 raise**한다 — 조용히 `con`으로 강등되면 라벨과 수치가
+어긋난다.
+
+테스트 23건이 이 계약을 고정한다(`tests/test_longmemeval.py`). `has_answer` 누출 테스트는
+**실제로 누출을 주입해 실패하는지 확인**했다 — 첫 판은 `list_items("episodic")`이 항상 `[]`를
+반환해(raw episode는 별도 테이블) vacuous였다.
 
 ### 2026-07-26 재점검에서 처리한 것 (수치 영향 0 — 측정 run은 전부 단일 organizer)
 

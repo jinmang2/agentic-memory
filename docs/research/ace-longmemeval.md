@@ -212,7 +212,13 @@ Reflector 분리와 multi-epoch refinement 모두 유의미하게 기여.
 ### 질문 타입 (총 500문항)
 
 `single-session-user`, `single-session-assistant`, `single-session-preference`, `multi-session`, `temporal-reasoning`, `knowledge-update`.
-`question_id`가 `_abs`로 끝나면 abstention 질문(**30문항**, 기존 질문의 false-premise 변형).
+abstention 질문은 **30문항**(기존 질문의 false-premise 변형).
+
+> **교정 (2026-07-26, 포팅 중 원문 재확인)**: 위를 "`question_id`가 `_abs`로 **끝나면**"이라고
+> 적었으나 공식 코드는 **부분문자열** 검사다 — `abstention='_abs' in entry['question_id']`
+> (`evaluate_qa.py:101`), `if '_abs' in entry['question_id']` (`print_qa_metrics.py:22`).
+> `endswith`로 "고치면" `_abs`가 중간에 든 id의 채점 분기가 조용히 바뀐다. 우리 포트는
+> upstream 의미를 유지한다(`longmemeval.is_abstention`).
 
 ### 데이터 내 태스크명 ↔ 공식명 매핑 (README)
 
@@ -288,6 +294,27 @@ LongMemEval/
 2. `python3 evaluate_qa.py gpt-4o hyp_file ref_file`
 3. `.eval-results-gpt-4o` 로그에 `autoeval_label` 추가
 4. `print_qa_metrics.py`로 question_type별 집계
+
+### 집계 함정 3건 (2026-07-26 포팅 중 `print_qa_metrics.py` 통독으로 추가)
+
+조사 1차본이 놓친 부분이고, 셋 다 **수치 해석을 바꾼다**.
+
+1. **"정확도"가 두 개이고 서로 다르다.** 스크립트는 `Task-averaged Accuracy`(6개 타입 평균의
+   평균)와 `Overall Accuracy`(전체 질문 평균)를 **둘 다** 출력한다(:31-33). 타입별 문항 수가
+   불균등하므로 두 값은 같지 않다 — 어느 쪽인지 밝히지 않은 발표 수치는 비교 불가다.
+   위 SOTA 표의 값들도 출처마다 어느 정의인지 확인이 필요하다.
+2. **abstention은 7번째 타입이 아니라 교차 절단면이다.** 모든 엔트리를 자기 `question_type`
+   버킷에 넣고, `_abs`인 것을 **추가로** abstention 버킷에도 넣는다(:19-23). 즉 abstention
+   30문항은 자기 타입에도 계속 계수되고 위 두 정확도에도 포함된다.
+3. **judge 모델이 assert로 고정돼 있다** — `assert entry['autoeval_label']['model'] ==
+   'gpt-4o-2024-08-06'`(:20). 관례가 아니라 강제이고, 다른 judge로 매긴 결과는 공식 집계기가
+   읽기를 거부한다. 우리 포트는 `JUDGE_MODEL_PIN`/`check_judge_model`로 이를 500콜 지출
+   **전에** 실패시킨다.
+
+부수 확인: `get_anscheck_prompt`는 미지의 question_type에 **`raise NotImplementedError`**로
+응답하고 기본 템플릿으로 떨어지지 않는다(:38-39). knowledge-update 분기가 다른 분기의
+"부분집합만 담으면 no" 문장을 **빼고** 있어서, 잘못 분기되면 KU가 테스트하려는 바로 그 행동
+(옛 정보와 갱신 답을 함께 제시)이 감점된다. 우리 포트도 동일하게 raise한다.
 
 ### 메모리 시스템 플러그인 (unified index)
 

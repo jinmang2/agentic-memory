@@ -142,7 +142,13 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 uv run python scripts/exp_locomo_conv0.py      # LoCoMo conv-0: 방법론별 설정 그리드 실행
 ```
 
-하니스는 `bench/harness.py`(멀티런 + mean/std 집계), 로더는 `bench/locomo.py`. LongMemEval 로더는 미구현.
+하니스는 `bench/harness.py`(멀티런 + mean/std 집계), 로더는 `bench/locomo.py`와 `bench/longmemeval.py`.
+
+LongMemEval은 **문자열 지표가 없다** — LLM judge가 유일한 점수원이고 질문 타입별 프롬프트가 5분기다.
+따라서 판정 없는 run은 점수가 아예 없고 hypothesis만 남는다(`run_instance(judge=True)` 기본값).
+CLI 드라이버는 **의도적으로 미작성** — 인스턴스당 메모리를 새로 만드는 구조라 500질문 실행이
+곧 500 ingest이고, 측정 승인 전에는 그 비용을 지불할 수 없다. 라이브러리 수준의 배선
+(load/ingest/answer/judge/aggregate + full-context 베이스라인)은 완료돼 있다.
 
 - ingest 아티팩트 캐시(`artifacts/`)로 설정 그리드 재평가 시 재-ingest 생략.
 - 모든 결과에 `{profile, commit, model, judge, dataset_version, runs}` 스탬프 — 재현성 규율 (Zep-LoCoMo 논란 반면교사).

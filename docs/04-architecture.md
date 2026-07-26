@@ -110,7 +110,9 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
     └── 12-code-conventions.md       # 이름/docstring/구조 컨벤션 (리뷰 게이트 기준)
 ```
 
-로드맵(미구현 모듈): `core/namespace.py`, `retrieval/expand.py`(time-range 추출), `embed/api_embedder.py`, `bench/longmemeval.py·judges.py·report.py`, `train/eval_extract.py`, graph store용 `QueueStore`/`GraphStore` 공통 Protocol.
+로드맵(미구현 모듈): `core/namespace.py`, `retrieval/expand.py`(time-range 추출), `embed/api_embedder.py`, `bench/judges.py·report.py`, `train/eval_extract.py`, graph store용 `QueueStore`/`GraphStore` 공통 Protocol.
+
+`bench/longmemeval.py`는 구현됨 — LoCoMo와 **구조가 다르다**: LoCoMo 샘플 1개 = 대화 1개 + 질문 다수(메모리 1개로 전부 처리)인데, LongMemEval 인스턴스 1개 = **질문 1개 + 자기 haystack ~40세션**이라 충실한 실행은 질문마다 메모리를 새로 만든다(`_s` 기준 500개). 그래서 `ingest`가 corpus가 아니라 instance를 받고, 인스턴스별 메모리 수명은 호출자가 소유한다(`run_instance`).
 
 ### 1.1 mechanism vs control policy — 새 논문을 어디에 넣을지 정하는 규칙
 
