@@ -46,6 +46,13 @@ default-groups = ["dev", "embed", "backends"]
 # sentence_bleu); without it `locomo.bleu1_wujiang` degrades to None and the
 # metric is omitted, never substituted (see its docstring).
 eval = ["nltk>=3.9"]
+# MemMachine's `TextSegmenter` IS langchain's RecursiveCharacterTextSplitter
+# (chunk 500, overlap 0, a 30-entry separator list); the organizer calls it
+# rather than reimplementing the recursion, and raises when it is absent. Only
+# the non-default `segmenter="text"` path needs it — both presets ship
+# passthrough, so a plain install never touches this. `nltk` above covers the
+# equally non-default `deriver="sentence_text"` (upstream `extract_sentences`).
+memmachine = ["langchain-text-splitters>=0.3"]
 train = [
     "transformers>=4.51",
     "datasets>=3.0",

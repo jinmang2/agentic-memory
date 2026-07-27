@@ -20,6 +20,7 @@ mutate-then-return (source attachment).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -72,6 +73,12 @@ class ReadContext:
     # LLM — the same reason A-Mem's keyword query rewrite lives in the bench.
     # Empty means "no keyword channel", which is also the pypi lineage's state.
     query_keywords: frozenset[str] = frozenset()
+    # The query text and the pipeline's reranker, for the one step that scores
+    # text the ranking channels never produced: MemMachine reranks assembled
+    # episode CONTEXTS, not items, so their scores cannot come from fusion and
+    # the reranker has to run a second time, inside the step.
+    query: str = ""
+    reranker: Any | None = None
 
 
 class ReadStep:
@@ -414,6 +421,199 @@ class MemoryOSPageRecall(ReadStep):
         return out
 
 
+class MemMachineContextualize(ReadStep):
+    """MemMachine's read path: derivative hits become CONTEXTS of raw episodes.
+
+    Upstream ``declarative_memory.py::search_scored`` in four moves, all
+    reproduced here:
+
+    1. the matched derivatives are mapped to their source episodes, which
+       become "nuclear episodes" (deduped, search order preserved);
+    2. each nucleus is widened into a context by walking the episode store in
+       ``(timestamp, uid)`` order — ``expand_context // 3`` episodes backward
+       and the REST forward. The 1:2 split is a prior about conversations, not
+       a symmetric window: the answer to a question usually follows it. Our
+       taxonomy notes called this "±1~2 turns" until the code said otherwise;
+    3. every context is rendered as one string and the RERANKER scores that
+       string against the query — the ordering signal is the context, never the
+       derivative that seeded it;
+    4. contexts are merged best-first into at most ``limit`` distinct episodes.
+       A context that would overflow the limit contributes its episodes nearest
+       the nucleus first, where "nearest" is again asymmetric
+       (``_weighted_index_proximity``: a forward neighbor at distance d counts
+       as ``(d - 0.5) / 2``, a backward one as ``d``, so forward wins ties).
+
+    Deviations, all forced by where our seams are:
+
+    - **The ordered episode index comes from the derivatives**, since
+      ``DocStore`` has no time-ordered episode listing (upstream's
+      ``search_directional_nodes``) and adding one would touch every backend.
+      Equivalent while every episode has at least one derivative, which holds
+      for both presets; an episode ingested past this organizer is invisible to
+      the expansion. Cost is one ``list_items`` per query.
+    - **A reranker that cannot score text leaves the order alone.** Upstream's
+      declarative backend REQUIRES a reranker and its eval config wires
+      Cohere ``rerank-v3-5``; with ``NoopReranker`` (profile ``lite``) there is
+      nothing to score contexts with, so the nuclei keep their fused order.
+      That is a weaker read path than upstream's, not a different one, and it
+      is visible in the config rather than hidden here.
+    - **Served items are ``episodic``**, carrying the upstream line format
+      (``[date at time] speaker: "content"``, ``episodes_to_string``) as their
+      content, because that prefix is part of the QA prompt upstream builds and
+      a bare episode loses it. Consequence worth knowing: under
+      ``search(memory_types=None)`` the plain ``episodic`` pass runs first and
+      wins the ``(memory_type, id)`` dedup, so the faithful call is
+      ``search(memory_types=("derivatives",))``.
+    - Upstream returns one globally chronological list; ``MemoryBundle.render``
+      sorts by score. Episodes inside one context share their context's score,
+      so each context stays chronological internally (stable sort) but contexts
+      no longer interleave by time.
+    """
+
+    def __init__(self, expand_context: int = 0, limit: int = 20) -> None:
+        """``expand_context``/``limit`` are upstream's ``query_memory``
+        arguments. The defaults are ITS defaults (0 and 20); the published
+        LoCoMo run uses 3 and 30 (``locomo_search.py``), which is a search
+        recipe and therefore config, not a constant here — the same separation
+        `MEMORYOS_PRESETS` exists to enforce."""
+        self.expand_context = expand_context
+        self.limit = limit
+
+    def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
+        nuclei: dict[str, float] = {}
+        for scored in hits:
+            for episode_id in scored.item.data.get("source_episode_ids", []):
+                nuclei.setdefault(episode_id, scored.score)
+        if not nuclei:
+            return []
+
+        order = self._episode_order(ctx)
+        position = {episode_id: index for index, episode_id in enumerate(order)}
+        expand = min(max(0, self.expand_context), max(0, self.limit - 1))
+        backward = expand // 3
+        forward = expand - backward
+
+        contexts: dict[str, list[str]] = {}
+        for nucleus in nuclei:
+            index = position.get(nucleus)
+            if index is None:  # derivative whose episode is gone
+                continue
+            start = max(0, index - backward)
+            contexts[nucleus] = order[start:index] + order[index : index + forward + 1]
+
+        episodes = {
+            episode.id: episode
+            for episode in ctx.doc_store.get_episodes(
+                list(dict.fromkeys(eid for context in contexts.values() for eid in context))
+            )
+        }
+        rendered = {
+            nucleus: "".join(_memmachine_line(episodes[eid]) for eid in context if eid in episodes)
+            for nucleus, context in contexts.items()
+        }
+        ranked = self._rank(list(contexts), nuclei, rendered, ctx)
+
+        # Upstream `_unify_scored_anchored_episode_contexts`, including its
+        # `break` (not `continue`) once the limit is reached.
+        selected: dict[str, float] = {}
+        for nucleus, score in ranked:
+            context = [eid for eid in contexts[nucleus] if eid in episodes]
+            if len(selected) >= self.limit:
+                break
+            if len(selected) + len(context) <= self.limit:
+                for episode_id in context:
+                    selected.setdefault(episode_id, score)
+                continue
+            nuclear_index = context.index(nucleus) if nucleus in context else 0
+            for episode_id in sorted(
+                context,
+                key=lambda eid: _weighted_index_proximity(context.index(eid), nuclear_index),
+            ):
+                if len(selected) >= self.limit:
+                    break
+                selected.setdefault(episode_id, score)
+
+        return [
+            ScoredItem(
+                item=_DictItem(
+                    {
+                        "id": episode_id,
+                        "content": _memmachine_line(episodes[episode_id]).rstrip("\n"),
+                        "source_episode_ids": [episode_id],
+                    }
+                ),
+                memory_type="episodic",
+                score=score,
+                provenance=[episode_id],
+            )
+            for episode_id, score in sorted(
+                selected.items(), key=lambda pair: (position.get(pair[0], 0), pair[0])
+            )
+        ]
+
+    def _episode_order(self, ctx: ReadContext) -> list[str]:
+        """Episode ids in upstream's ``(timestamp, uid)`` order, derived from
+        the derivative index (see the class docstring for why)."""
+        stamps: dict[str, str] = {}
+        for data in ctx.doc_store.list_items("derivatives", ctx.namespace):
+            if not is_servable(data, "derivatives"):
+                continue
+            for episode_id in data.get("source_episode_ids", []):
+                stamps.setdefault(episode_id, str(data.get("timestamp") or ""))
+        return sorted(stamps, key=lambda eid: (stamps[eid], eid))
+
+    def _rank(
+        self,
+        nuclei: list[str],
+        scores: dict[str, float],
+        rendered: dict[str, str],
+        ctx: ReadContext,
+    ) -> list[tuple[str, float]]:
+        """Score whole contexts with the pipeline's reranker
+        (``_score_episode_contexts`` -> ``reranker.score(query, contexts)``).
+
+        The reranker runs a second time here, on text no ranking channel
+        produced, so its usual (id, score) contract is fed pseudo-candidates
+        keyed by nucleus. ``k`` is the full length: this call orders, it does
+        not truncate — the limit is applied by the unification below, over
+        episodes rather than contexts."""
+        candidates = [(nucleus, scores[nucleus]) for nucleus in nuclei]
+        if ctx.reranker is None or not getattr(ctx.reranker, "needs_text", False):
+            return sorted(candidates, key=lambda pair: pair[1], reverse=True)
+        return list(
+            ctx.reranker.rerank(
+                ctx.query_embedding or [],
+                candidates,
+                {},
+                len(candidates),
+                texts=rendered,
+                query=ctx.query,
+            )
+        )
+
+
+def _weighted_index_proximity(index: int, nuclear_index: int) -> float:
+    """``declarative_memory.py::_weighted_index_proximity`` — forward recall is
+    worth more than backward recall, so a forward neighbor at distance d sorts
+    at ``(d - 0.5) / 2`` and a backward one at ``d``. The nucleus itself lands
+    at -0.25 and therefore always first."""
+    proximity = index - nuclear_index
+    if proximity >= 0:
+        return (proximity - 0.5) / 2
+    return float(-proximity)
+
+
+def _memmachine_line(episode: Any) -> str:
+    """One rendered episode, upstream's ``episodes_to_string`` /
+    ``string_from_episode_context`` format (they agree, down to the
+    ``json.dumps`` around the content and the zero-padded strftime day)."""
+    timestamp = episode.timestamp
+    return (
+        f"[{timestamp:%A, %B %d, %Y} at {timestamp:%I:%M %p}] "
+        f"{_speaker(episode)}: {json.dumps(episode.content, ensure_ascii=False)}\n"
+    )
+
+
 def _cosine(vector: Any, query: Any, query_norm: float) -> float:
     """Cosine of a stored vector against the pre-normalised query, 0.0 when the
     vector is missing (an id the vector store has no row for)."""
@@ -439,13 +639,21 @@ def default_read_steps(
     page_recall_threshold: float = 0.1,
     page_recall_segment_threshold: float = 0.1,
     page_recall_keyword_similarity: str = "containment_mean",
+    memmachine_expand_context: int = 0,
+    memmachine_context_limit: int = 20,
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 
     A cap of 0 drops that step entirely, preserving the falsy-cap disable the
     original ``if memory_type == "notes" and self.link_expansion_cap`` guards
     gave."""
-    steps: dict[str, ReadStep] = {"experiences": ExpandExperiences()}
+    # MemMachine's step has no disabling cap: mapping derivatives back to their
+    # episodes IS the read path, and `expand_context=0` (upstream's own default)
+    # only means "no context widening", not "serve the anchors".
+    steps: dict[str, ReadStep] = {
+        "experiences": ExpandExperiences(),
+        "derivatives": MemMachineContextualize(memmachine_expand_context, memmachine_context_limit),
+    }
     if link_expansion_cap:
         steps["notes"] = LinkExpansion(link_expansion_cap)
     if attach_sources_top_r:

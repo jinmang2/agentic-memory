@@ -248,6 +248,8 @@ class AgenticMemory:
             page_recall_threshold=self.config.page_recall_threshold,
             page_recall_segment_threshold=self.config.page_recall_segment_threshold,
             page_recall_keyword_similarity=self.config.page_recall_keyword_similarity,
+            memmachine_expand_context=self.config.memmachine_expand_context,
+            memmachine_context_limit=self.config.memmachine_context_limit,
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------

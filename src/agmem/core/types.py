@@ -36,6 +36,7 @@ MEMORY_TYPES = (
     "episodes",  # Nemori derived narrative episodes
     "notes",  # A-Mem zettelkasten notes
     "pages",  # MemoryOS dialogue pages / segments
+    "derivatives",  # MemMachine embedding anchors; never served, they map back to episodes
     "semantic",  # Nemori distilled facts, MemoryOS LPM profile facts (kind="profile")
     "entities",  # Zep-graph entity nodes
     "facts",  # Zep-graph bi-temporal edges

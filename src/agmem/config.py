@@ -112,6 +112,15 @@ class AgmemConfig:
     # both sides, `memoryos-chromadb` uses Jaccard on both, and `memoryos-pypi`
     # has no read-side keyword term at all (so the value is inert there).
     page_recall_keyword_similarity: str = "containment_mean"
+    # MemMachine's contextualized retrieval (`MemMachineContextualize`). These
+    # are upstream's `query_memory` DEFAULTS, not its LoCoMo run: that run is
+    # `limit=30, expand_context=3` (`evaluation/episodic_memory/
+    # locomo_search.py`), an operating point of the harness rather than of the
+    # library. Same split as MemoryOS's `page_recall_cap`, and for the same
+    # reason — a default that quietly carries the eval lineage's number makes
+    # every "default config" run a mislabeled eval-lineage run.
+    memmachine_expand_context: int = 0
+    memmachine_context_limit: int = 20
 
     def slot_default(self, slot: str) -> str | None:
         """`overrides[slot]` if set, else the profile's default class name for
@@ -192,5 +201,11 @@ def load_config(path: str | Path) -> AgmemConfig:
         ),
         page_recall_keyword_similarity=retrieval.get(
             "page_recall_keyword_similarity", defaults.page_recall_keyword_similarity
+        ),
+        memmachine_expand_context=retrieval.get(
+            "memmachine_expand_context", defaults.memmachine_expand_context
+        ),
+        memmachine_context_limit=retrieval.get(
+            "memmachine_context_limit", defaults.memmachine_context_limit
         ),
     )

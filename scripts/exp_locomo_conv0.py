@@ -151,6 +151,8 @@ def run(
     recipe: SearchRecipe | None = None,
     page_recall_cap: int | None = None,
     memoryos_lineage: str = "pypi",
+    memmachine_expand_context: int | None = None,
+    memmachine_context_limit: int | None = None,
 ) -> dict:
     """Run one config end-to-end: build a fresh `AgenticMemory`, ingest
     `sample` (flushing tail buffers and calling `consolidate()`), answer the
@@ -188,6 +190,14 @@ def run(
     # opinion about it.
     if page_recall_cap is not None:
         read_path["page_recall_cap"] = page_recall_cap
+    # MemMachine's search recipe, split out for the same reason: `AgmemConfig`
+    # holds upstream's LIBRARY defaults (expand 0 / limit 20) while its LoCoMo
+    # harness runs 3 / 30, and a default carrying the harness's numbers would
+    # make every other config a mislabeled eval-lineage run.
+    if memmachine_expand_context is not None:
+        read_path["memmachine_expand_context"] = memmachine_expand_context
+    if memmachine_context_limit is not None:
+        read_path["memmachine_context_limit"] = memmachine_context_limit
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}",
         organizers=organizers,
@@ -545,6 +555,44 @@ def main() -> None:
             # docs/09 predates the two-stage page recall, so its `pages` hits
             # were segment SUMMARIES; 0 is what restores that.
             {"page_recall_cap": 0},
+        ),
+        # --- MemMachine (arXiv:2604.04853), the DEPLOYED-CODE lineage its own
+        # LoCoMo harness runs: declarative backend, no short-term memory, so the
+        # write path spends ZERO LLM calls — the first real point between
+        # `passthrough` and `amem` on the extraction axis.
+        # `k=150` is not a tuning choice: upstream over-fetches
+        # `min(5 * limit, 200)` DERIVATIVES and dedups them down to `limit`
+        # EPISODES (`declarative_memory.py::search_scored`), so the derivative-side
+        # k and the episode-side limit are different numbers and both have to be
+        # set. `lexical_types=()` because that vector search is dense-only.
+        # NOT comparable to the paper's 0.9169 as it stands: that run used
+        # text-embedding-3-small and a Cohere `rerank-v3-5` cross-encoder scoring
+        # whole episode CONTEXTS, and with a profile whose reranker cannot score
+        # text the contexts keep their fused order (MemMachineContextualize).
+        "memmachine": (
+            ["memmachine"],
+            ("derivatives",),
+            150,
+            False,
+            None,
+            None,
+            (),
+            None,
+            {"memmachine_expand_context": 3, "memmachine_context_limit": 30},
+        ),
+        # Same organizer, upstream's LIBRARY read defaults instead of its
+        # harness's — the pair says how much of the read path is the method and
+        # how much is the operating point, which is the question the paper's own
+        # abstract raises ("retrieval-stage optimizations outperformed
+        # ingestion-stage improvements").
+        "memmachine_library": (
+            ["memmachine"],
+            ("derivatives",),
+            100,
+            False,
+            None,
+            None,
+            (),
         ),
         # Zep read paths come from the recipe table, not from this tuple: the
         # paper describes three search functions and five rerankers and upstream

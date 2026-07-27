@@ -126,6 +126,25 @@
    feature에 전이되지 않는다. 자세한 건 감사 문서 §7.
    성공 기준은 여전히 논문 F1(admission 결정 F1, oracle 라벨, N=225)이 **아니라** "answer 품질
    유지하며 노트 수·write 토큰 감소"이며, `AdmissionStats`가 그 관측 장비다.
+3b. [x] **MemMachine** (2026-07-27 1순위로 재정렬 → **당일 구현 완료**) — 조사·2차 대조
+   `docs/research/memmachine.md`. `src/agmem/organizers/memmachine/` +
+   read step `MemMachineContextualize`(`retrieval/steps.py`) + 새 메모리 타입 `derivatives`,
+   테스트 17건. 후보 1순위 근거는 **official 코드 유무를 1차 필터로 세운 것**이고
+   (SAGE·Memory Worth·GRAVITY는 코드 미공개라 3자 대조 불가), 자리는 **추출 축의 반대 극단**:
+   write 경로 LLM 콜이 **메시지당 0회**라 `passthrough`(하한)와 A-Mem(turn당 2콜) 사이의
+   첫 실물 중간점이다.
+   **계보 확정 = 배포 코드**(논문의 3-tier 중 `profile`은 코드에 없다). 배포 코드 안에서도
+   백엔드가 둘이라 `MEMMACHINE_PRESETS`로 갈랐다 — `declarative`(공개 LoCoMo 수치의 경로,
+   기본)와 `event`. read operating point는 프리셋이 아니라 레시피(`AgmemConfig.memmachine_*`)로,
+   기본값은 **라이브러리 기본 0/20**이고 legacy 하네스의 3/30은 `memmachine` config가 명시한다
+   (MemoryOS `page_recall_cap` 사고와 같은 처방).
+   **미측정, 그리고 지금 상태로는 논문 0.9169와 비교 금지**: 그 수치는
+   text-embedding-3-small + Cohere `rerank-v3-5`가 **조립된 에피소드 컨텍스트**를 채점한
+   결과이고, 텍스트를 채점할 수 없는 reranker(프로파일 `lite`의 Noop)에서는 컨텍스트가
+   fusion 순서를 그대로 유지한다.
+   부수 발견: 동봉 하네스는 **두 벌**이고 논문 수치를 낸 `evaluation/episodic_memory/` 쪽은
+   `18f1211`에서 실행 불가(5-튜플을 3개로 언팩) — "네 번째 독립 참조"로 쓰려면 이 사실을
+   전제해야 한다.
 4. **GRAVITY** (2순위) — **2026-07-26 재분류: read-path 기법이 아니다.** anchor 3종은 offline
    build phase 산출물이고 standalone 저장되므로 **자체 organizer**(새 메모리 타입 3종 + offline
    단계는 `consolidate()`) **＋** read step 양쪽이 필요하다. ReadStep 레지스트리만으로는 절반도

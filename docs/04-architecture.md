@@ -73,6 +73,9 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   │   ├── organizer.py         #   boundary 분절→서사(시간 절대화)→predict-calibrate 증류
 │   │   │   └── stages.py            #   Segmenter/EpisodeMerger/Integrator/Consolidator
 │   │   │                            #   (fidelity 스위치, docs/11 §4)
+│   │   ├── memmachine/              # 기계적 derivative 인덱싱 (write LLM 콜 0회).
+│   │   │                            #   배포 코드 계보, MEMMACHINE_PRESETS로 declarative/event
+│   │   │                            #   분리 — 읽기는 retrieval/steps.py의 Contextualize
 │   │   ├── zep_graph/               # entity 추출→resolution→fact→invalidation
 │   │   ├── ace/                     # Generator/Reflector/Curator + playbook delta
 │   │   ├── reasoning_bank/          # self-judge→성공/실패 증류→append (+MaTTS 훅)
@@ -289,8 +292,9 @@ read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드�
 | ACE | ADD(bullet), UPDATE(카운터), MERGE(dedup) | `playbook` | doc+vec(dedup용) |
 | ReasoningBank | ADD(strategy), ADD(experience) | `strategies`, `experiences` | doc+vec |
 | G-Memory | ADD(traj/insight), UPDATE(reward), DELETE(prune) | `strategies` | doc+vec+graph |
+| MemMachine | ADD(derivative) — LLM 콜 없음 | `derivatives` | doc+vec |
 
-→ 8개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
+→ 9개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
 A-Mem/ReasoningBank로 먼저 검증.
 
 **memory type은 방법론 전용이 아니다**: `semantic`을 Nemori와 MemoryOS가, `strategies`를

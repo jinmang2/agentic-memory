@@ -51,6 +51,8 @@ class RetrievalPipeline:
         page_recall_threshold: float = 0.1,
         page_recall_segment_threshold: float = 0.1,
         page_recall_keyword_similarity: str = "containment_mean",
+        memmachine_expand_context: int = 0,
+        memmachine_context_limit: int = 20,
         read_steps: dict[str, ReadStep] | None = None,
     ) -> None:
         """``reranker=None`` keeps RRF fusion order as-is. ``lexical_types``
@@ -96,6 +98,8 @@ class RetrievalPipeline:
                 page_recall_threshold=page_recall_threshold,
                 page_recall_segment_threshold=page_recall_segment_threshold,
                 page_recall_keyword_similarity=page_recall_keyword_similarity,
+                memmachine_expand_context=memmachine_expand_context,
+                memmachine_context_limit=memmachine_context_limit,
             )
         )
 
@@ -211,6 +215,8 @@ class RetrievalPipeline:
                         query_embedding=query_embedding,
                         vector_store=self.vector_store,
                         query_keywords=frozenset(query_keywords or ()),
+                        query=query,
+                        reranker=self.reranker,
                     ),
                 )
 
