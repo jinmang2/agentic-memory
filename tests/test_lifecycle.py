@@ -491,7 +491,7 @@ def test_zep_declares_facts_before_entities():
     same fact is served twice."""
     from agmem.organizers.zep_graph import ZepGraphOrganizer
 
-    assert ZepGraphOrganizer.produces == ("facts", "entities")
+    assert ZepGraphOrganizer.produces == ("facts", "entities", "communities")
 
 
 def test_explicit_memory_types_override_the_default():
@@ -524,7 +524,7 @@ def test_memoryos_consumes_nemori_episodes():
                 {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},  # episode
                 {"facts": []},  # cold-start direct extract
                 {
-                    "groups": [{"topic": "g", "summary": "s", "message_indexes": [0]}]
+                    "groups": [{"topic": "g", "summary": "s", "page_indexes": [0]}]
                 },  # MemoryOS segment
             ],
         }
@@ -593,12 +593,12 @@ def test_memoryos_heat_eviction_drops_reverse_index():
             "distill": [
                 {
                     "groups": [
-                        {"topic": "g1", "summary": "alpha", "keywords": [], "message_indexes": [0]}
+                        {"topic": "g1", "summary": "alpha", "keywords": [], "page_indexes": [0]}
                     ]
                 },
                 {
                     "groups": [
-                        {"topic": "g2", "summary": "beta", "keywords": [], "message_indexes": [0]}
+                        {"topic": "g2", "summary": "beta", "keywords": [], "page_indexes": [0]}
                     ]
                 },
             ]
@@ -714,12 +714,17 @@ def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
     from agmem.organizers.experimental import ChainedConsumer
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=2), "episodes")
-    mem = _mk(organizers=[mos])  # no LLM -> one mechanical page over the batch
+    # A chained unit always opens its own page (`ChainedConsumer` feeds
+    # role="episode", so every unit shares the page key), and the rolling
+    # eviction hands MTM one page at a time — so a 2-source segment comes from
+    # the drain path, which batches whatever is still buffered.
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True), "episodes")
+    mem = _mk(organizers=[mos])  # no LLM -> one mechanical segment over the batch
     mem._propagate_events(
         [_ev(OpType.ADD, "e1", content="one"), _ev(OpType.ADD, "e2", content="two")],
         actor="src",
     )
+    mem.flush()
     pages = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.ADD]
     assert len(pages) == 1 and set(pages[0].payload["source_episode_ids"]) == {"e1", "e2"}
 
@@ -752,9 +757,10 @@ def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v2")], actor="src")
     assert [e.content for e in inner._stm] == ["v2"]  # replaced in place
 
-    # fill capacity -> e1(v2)+e2 evicted into a page; STM drains
+    # reach capacity -> the OLDEST page (e1) rolls into MTM and e2 stays
+    # resident, which is upstream's FIFO window rather than a full drain
     mem._propagate_events([_ev(OpType.ADD, "e2", content="w1")], actor="src")
-    assert inner._stm == []
+    assert [e.id for e in inner._stm] == ["e2"]
     pages_before = [o for o in mem.log.tail(30) if o.target_type == "pages"]
     # UPDATE for the now-paged e1 must be ignored -> no new page op
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v3")], actor="src")
@@ -877,7 +883,10 @@ def test_chained_flush_drains_the_wrapped_organizers_buffer():
     from agmem.organizers.experimental import ChainedConsumer
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3), "episodes")
+    # flush_stm_on_drain: the STM tail stays resident by default (upstream never
+    # drains it — `recent_context` serves it instead), so the drain this test is
+    # about has to be asked for.
+    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True), "episodes")
     mem = _mk(organizers=[mos])
     try:
         mem._apply_ops(

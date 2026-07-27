@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 from agmem.core.types import BITEMPORAL_TYPES, ScoredItem
 from agmem.stores.base import DocStore
 
@@ -59,6 +61,17 @@ class ReadContext:
     namespace: str | None
     graph_store: Any | None = None
     bundle_ids: set[str] = field(default_factory=set)
+    # For steps that score candidates the recall channels never ranked —
+    # MemoryOS's second stage scores the PAGES inside a matched segment, and
+    # those pages are not items, so there is no ranking to reuse.
+    query_embedding: list[float] | None = None
+    vector_store: Any | None = None
+    # Query keywords, when the CALLER extracted them. Not derived here: the only
+    # methodology that uses them gets them from an LLM call
+    # (MemoryOS eval's `llm_extract_keywords`), and the retrieval pipeline has no
+    # LLM — the same reason A-Mem's keyword query rewrite lives in the bench.
+    # Empty means "no keyword channel", which is also the pypi lineage's state.
+    query_keywords: frozenset[str] = frozenset()
 
 
 class ReadStep:
@@ -150,9 +163,24 @@ class ExpandExperiences(ReadStep):
 
 
 class GraphRecall(ReadStep):
-    """Zep GraphRecall (round-5 ④, minimal form): retrieved entity nodes pull
-    their incident ACTIVE edges; the edges' fact items join the bundle (deduped
+    """Zep GraphRecall (round-5 ④): retrieved entity nodes pull the ACTIVE edges
+    within ``hops`` of them; those edges' fact items join the bundle (deduped
     against already-selected facts), scored just below their entity.
+
+    Seeding matches upstream: when ``search()`` is given no explicit BFS origins
+    it derives them from what the other channels already returned
+    (``search.py``: ``origin_node_uuids = [node.uuid for result in
+    search_results ...]``), which is exactly these hits.
+
+    Two things do NOT match, and both are open decisions rather than oversights
+    (2026-07-27 round-7). Upstream's BFS is a ranked CHANNEL fused with the
+    others, where this appends at a flat score below the top hit; and BFS
+    appears only in upstream's cross-encoder recipes — ``COMBINED_HYBRID_
+    SEARCH_RRF``, which the zep config otherwise mirrors, has no BFS channel at
+    all. So a config with both RRF fusion and this step is a blend of two
+    recipes. ``hops`` exists so the alternative is reachable: upstream's
+    ``MAX_SEARCH_DEPTH`` is 3, and ``graph_expansion_cap=0`` drops the step
+    entirely for the pure-RRF reading.
 
     No-op when no graph store is wired.
 
@@ -164,15 +192,27 @@ class GraphRecall(ReadStep):
     The A-Mem link expansion deliberately keeps its store-order emission — that
     one does back measured numbers."""
 
-    def __init__(self, cap: int = 10) -> None:
+    def __init__(self, cap: int = 10, hops: int = 1) -> None:
         self.cap = cap
+        self.hops = hops
 
     def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
         if ctx.graph_store is None:
             return hits
+        namespace = ctx.namespace or "main"
         seen = set(ctx.bundle_ids) | {s.item.data.get("id") for s in hits}
-        node_ids = [s.item.data.get("id") for s in hits]
-        edges = ctx.graph_store.edges_for_nodes([n for n in node_ids if n], ctx.namespace or "main")
+        node_ids = [n for n in (s.item.data.get("id") for s in hits) if n]
+        if self.hops > 1:
+            # Edges within `hops` of a seed are the edges incident to everything
+            # reachable in hops - 1, so the walk stops one short of the cap.
+            walked = list(node_ids)
+            for node_id in node_ids:
+                walked.extend(
+                    str(n["id"])
+                    for n in ctx.graph_store.neighbors(node_id, namespace, self.hops - 1)
+                )
+            node_ids = list(dict.fromkeys(walked))
+        edges = ctx.graph_store.edges_for_nodes(node_ids, namespace)
         wanted: dict[str, float] = {}
         base = max((s.score for s in hits), default=0.0) * 0.9
         for e in edges:
@@ -205,10 +245,200 @@ class GraphRecall(ReadStep):
         return out
 
 
+class MemoryOSPageRecall(ReadStep):
+    """MemoryOS's second retrieval stage: matched SEGMENTS expand into the
+    verbatim PAGES they hold, and the pages are what reaches the prompt.
+
+    Upstream retrieval is two stages (``mid_term.search_sessions`` +
+    ``Retriever._retrieve_mid_term_context``): a session is matched on its
+    summary embedding, then every page inside it is scored against the query,
+    and a global heap keeps the best ``retrieval_queue_capacity`` PAGES across
+    all matched sessions. The session summary itself is never injected — it is
+    a matching key, not context. Serving segment summaries instead, which this
+    read path did before, is a channel upstream does not have.
+
+    Two deviations, both forced by where the data lives:
+
+    - Upstream embeds the page as one string (``f"User: {u} Assiant: {a}"``,
+      typo theirs) and dots it with the query. Pages are not items here, so
+      there is no page vector; the score is the best of the page's member
+      messages' own vectors, which is the same text scored in halves. That also
+      keeps the step free of an embedder call per page per query.
+    - The heat feedback (``N_visit``/LFU, which upstream bumps inside
+      ``search_sessions`` for every session with a matched page) still works
+      because the emitted page keeps its first message's id, and MemoryOS's
+      ``on_retrieval`` maps that back to the segment through ``_unit_pages``.
+
+    ``cap`` is upstream's ``retrieval_queue_capacity``; ``threshold`` its
+    ``page_similarity_threshold``. A segment with no page over the threshold
+    contributes nothing — as upstream's ``if matched_pages_in_session`` does.
+
+    ``segment_threshold`` is the FIRST stage's gate, which both lineages apply
+    and this step used to skip: a segment whose relevance misses it is not
+    expanded at all (``if session_relevance_score >= segment_similarity_
+    threshold``). Relevance is scored the way upstream scores it, not by reusing
+    the fused rank — ``semantic_sim + keyword_alpha * s_topic_keywords``.
+
+    That keyword term is where the copies part, and there are THREE of them, not
+    two — reading only one is how it got called dead:
+
+    - ``memoryos-pypi`` sets ``query_keywords = set()`` right above the loop
+      ("Keywords extraction removed"), so its term is always 0, the score is
+      plain cosine, and no LLM call happens at read time.
+    - ``memoryos-chromadb`` derives query keywords by running the WRITE-side
+      multi-topic summary prompt over the query (``extract_keywords_from_multi_
+      summary`` -> ``gpt_generate_multi_summary``, no count cap) and overlaps
+      them with **Jaccard**.
+    - ``eval/`` — the harness that produced the paper's LoCoMo numbers — calls a
+      dedicated extractor (``llm_extract_keywords``, at most three keywords) and
+      overlaps them with the **containment mean**, the same formula its merge
+      step uses.
+
+    So ``keyword_similarity`` is a knob rather than a constant, and it has to
+    agree with ``MemoryOSOrganizer._keyword_overlap``: one copy uses one formula
+    on both sides, and pairing eval's read formula with pypi's merge formula is a
+    combination no upstream has. ``test_the_read_and_merge_keyword_formulas_are
+    _the_same_function`` pins that.
+
+    Passing ``ctx.query_keywords`` selects the live version; empty keywords
+    reproduce pypi exactly, so one step covers all three. (Upstream's third term,
+    a recency factor, is dead in every copy: the eval file assigns
+    ``lambda_t = 1`` with the decay line commented out, and the other two never
+    apply one in search.)
+    """
+
+    def __init__(
+        self,
+        cap: int = 10,
+        threshold: float = 0.1,
+        segment_threshold: float = 0.1,
+        keyword_alpha: float = 1.0,
+        keyword_similarity: str = "containment_mean",
+    ) -> None:
+        self.cap = cap
+        self.threshold = threshold
+        self.segment_threshold = segment_threshold
+        self.keyword_alpha = keyword_alpha
+        self.keyword_similarity = keyword_similarity
+
+    def _relevance(self, data: dict, cosine: float, query_keywords: frozenset[str]) -> float:
+        """Upstream's ``session_relevance_score``: cosine plus the keyword
+        overlap, which is 0 whenever either side has no keywords — upstream
+        guards with ``if query_keywords and session_keywords``."""
+        segment_keywords = {str(k).lower() for k in data.get("keywords") or []}
+        if not query_keywords or not segment_keywords:
+            return cosine
+        overlap = len(query_keywords & segment_keywords)
+        if not overlap:
+            return cosine
+        if self.keyword_similarity == "jaccard":
+            s_topic = overlap / len(query_keywords | segment_keywords)
+        else:
+            s_topic = 0.5 * (overlap / len(query_keywords) + overlap / len(segment_keywords))
+        return cosine + self.keyword_alpha * s_topic
+
+    def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
+        if ctx.query_embedding is None or ctx.vector_store is None or not hits:
+            return hits
+        query = np.asarray(ctx.query_embedding, dtype=np.float32)
+        query_norm = float(np.linalg.norm(query)) or 1.0
+
+        scored: list[tuple[float, str, dict, ScoredItem]] = []
+        # An item with no page structure is not a MemoryOS segment — a `pages`
+        # row written straight to the store, or one from before segments
+        # recorded `page_units`. It passes through untouched, keeping this step
+        # type-keyed rather than organizer-keyed (module docstring). "Has pages
+        # but none matched" is the different case, and that one drops.
+        passthrough = [s for s in hits if not s.item.data.get("page_units")]
+        segment_vectors = ctx.vector_store.get(
+            [sid for s in hits if (sid := s.item.data.get("id")) and s.item.data.get("page_units")]
+        )
+        for segment in hits:
+            data = segment.item.data
+            page_units = [
+                [str(unit) for unit in page] for page in data.get("page_units", []) if page
+            ]
+            if not page_units:
+                continue
+            # Stage one: does this segment clear the relevance gate at all?
+            # Scored from the segment's own summary vector, because that is what
+            # upstream matches on and what the fused rank is NOT.
+            if (
+                self._relevance(
+                    data,
+                    _cosine(segment_vectors.get(data.get("id")), query, query_norm),
+                    ctx.query_keywords,
+                )
+                < self.segment_threshold
+            ):
+                continue
+            vectors = ctx.vector_store.get([unit for page in page_units for unit in page])
+            for page in page_units:
+                best = max(
+                    (_cosine(vectors.get(unit_id), query, query_norm) for unit_id in page),
+                    default=0.0,
+                )
+                if best >= self.threshold:
+                    scored.append((best, page[0], {"units": page, "segment": data}, segment))
+
+        if not scored:
+            # Nothing cleared the page threshold. Upstream would return an empty
+            # retrieval queue; returning the segments instead would reintroduce
+            # the summary channel it does not have.
+            return passthrough
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        out: list[ScoredItem] = list(passthrough)
+        for score, page_id, payload, segment in scored[: self.cap]:
+            episodes = ctx.doc_store.get_episodes(payload["units"])
+            if not episodes:
+                continue
+            data = {
+                "id": page_id,
+                "content": "\n".join(f"{_speaker(e)}: {e.content}" for e in episodes),
+                "timestamp": episodes[0].timestamp.isoformat(),
+                "source_episode_ids": [e.id for e in episodes],
+            }
+            # The chain summary rides with the page, which is where upstream puts
+            # it ("Conversation chain overview:" per retrieved page); it is stored
+            # on the segment only because the segment is our MTM item.
+            if payload["segment"].get("meta_info"):
+                data["meta_info"] = payload["segment"]["meta_info"]
+            out.append(
+                ScoredItem(
+                    item=_DictItem(data),
+                    memory_type=segment.memory_type,
+                    score=score,
+                    provenance=data["source_episode_ids"],
+                )
+            )
+        return out
+
+
+def _cosine(vector: Any, query: Any, query_norm: float) -> float:
+    """Cosine of a stored vector against the pre-normalised query, 0.0 when the
+    vector is missing (an id the vector store has no row for)."""
+    if not vector:
+        return 0.0
+    candidate = np.asarray(vector, dtype=np.float32)
+    denominator = (float(np.linalg.norm(candidate)) or 1.0) * query_norm
+    return float(candidate @ query) / denominator
+
+
+def _speaker(episode: Any) -> str:
+    """Whose turn this is — the ingest's ``meta["speaker"]`` (LoCoMo's two named
+    speakers) when present, else the role."""
+    return str((getattr(episode, "meta", None) or {}).get("speaker") or episode.role)
+
+
 def default_read_steps(
     link_expansion_cap: int = 5,
     attach_sources_top_r: int = 2,
     graph_expansion_cap: int = 10,
+    graph_expansion_hops: int = 1,
+    page_recall_cap: int = 10,
+    page_recall_threshold: float = 0.1,
+    page_recall_segment_threshold: float = 0.1,
+    page_recall_keyword_similarity: str = "containment_mean",
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 
@@ -221,7 +451,14 @@ def default_read_steps(
     if attach_sources_top_r:
         steps["episodes"] = AttachSources(attach_sources_top_r)
     if graph_expansion_cap:
-        steps["entities"] = GraphRecall(graph_expansion_cap)
+        steps["entities"] = GraphRecall(graph_expansion_cap, graph_expansion_hops)
+    if page_recall_cap:
+        steps["pages"] = MemoryOSPageRecall(
+            page_recall_cap,
+            page_recall_threshold,
+            page_recall_segment_threshold,
+            keyword_similarity=page_recall_keyword_similarity,
+        )
     return steps
 
 
@@ -261,6 +498,11 @@ class _DictItem:
             parts.append(f"description: {self.data['description']}")
         if self.data.get("context"):
             parts.append(f"context: {self.data['context']}")
+        # MemoryOS's conversation-chain summary, injected beside the memory it
+        # belongs to exactly as upstream's QA prompt does ("Conversation chain
+        # overview: {meta_info}", memoryos.py get_response / the LoCoMo driver).
+        if self.data.get("meta_info"):
+            parts.append(f"Conversation chain overview: {self.data['meta_info']}")
         if self.data.get("tags"):
             parts.append(f"tags: {', '.join(map(str, self.data['tags']))}")
         if self.data.get("_source_messages"):

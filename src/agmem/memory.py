@@ -7,6 +7,7 @@ logged append-only before being applied to stores.
 
 from __future__ import annotations
 
+import inspect
 import logging
 import queue
 import threading
@@ -229,10 +230,7 @@ class AgenticMemory:
             strict=self.config.strict,
         )
         self._degradations.extend(notes)
-        if reranker_cls.__name__ == "LLMReranker":
-            self.reranker = reranker_cls(self.structured)
-        else:
-            self.reranker = reranker_cls()
+        self.reranker = self._build_reranker(reranker_cls)
         self.pipeline = RetrievalPipeline(
             self.doc_store,
             self.vector_store,
@@ -240,9 +238,16 @@ class AgenticMemory:
             reranker=self.reranker,
             graph_store=self.graph_store,
             lexical_types=self.config.lexical_types,
+            bfs_types=self.config.bfs_types,
+            bfs_max_depth=self.config.bfs_max_depth,
             link_expansion_cap=self.config.link_expansion_cap,
             attach_sources_top_r=self.config.attach_sources_top_r,
             graph_expansion_cap=self.config.graph_expansion_cap,
+            graph_expansion_hops=self.config.graph_expansion_hops,
+            page_recall_cap=self.config.page_recall_cap,
+            page_recall_threshold=self.config.page_recall_threshold,
+            page_recall_segment_threshold=self.config.page_recall_segment_threshold,
+            page_recall_keyword_similarity=self.config.page_recall_keyword_similarity,
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------
@@ -255,6 +260,73 @@ class AgenticMemory:
                 target=self._drain, args=(self._queue,), daemon=True, name="agmem-worker"
             )
             self._worker.start()
+
+    def recent_episode_entity_ids(self, n_episodes: int = 4, limit: int = 20) -> list[str]:
+        """Entity nodes mentioned by the ``n_episodes`` most recent episodes —
+        BFS seeds for Zep's recency case (paper §3.1: "particularly valuable when
+        using recent episodes as seeds … allowing the system to incorporate
+        recently mentioned entities and relationships into the retrieved
+        context").
+
+        Membership comes from the entity items' own ``source_episode_ids``, which
+        is the provenance every organizer records, rather than from a MENTIONS
+        edge: upstream walks ``RELATES_TO|MENTIONS`` because episodes are nodes in
+        its graph, while raw episodes live in the doc store here. Same relation,
+        different storage.
+
+        Returns at most ``limit`` ids, newest episode first, so a caller passing
+        it straight to ``search(bfs_origin_ids=...)`` gets a bounded frontier.
+        Empty when nothing has been ingested or no entity references those
+        episodes."""
+        episodes = self.doc_store.list_episodes(namespace=self.namespace)
+        if not episodes or n_episodes < 1:
+            return []
+        recent = [e.id for e in episodes[-n_episodes:]][::-1]
+        rank = {episode_id: i for i, episode_id in enumerate(recent)}
+        scored: list[tuple[int, str]] = []
+        for item in self.doc_store.list_items("entities", namespace=self.namespace):
+            best = min(
+                (
+                    rank[episode_id]
+                    for episode_id in item.get("source_episode_ids", [])
+                    if episode_id in rank
+                ),
+                default=None,
+            )
+            if best is not None and item.get("id"):
+                scored.append((best, str(item["id"])))
+        scored.sort()
+        return [entity_id for _, entity_id in scored[:limit]]
+
+    def _build_reranker(self, reranker_cls: type):
+        """Construct the resolved reranker, injecting what only the facade has.
+
+        Three of the six need something at construction time and the sources
+        differ, which is why this is not a bare ``reranker_cls()``: the LLM
+        reranker needs the structured caller, node-distance needs the graph
+        store and namespace (framework handles, never config), and the rest
+        take their tuning from ``config.reranker_params`` — the Zep paper's
+        BGE-m3 cross-encoder is a ``model_name``, MMR at mmr_lambda=1 is a
+        ``lambda_``. Unknown params for the resolved class are dropped with a
+        warning rather than raising, because the resolver may have degraded to a
+        different class than the config was written for."""
+        params = dict(self.config.reranker_params)
+        if reranker_cls.__name__ == "LLMReranker":
+            return reranker_cls(self.structured)
+        if reranker_cls.__name__ == "NodeDistanceReranker":
+            params.setdefault("graph_store", self.graph_store)
+            params.setdefault("namespace", self.namespace)
+        if params:
+            accepted = set(inspect.signature(reranker_cls).parameters)
+            unknown = sorted(set(params) - accepted)
+            if unknown:
+                logger.warning(
+                    "reranker_params %s not accepted by %s (resolved class); ignored",
+                    unknown,
+                    reranker_cls.__name__,
+                )
+            params = {key: value for key, value in params.items() if key in accepted}
+        return reranker_cls(**params)
 
     # ---- write ------------------------------------------------------------
 
@@ -301,6 +373,39 @@ class AgenticMemory:
         self._dispatch(
             lambda: self._apply_from_all(
                 lambda org: org.on_task_end(trajectory, outcome, task, self._ctx)
+            )
+        )
+
+    def add_scaled_task_result(
+        self, trajectories: list[list[dict]], task: str, agent_id: str = "agent"
+    ) -> None:
+        """Record ONE task the agent attempted several times, and dispatch
+        ``on_scaled_task_end`` so a methodology can distil from the contrast
+        between the attempts (ReasoningBank's MaTTS parallel scaling).
+
+        One episode for the task, not one per trajectory: the attempts are the
+        same task, and the facade stores only the task line anyway (see
+        ``add_task_result``). ``meta["attempts"]`` records how many there were,
+        since that is the only trace of the scaling left in the store.
+
+        No ``outcome`` parameter, because the mechanism has none — the point is a
+        MIXTURE of successes and failures, and upstream's own induction never
+        reads the per-trajectory labels it computes. Use ``add_task_result`` when
+        there is one trajectory and a known outcome."""
+        episode = Episode(
+            content=task,
+            role="task",
+            namespace=self.namespace,
+            meta={
+                "agent_id": agent_id,
+                "attempts": len(trajectories),
+                "steps": sum(len(t) for t in trajectories),
+            },
+        )
+        self._ingest_episode(episode, {})
+        self._dispatch(
+            lambda: self._apply_from_all(
+                lambda org: org.on_scaled_task_end(trajectories, task, self._ctx)
             )
         )
 
@@ -531,6 +636,7 @@ class AgenticMemory:
                     memory_type=op.target_type,
                     namespace=self.namespace,
                 )
+            self._apply_graph(op.target_type, op.target_id, data)
         elif op.op == OpType.INVALIDATE:
             items = self.doc_store.get_items([op.target_id], op.target_type)
             if items:
@@ -543,6 +649,8 @@ class AgenticMemory:
                 if op.target_type not in BITEMPORAL_TYPES:
                     # 서빙 제외 보장 — ghost-hit 방지(X1 계열, spec §1.3); doc/로그엔 남음
                     self.vector_store.delete([op.target_id])
+                if op.target_type == "facts" and self.graph_store is not None:
+                    self.graph_store.invalidate_edge(op.target_id, str(data["invalid_at"]))
         elif op.op in (OpType.LINK, OpType.TAG):
             items = self.doc_store.get_items([op.target_id], op.target_type)
             if items:
@@ -563,6 +671,80 @@ class AgenticMemory:
                 {"id": op.target_id, "deleted": True},
             )
             self.vector_store.delete([op.target_id])
+            if op.target_type == "communities" and self.graph_store is not None:
+                # Communities are derived state, so a DELETE really removes the
+                # node and its membership — unlike facts, where INVALIDATE keeps
+                # the edge and only marks it. Leaving the graph copy behind would
+                # let a stale community keep answering `community_of_node` and so
+                # steer the next incremental extension.
+                self.graph_store.remove_community(op.target_id)
+
+    def _apply_graph(self, target_type: str, target_id: str, data: dict) -> None:
+        """Mirror an applied ``entities``/``facts`` item into the graph store.
+
+        The graph used to be written by ``ZepGraphOrganizer`` itself, inline in
+        ``on_message`` — the only organizer that touched a store directly, and a
+        hole in the guarantee the rest of this class exists to provide. Three
+        things followed from it: the evolution log could not rebuild the graph
+        (a replayed store left ``GraphRecall`` reading an empty one and silently
+        degrading Zep's read path to plain vector RAG), a hook that raised
+        between a node write and its returned ops left the graph ahead of the
+        doc store, and no audit of "what did this memory do" could see a graph
+        edit at all. Applying it here instead makes graph state a pure function
+        of the op stream, like every other store (2026-07-27 audit B3).
+
+        Idempotent by construction — every store method it calls is a full-row
+        upsert keyed by id (membership included), so replaying a log converges
+        rather than duplicating."""
+        if self.graph_store is None or target_type not in ("entities", "facts", "communities"):
+            return
+        if target_type == "communities":
+            # The third subgraph (Zep §2.2.4). Membership travels in the payload
+            # rather than as separate ops for the same reason fact endpoints do:
+            # it is not recoverable at apply time, and the op has to be enough to
+            # rebuild the graph on its own.
+            self.graph_store.upsert_community(
+                target_id,
+                self.namespace,
+                str(data.get("name", "")),
+                str(data.get("summary", "")),
+            )
+            self.graph_store.set_community_members(
+                target_id, self.namespace, [str(m) for m in data.get("member_ids", [])]
+            )
+            return
+        if target_type == "entities":
+            self.graph_store.upsert_node(
+                target_id,
+                self.namespace,
+                str(data.get("name", "")),
+                str(data.get("summary", "")),
+                str(data.get("entity_type", "Entity")),
+            )
+            return
+        src, dst = data.get("subject_id"), data.get("object_id")
+        if not src or not dst:
+            # A fact with no endpoint ids cannot be an edge. Loud rather than
+            # skipped: it means an emitter dropped them from the payload, and
+            # the symptom would otherwise be a graph that is quietly incomplete.
+            logger.warning(
+                "fact %s has no subject_id/object_id; stored as an item but NOT as a graph edge",
+                target_id,
+            )
+            return
+        self.graph_store.upsert_edge(
+            target_id,
+            self.namespace,
+            str(src),
+            str(dst),
+            str(data.get("predicate") or "related_to"),
+            str(data.get("content", "")),
+            valid_at=data.get("valid_at"),
+        )
+        if data.get("invalid_at"):
+            # upsert_edge is a full-row replace and clears invalid_at/expired_at,
+            # so an already-invalidated fact must be re-stamped after it.
+            self.graph_store.invalidate_edge(target_id, str(data["invalid_at"]))
 
     # ---- read ---------------------------------------------------------------
 
@@ -587,6 +769,9 @@ class AgenticMemory:
         query: str,
         memory_types: Sequence[str] | None = None,
         k: int | dict[str, int] = 10,
+        center_node_id: str | None = None,
+        bfs_origin_ids: list[str] | None = None,
+        query_keywords: set[str] | frozenset[str] | None = None,
     ) -> MemoryBundle:
         """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
         read->write hooks.
@@ -612,9 +797,31 @@ class AgenticMemory:
         cost bound structural instead of a property two organizers happen to have. The
         cost is that a chained consumer cannot observe read-path mutations; when some
         methodology needs that, it should be an explicit decision rather than something
-        inherited from the write path's fan-out."""
+        inherited from the write path's fan-out.
+
+        ``center_node_id`` is Zep's ``center_node_uuid``: the centroid the
+        node-distance reranker measures graph distance from (paper §3.2). Only
+        that reranker reads it, and it is a per-query choice, so it travels as an
+        argument rather than as config. ``bfs_origin_ids`` is its
+        ``bfs_origin_node_uuids``, the explicit seed set for the graph BFS
+        channel — see ``recent_episode_entity_ids`` for the recency seeding the
+        paper motivates it with.
+
+        ``query_keywords`` is MemoryOS's eval-lineage keyword term: that harness
+        runs an LLM keyword extraction per query and adds the overlap to the
+        segment score, where the pypi library disabled the same term. The caller
+        supplies them because the extraction is an LLM call and this layer makes
+        none (``MemoryOSPageRecall``)."""
         types = tuple(memory_types) if memory_types is not None else self.default_memory_types
-        bundle = self.pipeline.search(query, k=k, memory_types=types, namespace=self.namespace)
+        bundle = self.pipeline.search(
+            query,
+            k=k,
+            memory_types=types,
+            namespace=self.namespace,
+            center_node_id=center_node_id,
+            bfs_origin_ids=bfs_origin_ids,
+            query_keywords=query_keywords,
+        )
         # read->write feedback (round-5): organizers see what was served.
         hits = [
             (

@@ -66,13 +66,52 @@ class AgmemConfig:
     # (Zep hybrid search adds "facts"/"entities"; A-Mem/Nemori stay
     # dense-only as their upstream evals do)
     lexical_types: tuple[str, ...] = ("episodic",)
+    # Memory types that additionally get Zep's graph BFS channel (φ_bfs), and
+    # how deep it walks. Upstream's MAX_SEARCH_DEPTH is 3 and applies only where
+    # a recipe enables the channel, which is why the depth has a default but the
+    # type set is empty: no methodology except Zep searches a graph.
+    bfs_types: tuple[str, ...] = ()
+    bfs_max_depth: int = 3
+    # Which reranker (slot resolution) gets which constructor arguments —
+    # e.g. the Zep paper's BGE-m3 cross-encoder is
+    # {"model_name": "BAAI/bge-reranker-v2-m3"}, and MMR at mmr_lambda=1 is
+    # {"lambda_": 1.0}. Kept as a dict rather than one field per reranker
+    # because the recipes vary exactly one argument each.
+    reranker_params: dict[str, Any] = field(default_factory=dict)
     # Read-path post-step knobs (retrieval/steps.py). Defaults reproduce the
     # methodology-faithful behavior; 0 disables the step. The first two are
     # documented deviations from upstream (A-Mem caps per hit, not globally),
     # so they must be reachable from config to be ablatable at all.
     link_expansion_cap: int = 5  # A-Mem 1-hop note-link expansion, global cap
     attach_sources_top_r: int = 2  # Nemori r: top-r episodes carry source messages
-    graph_expansion_cap: int = 10  # Zep GraphRecall: incident edges per entity hit
+    # GraphRecall (our own entity-hit -> incident-edge expansion) is OFF by
+    # default now that `bfs_types` expresses Zep's actual φ_bfs channel; it was
+    # only ever a stand-in for it. Non-zero revives it — see `GraphRecall`.
+    graph_expansion_cap: int = 0
+    graph_expansion_hops: int = 1
+    # MemoryOS second-stage page recall: upstream `retrieval_queue_capacity`
+    # and `page_similarity_threshold`. 0 disables it, which serves segment
+    # summaries — a channel upstream has no counterpart for.
+    #
+    # The cap is LINEAGE-SPLIT and this default is the pypi one, because
+    # `MEMORYOS_PRESETS` defaults to pypi: the maintained library passes 7
+    # (`memoryos.py` `retrieval_queue_capacity=7`, `Retriever` default 7) while
+    # the harness that produced the paper's LoCoMo numbers passes 10
+    # (`eval/main_loco_parse.py`: `RetrievalAndAnswer(..., queue_capacity=10)`).
+    # It sat at 10 for both, so the default preset was reading with the eval
+    # lineage's queue — the mixing `MEMORYOS_PRESETS` exists to prevent. An
+    # eval-lineage run has to set 10 here explicitly (the `memoryos_eval`
+    # config in `scripts/exp_locomo_conv0.py` does).
+    page_recall_cap: int = 7
+    page_recall_threshold: float = 0.1
+    # First-stage gate, `segment_similarity_threshold` — 0.1 in both lineages'
+    # drivers (the eval class default of 0.8 is overridden by its own caller).
+    page_recall_segment_threshold: float = 0.1
+    # Which copy's keyword-overlap formula the segment score uses. MUST match
+    # the organizer's `keyword_similarity`: `eval` uses the containment mean on
+    # both sides, `memoryos-chromadb` uses Jaccard on both, and `memoryos-pypi`
+    # has no read-side keyword term at all (so the value is inert there).
+    page_recall_keyword_similarity: str = "containment_mean"
 
     def slot_default(self, slot: str) -> str | None:
         """`overrides[slot]` if set, else the profile's default class name for
@@ -137,7 +176,21 @@ def load_config(path: str | Path) -> AgmemConfig:
         sync_write=raw.get("write", {}).get("sync", defaults.sync_write),
         use_guided_json=raw.get("llm_options", {}).get("guided_json", defaults.use_guided_json),
         lexical_types=tuple(retrieval.get("lexical_types", defaults.lexical_types)),
+        bfs_types=tuple(retrieval.get("bfs_types", defaults.bfs_types)),
+        bfs_max_depth=retrieval.get("bfs_max_depth", defaults.bfs_max_depth),
+        reranker_params=dict(retrieval.get("reranker_params", defaults.reranker_params)),
         link_expansion_cap=retrieval.get("link_expansion_cap", defaults.link_expansion_cap),
         attach_sources_top_r=retrieval.get("attach_sources_top_r", defaults.attach_sources_top_r),
         graph_expansion_cap=retrieval.get("graph_expansion_cap", defaults.graph_expansion_cap),
+        graph_expansion_hops=retrieval.get("graph_expansion_hops", defaults.graph_expansion_hops),
+        page_recall_cap=retrieval.get("page_recall_cap", defaults.page_recall_cap),
+        page_recall_threshold=retrieval.get(
+            "page_recall_threshold", defaults.page_recall_threshold
+        ),
+        page_recall_segment_threshold=retrieval.get(
+            "page_recall_segment_threshold", defaults.page_recall_segment_threshold
+        ),
+        page_recall_keyword_similarity=retrieval.get(
+            "page_recall_keyword_similarity", defaults.page_recall_keyword_similarity
+        ),
     )

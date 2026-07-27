@@ -298,3 +298,188 @@ def test_per_type_k_dict():
         assert by_type["episodes"] == 2 and by_type["semantic"] == 5
     finally:
         mem.close()
+
+
+def test_bfs_channel_depth_reaches_the_second_ring():
+    """Zep's third search function as a channel (`retrieval/bfs.py`, φ_bfs).
+
+    Depth is upstream's ``bfs_max_depth`` (``MAX_SEARCH_DEPTH = 3``). Origins are
+    the subject nodes of the facts the other channels found, so on a chain
+    A-B-C a query matching the A-B fact seeds at A: at depth 1 the ring is A
+    alone and BFS adds nothing beyond what dense already returned, while at
+    depth 2 it reaches B and the B-C fact joins as a ranked candidate.
+
+    ``GraphRecall`` is deliberately NOT involved — ``graph_expansion_cap``
+    defaults to 0 now that this channel exists."""
+    from agmem.config import AgmemConfig
+    from agmem.core.ops import MemoryOp, OpType
+
+    def build(depth):
+        mem = AgenticMemory(
+            namespace="t",
+            organizers=["passthrough"],
+            embedder=FakeEmbedder(dim=128),
+            config=AgmemConfig(bfs_types=("facts",), bfs_max_depth=depth),
+        )
+        for node_id, name in (("A", "Alpha"), ("B", "Beta"), ("C", "Gamma")):
+            mem._apply_one(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="entities",
+                    target_id=node_id,
+                    payload={
+                        "id": node_id,
+                        "name": name,
+                        "content": f"{name}: node",
+                        "embedding_text": name,
+                    },
+                )
+            )
+        for edge_id, src, dst in (("e1", "A", "B"), ("e2", "B", "C")):
+            mem._apply_one(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="facts",
+                    target_id=edge_id,
+                    payload={
+                        "id": edge_id,
+                        "content": f"{src} relates to {dst}",
+                        "subject_id": src,
+                        "object_id": dst,
+                        "predicate": "rel",
+                        "embedding_text": f"{src} relates to {dst}",
+                    },
+                )
+            )
+        return mem
+
+    def pulled(depth):
+        mem = build(depth)
+        try:
+            # Drop e2's vector so the dense channel CANNOT return it: with only
+            # two facts stored, a top-k vector search returns both regardless of
+            # similarity, and then the test would pass without BFS running at
+            # all. Reachable only via the graph is exactly the condition this
+            # channel exists for.
+            mem.vector_store.delete(["e2"])
+            bundle = mem.search("A relates to B", memory_types=["facts"], k={"facts": 5})
+            return sorted(s.item.data["id"] for s in bundle.items if s.memory_type == "facts")
+        finally:
+            mem.close()
+
+    assert pulled(1) == ["e1"]  # ring is the origin alone -> nothing new
+    assert pulled(2) == ["e1", "e2"]  # ring reaches B -> the B-C fact joins
+
+
+def test_graph_recall_is_off_unless_asked_for():
+    """``GraphRecall`` was our stand-in for φ_bfs before the channel existed, and
+    it is not a mechanism any upstream recipe has (it appends at a flat score
+    instead of ranking). It stays reachable for ablations, but only explicitly."""
+    from agmem.config import AgmemConfig
+    from agmem.retrieval.steps import GraphRecall, default_read_steps
+
+    assert AgmemConfig().graph_expansion_cap == 0
+    assert "entities" not in default_read_steps(graph_expansion_cap=0)
+    assert isinstance(default_read_steps(graph_expansion_cap=10)["entities"], GraphRecall)
+
+
+def test_reranker_runs_even_when_candidates_fit_in_k():
+    """The gate used to be ``len(fused) > k``, i.e. "only rerank if something has
+    to be dropped". A reranker also decides ORDER, and order outlives truncation:
+    ``MemoryBundle.render`` sorts the whole bundle by score, so a type that
+    skipped reranking keeps RRF scores while a reranked type carries relevance
+    scores, and the two are then compared against one shared budget. Upstream
+    reranks first and truncates second.
+
+    Episode-mentions makes this observable without a model: three facts, k=3, so
+    nothing is dropped and only the order can differ."""
+    from agmem.config import AgmemConfig
+    from agmem.core.ops import MemoryOp, OpType
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(
+            lexical_types=("facts",), overrides={"reranker": "EpisodeMentionsReranker"}
+        ),
+    )
+    try:
+        for i, provenance in enumerate((["a"], ["a", "b", "c"], ["a", "b"])):
+            mem._apply_one(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="facts",
+                    target_id=f"f{i}",
+                    payload={
+                        "id": f"f{i}",
+                        "content": f"cats fact {i}",
+                        "subject_id": "A",
+                        "object_id": "B",
+                        "predicate": "p",
+                        "embedding_text": f"cats fact {i}",
+                        "source_episode_ids": provenance,
+                    },
+                )
+            )
+        bundle = mem.search("cats fact", memory_types=["facts"], k={"facts": 3})
+        served = [s.item.data["id"] for s in bundle.items]
+        assert served == ["f1", "f2", "f0"]  # 3 mentions, then 2, then 1
+    finally:
+        mem.close()
+
+
+def test_node_distance_reranker_orders_by_hops_from_the_centroid():
+    """Zep's node-distance reranker (paper §3.2). The centroid is per-query, so it
+    arrives as ``search(center_node_id=...)`` — upstream's ``center_node_uuid``.
+    Without one the reranker is a no-op, which is also upstream's behavior."""
+    from agmem.config import AgmemConfig
+    from agmem.core.ops import MemoryOp, OpType
+    from agmem.organizers.zep_graph import zep_search_recipe
+
+    recipe = zep_search_recipe("node_distance")
+    kwargs = recipe.config_kwargs()
+    overrides = kwargs.pop("overrides")
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(overrides=overrides, **kwargs),
+    )
+    try:
+        for node_id, name in (("A", "Alpha"), ("B", "Beta"), ("C", "Gamma")):
+            mem._apply_one(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="entities",
+                    target_id=node_id,
+                    payload={
+                        "id": node_id,
+                        "name": name,
+                        "content": f"{name}: person",
+                        "embedding_text": name,
+                    },
+                )
+            )
+        for edge_id, src, dst in (("e1", "A", "B"), ("e2", "B", "C")):
+            mem._apply_one(
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="facts",
+                    target_id=edge_id,
+                    payload={
+                        "id": edge_id,
+                        "content": f"{src} knows {dst}",
+                        "subject_id": src,
+                        "object_id": dst,
+                        "predicate": "knows",
+                        "embedding_text": f"{src} knows {dst}",
+                    },
+                )
+            )
+        chain = mem.search(
+            "person", memory_types=["entities"], k={"entities": 3}, center_node_id="A"
+        )
+        assert [s.item.data["id"] for s in chain.items] == ["A", "B", "C"]
+    finally:
+        mem.close()

@@ -95,6 +95,32 @@ class Organizer:
         ``trajectory`` itself, so this hook is the only place methodologies see it."""
         return []
 
+    def on_scaled_task_end(
+        self, trajectories: list[list[dict]], task: str, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Called once per task for which the harness produced SEVERAL completed
+        trajectories, so a methodology can distil from the contrast between them
+        rather than from any one of them.
+
+        Separate from ``on_task_end`` rather than a wider parameter on it,
+        because the methodologies that have this use a different prompt, a
+        different item budget and a different temperature for it (ReasoningBank's
+        MaTTS: ``PARALLEL_SI``, at most 5 items, t=0.7, against at most 3 at
+        t=1.0 for one trajectory) — folding them together would hide that the
+        contrast is its own mechanism.
+
+        Where the line falls: *generating* the N trajectories belongs to the
+        agent, not here, exactly as ACE's regeneration loop does (round-8 §A3).
+        What belongs here is the induction over the finished set, which upstream
+        also keeps as its own module (``induce_scaling.py`` beside
+        ``induce_memory.py``).
+
+        There is deliberately no per-trajectory outcome parameter: upstream
+        computes the correctness label for each trajectory and then never puts it
+        in the prompt (see ``ReasoningBankOrganizer.on_scaled_task_end``), so a
+        parameter for it would be a channel the mechanism does not have."""
+        return []
+
     def on_retrieval(
         self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
     ) -> list[MemoryOp]:
@@ -144,6 +170,22 @@ class Organizer:
         reach, so a partial tail is not stranded. Buffer-less organizers keep
         the no-op."""
         return []
+
+    def recent_context(self) -> str:
+        """Verbatim recent buffer this methodology injects at QA time, or "".
+
+        Read-only and store-free, unlike every other hook here: some
+        methodologies keep a short window of raw turns that is deliberately NOT
+        indexed and NOT retrieved, and inject it into the answer prompt on every
+        question. MemoryOS's STM is the case that motivates it — upstream's
+        ``get_response`` builds ``history_text`` from
+        ``short_term_memory.get_all()`` — and a retrieval channel cannot stand in
+        for it, because the point is recency rather than similarity.
+
+        Benchmarks call this on every active organizer and prepend what comes
+        back, so a methodology without such a buffer returns "" and contributes
+        nothing."""
+        return ""
 
     def retire(self, superseded: set[str]) -> list[MemoryOp]:
         """Retire derived state whose source units were absorbed by a MERGE.

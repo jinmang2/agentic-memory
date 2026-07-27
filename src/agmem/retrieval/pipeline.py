@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from agmem.core.types import MemoryBundle, ScoredItem
 from agmem.embed.base import Embedder
+from agmem.retrieval.bfs import MAX_SEARCH_DEPTH, bfs_entity_ranking, bfs_fact_ranking
 from agmem.retrieval.fusion import rrf_fuse
 from agmem.retrieval.steps import (
     ReadContext,
@@ -42,25 +43,47 @@ class RetrievalPipeline:
         attach_sources_top_r: int = 2,
         graph_store=None,
         lexical_types: tuple[str, ...] = ("episodic",),
-        graph_expansion_cap: int = 10,
+        bfs_types: tuple[str, ...] = (),
+        bfs_max_depth: int = MAX_SEARCH_DEPTH,
+        graph_expansion_cap: int = 0,
+        graph_expansion_hops: int = 1,
+        page_recall_cap: int = 10,
+        page_recall_threshold: float = 0.1,
+        page_recall_segment_threshold: float = 0.1,
+        page_recall_keyword_similarity: str = "containment_mean",
         read_steps: dict[str, ReadStep] | None = None,
     ) -> None:
         """``reranker=None`` keeps RRF fusion order as-is. ``lexical_types``
         selects which memory types get a BM25 channel fused via RRF alongside
-        the dense one (Zep hybrid adds facts/entities).
+        the dense one (Zep hybrid adds facts/entities), and ``bfs_types`` which
+        additionally get Zep's graph BFS channel (φ_bfs, ``retrieval/bfs.py``)
+        at depth ``bfs_max_depth``. The three axes are separate because
+        upstream's recipes vary them independently: its RRF recipes run
+        cosine+BM25, its cross-encoder recipes add BFS, and communities never
+        get BFS in either.
 
         The three cap arguments configure the default post-step registry:
         ``link_expansion_cap`` bounds A-Mem's 1-hop note-link expansion,
         ``attach_sources_top_r`` how many top episode hits get their source
-        messages attached, and ``graph_expansion_cap`` how many incident edges
-        an entity hit pulls; 0 disables that step. Pass ``read_steps`` to
-        replace the registry outright (custom methodology read behavior)."""
+        messages attached, and ``graph_expansion_cap``/``graph_expansion_hops``
+        how many edges an entity hit pulls and how far the walk goes first; a
+        0 cap disables that step. ``graph_expansion_cap`` defaults to 0 because
+        ``GraphRecall`` was our stand-in for φ_bfs and ``bfs_types`` now
+        expresses that faithfully — see ``GraphRecall`` for what it still is.
+        ``page_recall_cap``/``page_recall_threshold`` are MemoryOS's second
+        retrieval stage (matched segment -> its pages, upstream
+        ``retrieval_queue_capacity``/``page_similarity_threshold``); 0 disables
+        it and serves segment summaries instead, which upstream never does.
+        Pass ``read_steps`` to replace the registry outright (custom
+        methodology read behavior)."""
         self.doc_store = doc_store
         self.vector_store = vector_store
         self.embedder = embedder
         self.reranker = reranker  # None -> keep fusion order
         self.graph_store = graph_store
         self.lexical_types = set(lexical_types)
+        self.bfs_types = set(bfs_types)
+        self.bfs_max_depth = bfs_max_depth
         self.read_steps = (
             read_steps
             if read_steps is not None
@@ -68,6 +91,11 @@ class RetrievalPipeline:
                 link_expansion_cap=link_expansion_cap,
                 attach_sources_top_r=attach_sources_top_r,
                 graph_expansion_cap=graph_expansion_cap,
+                graph_expansion_hops=graph_expansion_hops,
+                page_recall_cap=page_recall_cap,
+                page_recall_threshold=page_recall_threshold,
+                page_recall_segment_threshold=page_recall_segment_threshold,
+                page_recall_keyword_similarity=page_recall_keyword_similarity,
             )
         )
 
@@ -77,9 +105,31 @@ class RetrievalPipeline:
         k: int | dict[str, int] = 10,
         memory_types: tuple[str, ...] = ("episodic",),
         namespace: str | None = None,
+        center_node_id: str | None = None,
+        bfs_origin_ids: list[str] | None = None,
+        query_keywords: set[str] | frozenset[str] | None = None,
     ) -> MemoryBundle:
         """``k`` may be a dict per memory type (e.g. Nemori's official
-        episodic k=10 / semantic m=2k=20)."""
+        episodic k=10 / semantic m=2k=20).
+
+        ``query_keywords`` reaches the read steps as-is; it is not derived here
+        because the methodology that uses it derives it with an LLM and this
+        layer has none (see ``ReadContext.query_keywords``).
+
+        Fusion runs once PER memory type, and the resulting scores are then
+        compared across types — ``MemoryBundle.render`` sorts the whole bundle
+        and cuts it against one shared budget. ``rrf_fuse`` divides by its
+        channel count for exactly that reason, so a dual-channel type
+        (``episodic``: dense + BM25) no longer scores twice a dense-only
+        derived type purely for having two channels (2026-07-27 audit B2; see
+        ``rrf_fuse`` for the measured 0.0328-vs-0.0164 asymmetry it removes).
+
+        Methodology-pure configs are bit-identical either way — they pass one
+        derived type (``notes``) or several dense-only ones
+        (``episodes``/``semantic``), so every score already came from the same
+        channel count, and a common divisor cannot reorder them. What changes
+        is the mixed configs (raw ``episodic`` alongside derived types) and
+        ``default_memory_types``, where ``episodic`` always leads."""
         query_embedding = self.embedder.embed([query], kind="query")[0]
 
         bundle = MemoryBundle(query=query)
@@ -103,19 +153,47 @@ class RetrievalPipeline:
                         query, memory_type, k=candidate_k, namespace=namespace
                     )
                 )
+            if memory_type in self.bfs_types:
+                bfs = self._bfs_ranking(
+                    memory_type, rankings, candidate_k, namespace, bfs_origin_ids
+                )
+                if bfs:
+                    rankings.append(bfs)
             fused = rrf_fuse(rankings)
-            if self.reranker is not None and len(fused) > type_k:
+            # `len(fused) > 1`, not `> type_k`. The old gate skipped the reranker
+            # whenever the candidate pool did not exceed k, on the assumption
+            # that a reranker only matters when it has to DROP something. It also
+            # decides ORDER, and order survives truncation: `MemoryBundle.render`
+            # sorts the whole bundle by score, so an unranked type keeps RRF
+            # scores while a ranked one carries relevance scores, and the two get
+            # compared. Upstream reranks unconditionally and truncates after.
+            # No stored number moves — every measured run resolved to
+            # NoopReranker (profile `lite`), whose rerank is truncation.
+            if self.reranker is not None and len(fused) > 1:
                 vectors = self.vector_store.get([item_id for item_id, _ in fused])
-                texts = None
-                if getattr(self.reranker, "needs_text", False):
-                    texts = {
-                        s.item.id if hasattr(s.item, "id") else s.item.data["id"]: (
-                            s.item.content or ""
-                        )
-                        for s in self._hydrate(fused, memory_type)
-                    }
+                texts, meta = None, None
+                needs_text = getattr(self.reranker, "needs_text", False)
+                needs_meta = getattr(self.reranker, "needs_meta", False)
+                if needs_text or needs_meta:
+                    hydrated_for_rerank = self._hydrate(fused, memory_type)
+                    if needs_text:
+                        texts = {_item_id(s): (s.item.content or "") for s in hydrated_for_rerank}
+                    if needs_meta:
+                        # The stored dict, not the ScoredItem: episode-mentions
+                        # reads `source_episode_ids`, which lives in the item.
+                        meta = {
+                            _item_id(s): getattr(s.item, "data", {}) or {}
+                            for s in hydrated_for_rerank
+                        }
                 fused = self.reranker.rerank(
-                    query_embedding, fused, vectors, type_k, texts=texts, query=query
+                    query_embedding,
+                    fused,
+                    vectors,
+                    type_k,
+                    texts=texts,
+                    query=query,
+                    meta=meta,
+                    center_node_id=center_node_id,
                 )
             else:
                 fused = fused[:type_k]
@@ -130,6 +208,9 @@ class RetrievalPipeline:
                         namespace=namespace,
                         graph_store=self.graph_store,
                         bundle_ids={_item_id(s) for s in bundle.items},
+                        query_embedding=query_embedding,
+                        vector_store=self.vector_store,
+                        query_keywords=frozenset(query_keywords or ()),
                     ),
                 )
 
@@ -149,6 +230,79 @@ class RetrievalPipeline:
                 served.add(key)
                 bundle.items.append(scored)
         return bundle
+
+    def _bfs_ranking(
+        self,
+        memory_type: str,
+        rankings: list[list[tuple[str, float]]],
+        k: int,
+        namespace: str | None,
+        origin_ids: list[str] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Zep's φ_bfs as a third channel.
+
+        ``origin_ids`` is upstream's ``bfs_origin_node_uuids``, and like upstream
+        it REPLACES the derived origins rather than adding to them
+        (``search.py`` only derives them ``if bfs_origin_node_uuids is None``).
+        The paper's motivating case for supplying them is recency — "particularly
+        valuable when using recent episodes as seeds … allowing the system to
+        incorporate recently mentioned entities and relationships into the
+        retrieved context" (§3.1) — which ``AgenticMemory.recent_episode_entity_ids``
+        computes.
+
+        Derived origins, when none are given: for ``entities`` the found nodes
+        themselves; for ``facts`` the found edges' SUBJECT nodes only, matching
+        upstream's ``source_node_uuids = [edge.source_node_uuid ...]`` — using
+        both endpoints would widen the frontier beyond what it searches.
+        Anything else (``communities`` included, which upstream never gives a
+        BFS channel) returns nothing."""
+        if self.graph_store is None:
+            return []
+        found = list(dict.fromkeys(item_id for ranking in rankings for item_id, _ in ranking))
+        resolved_ns = namespace or "main"
+        if origin_ids:
+            # Explicit origins are node ids for both types: an edge channel
+            # seeded from recent episodes still walks from NODES.
+            exclude = set(found) if memory_type == "facts" else None
+            if memory_type == "facts":
+                return bfs_fact_ranking(
+                    self.graph_store,
+                    list(dict.fromkeys(origin_ids)),
+                    resolved_ns,
+                    k,
+                    self.bfs_max_depth,
+                    exclude=exclude,
+                )
+            if memory_type == "entities":
+                return bfs_entity_ranking(
+                    self.graph_store,
+                    list(dict.fromkeys(origin_ids)),
+                    resolved_ns,
+                    k,
+                    self.bfs_max_depth,
+                )
+            return []
+        if not found:
+            return []
+        if memory_type == "entities":
+            return bfs_entity_ranking(self.graph_store, found, resolved_ns, k, self.bfs_max_depth)
+        if memory_type == "facts":
+            origins = list(
+                dict.fromkeys(
+                    str(data["subject_id"])
+                    for data in self.doc_store.get_items(found, "facts")
+                    if data.get("subject_id")
+                )
+            )
+            return bfs_fact_ranking(
+                self.graph_store,
+                origins,
+                resolved_ns,
+                k,
+                self.bfs_max_depth,
+                exclude=set(found),
+            )
+        return []
 
     def _hydrate(self, fused: list[tuple[str, float]], memory_type: str) -> list[ScoredItem]:
         ids = [item_id for item_id, _ in fused]

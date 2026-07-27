@@ -39,6 +39,7 @@ MEMORY_TYPES = (
     "semantic",  # Nemori distilled facts, MemoryOS LPM profile facts (kind="profile")
     "entities",  # Zep-graph entity nodes
     "facts",  # Zep-graph bi-temporal edges
+    "communities",  # Zep-graph entity clusters (label propagation, paper §2.2.4)
     "strategies",  # ReasoningBank items, G-Memory trajectories/insights
     "experiences",  # ReasoningBank task records (expand to their member strategies)
     "playbook",  # ACE bullets
@@ -165,7 +166,11 @@ class StrategyItem:
     content: str
     id: str = field(default_factory=new_id)
     namespace: str = "main"
-    outcome: str = "success"  # success | failure
+    # success | failure | contrast. The third is ReasoningBank's MaTTS bank:
+    # those items are distilled from a MIXED set of attempts, so neither of the
+    # first two is true of them, and upstream's parallel induction carries no
+    # per-item label at all (see ``ReasoningBankOrganizer.on_scaled_task_end``).
+    outcome: str = "success"
     score: float = 0.0  # G-Memory reward shaping
     source_episode_ids: list[str] = field(default_factory=list)
     timestamp: datetime = field(default_factory=utcnow)

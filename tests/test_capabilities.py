@@ -85,12 +85,14 @@ def test_load_config_reads_read_path_knobs(tmp_path):
         "link_expansion_cap = 0\n"
         "attach_sources_top_r = 4\n"
         "graph_expansion_cap = 3\n"
+        "graph_expansion_hops = 3\n"
     )
     cfg = load_config(path)
     assert cfg.lexical_types == ("episodic", "facts")
     assert cfg.link_expansion_cap == 0  # 0 disables the step, not "unset"
     assert cfg.attach_sources_top_r == 4
     assert cfg.graph_expansion_cap == 3
+    assert cfg.graph_expansion_hops == 3  # upstream MAX_SEARCH_DEPTH
 
     bare = tmp_path / "bare.toml"
     bare.write_text('[profile]\nname = "lite"\n')
