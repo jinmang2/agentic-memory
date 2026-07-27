@@ -56,7 +56,9 @@ within-task/between-task **여러 stage에 걸친 add-on 계열**로 다루고 �
 - **write**: "ground-truth-preserving architecture that **stores entire conversational episodes and
   reduces lossy LLM-based extraction**". 메시지별 fact 추출이 **없다**. write-path LLM은 STM 요약과
   profile 추출에만 쓴다. 인덱싱은 문장 단위.
-- **read**: nucleus match를 주변 ±1~2 turn으로 확장하는 *contextualized retrieval* → dedup·시간순
+- **read**: nucleus match를 주변 세그먼트로 확장하는 *contextualized retrieval* → dedup·시간순
+  (**비대칭**: 예산의 1/3 뒤 · 2/3 앞, `event_memory.py:450-451` — 이전 판의 "±1~2 turn"은 오기,
+  `memmachine.md` §1.2)
   정렬 + 선택적 cross-encoder rerank.
 - **Retrieval Agent**: 질의를 direct retrieval / parallel decomposition / iterative chain-of-query
   중 하나로 **적응적 라우팅**한다.

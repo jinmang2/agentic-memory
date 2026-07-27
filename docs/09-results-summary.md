@@ -6,6 +6,15 @@
 > **Fidelity**: 측정 4종은 충실도 ●/◑ 등급만 포함 (docs/10-fidelity-audit.md).
 > MemoryOS는 측정 당시 segment 매칭 F_score에서 Jaccard 항이 빠진 cosine 단독 구현이었음
 > (round-5 P1에서 cos+Jaccard로 복원됨, memoryos.py) — 아래 수치 해석 시 유의.
+> **MemoryOS 행은 이후 세 세대 낡았다**: 6차(page 단위 계수·LPM 3-스토어 재구현),
+> 8차(STM 1-page 롤링·dialogue chain·STM/assistant-knowledge QA 주입·2단계 page 검색),
+> 9차(read 채널 순수화 + 계보 knob 분리)가 write 경로와 read 컨텍스트를 모두 바꿨다. 특히
+> **결론 3(비용)은 정정됐다** — 아래 해당 항목 참조.
+> 구 배선 재현은 **`memoryos_mixed` config**(`scripts/exp_locomo_conv0.py`)로 한다: raw
+> episodic 채널 + `flush_stm_on_drain=True` + `dialogue_chain=False` + `page_recall_cap=0`.
+> 새 `memoryos`/`memoryos_eval`은 이 행의 비교 대상이 아니라 **대체 대상**이다 — read 채널
+> 구성(업스트림에 없던 원문 검색 채널 제거)과 계보(pypi cap 7 / eval cap 10 + 전량 주입)가
+> 둘 다 다르다.
 > Zep-graph·G-Memory는 골격(○) 단계라 측정에서 의도적으로 제외.
 > **⚠️ 2026-07-16 심층 감사 후 재해석** (docs/research/fidelity-deep-audit.md):
 > 이 표는 "동일한 우리 read 파이프라인 위 write 조직화 비교"이며 **논문 재현이 아님**.
@@ -49,9 +58,16 @@
    서사가 raw 디테일을 밀어내 "없는 정보에 없다고 답하기"가 어려워지는 패턴 —
    Zep 논문이 인정한 single-session-assistant 퇴화와 동일 계열. 반면 Nemori는
    temporal에서 유일하게 baseline 상회(45.71) — **시간 절대화 설계는 0.6B에서도 유효**.
-3. **비용 스펙트럼**: MemoryOS가 배치 설계 덕에 organizer 호출 91회로 가장 저렴
-   (A-Mem/Nemori의 1/9). 정확도-비용 파레토에서 passthrough가 지배적, MemoryOS가
-   조직화 중 최선.
+3. **비용 스펙트럼**: MemoryOS가 organizer 호출 91회로 가장 저렴 (A-Mem/Nemori의 1/9).
+   정확도-비용 파레토에서 passthrough가 지배적, MemoryOS가 조직화 중 최선.
+   > **⚠️ 2026-07-27 8차 정정 — 이 결론은 무효다.** "배치 설계 덕에"라고 적었던 그 배치는
+   > **MemoryOS의 설계가 아니라 우리 구현의 이탈**이었다. 업스트림 STM은 1-page FIFO 롤링
+   > 윈도우(`while is_full(): pop_oldest()`, `is_full()`이 `>=`이므로 pop 1회)이고 방출
+   > **페이지마다** topic-summary 1콜 + continuity 1콜 + meta_info 1콜이 나간다. 419턴
+   > ≈ 209페이지면 **600콜+** 규모이고, 우리는 `capacity`페이지당 1콜 + 체인 콜 0회로
+   > 91콜이었다. 즉 **방법론 자체는 A-Mem/Nemori보다 비싸며**, 파레토에서 MemoryOS가
+   > 차지한 위치는 재측정 전까지 근거가 없다. 상세:
+   > `docs/research/fidelity-round8-remaining-pieces.md` §M1.
 4. **방어층은 완성 단계**: 총 1,844 organizer 호출에서 drop 10회(0.5%). 0.6B로
    파이프라인 자체는 무너지지 않는다 — 품질이 병목이지 형식이 아님.
    → Phase 4(추출 태스크 SFT)의 가설을 지지: 형식은 해결됐으니 품질을 학습으로.

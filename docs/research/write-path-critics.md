@@ -136,8 +136,11 @@ build cost 192.6K 토큰 / 556.8s. **코드 미공개.**
 
 ### 4.4 MemMachine — LLM 추출 자체를 줄이는 반대 방향
 raw 대화 episode를 **손실 추출 없이 그대로** 저장하고 문장 단위로 인덱싱. write-path LLM은 STM
-요약과 profile 추출에만 쓴다(메시지별 fact 추출 없음). read는 nucleus match를 주변 ±1~2 turn으로
+요약과 profile 추출에만 쓴다(메시지별 fact 추출 없음). read는 nucleus match를 주변 세그먼트로
 확장(contextualized retrieval) 후 dedup·시간순 정렬 + 선택적 cross-encoder rerank.
+**확장은 비대칭이다** — 예산의 1/3만 뒤로, 2/3를 앞으로 쓴다(`event_memory.py:450-451`
+`max_backward = expand_context // 3`). 이 문서가 적었던 "±1~2 turn"은 틀렸다(11차 이후
+당일 코드 확인, `memmachine.md` §1.2).
 
 LoCoMo 0.9169 (gpt-4.1-mini, agent mode) / LongMemEval-S 93.0% (gpt-5-mini).
 토큰: LoCoMo input 4.20M vs Mem0 19.21M (-78%).
@@ -156,10 +159,10 @@ LoCoMo 0.9169 (gpt-4.1-mini, agent mode) / LongMemEval-S 93.0% (gpt-5-mini).
 
 | 후보 | 우리에게 주는 것 | 배선 난이도 | 판단 |
 |---|---|---|---|
-| **A-MAC admission gate** | "A-Mem은 전부 저장한다"의 **대안**을 실측 가능하게 함. 규칙 4개 + LLM 1콜이라 우리 organizer 계약에 그대로 맞음. precision 축(참조되지 않는 노트 비율)을 처음으로 측정 가능 | 낮음 — `AMemOrganizer.on_message` 앞단 게이트. Novelty는 이미 embedder 보유, Recency/Type은 순수 규칙, Confidence는 ROUGE-L | **1순위** |
+| **A-MAC admission gate** | "A-Mem은 전부 저장한다"의 **대안**을 실측 가능하게 함. 규칙 4개 + LLM 1콜이라 우리 organizer 계약에 그대로 맞음. precision 축(참조되지 않는 노트 비율)을 처음으로 측정 가능 | 낮음 — `AMemOrganizer.on_message` 앞단 게이트. Novelty는 이미 embedder 보유, Recency/Type은 순수 규칙, Confidence는 ROUGE-L | ~~1순위~~ **완료 (2026-07-26)** — `policies/admission.py`, 감사 `amac-admission-gate.md` |
 | **GRAVITY anchors** | ~~read-path 기법이고 ReadStep 플러그인 구조에 정확히 들어맞는다~~ → **아래 교정 참조**. A-Mem 호스트에서 +5.6%p 보고 | 중~높음 — anchor 3종 build가 offline write 패스 + read 주입. 코드 미공개라 프롬프트를 우리가 설계해야 함 | **2순위** |
 | **RecMem recurrence gate** | ~~`consolidate()` 훅이 이미 그 자리~~ → **아래 교정 참조**. LightMem과 같은 "유예/선택적 LLM 호출" 계열. 코드 공개 | 중 — 트리거는 단순하지만 3-tier 전체를 배선해야 함 | 3순위 |
-| **MemMachine** | 구현보다 **측정 프레임**으로서의 가치. 다만 §4.4 캐비앗 때문에 "간극을 명시한 논문"으로 인용하면 부정확 | — | 인용만 |
+| **MemMachine** | ~~인용만~~ → **구현 후보 1순위로 재분류(2026-07-27)**. 근거는 세 가지다: (a) **Apache-2.0 활성 리포**라 3자 대조가 되고 G-Memory식 무라이선스 문제가 없다, (b) write 경로에 **메시지당 LLM 콜이 0회**임을 코드로 확인 — A-Mem(turn당 2콜)과 `passthrough` 사이에 **실물 중간점이 처음 생긴다**, (c) 공식 LoCoMo·LongMemEval 하네스가 동봉돼 우리 `bench/`의 네 번째 독립 참조가 된다. §4.4 인용 캐비앗은 여전히 유효 | 중 — write는 가볍지만(기계적 분절) read가 무겁다; Retrieval Agent는 policy의 첫 read-side 멤버라 별건 | **1순위** (조사: `memmachine.md`) |
 | **LightMem** | 이미 조사됨. `consolidate()` = sleep-time 자리 | 중 | 보류 |
 
 **A-MAC이 1순위인 이유**: 우리 리뷰의 핵심 지적("A-Mem은 전부 저장하고 전부 인라인 처리한다")에
