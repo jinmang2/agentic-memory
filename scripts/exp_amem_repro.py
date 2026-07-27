@@ -247,9 +247,8 @@ def build_memory(
     """Fresh A-Mem-organized memory for one conversation. When ``--data-dir`` is
     set it is threaded into ``AgmemConfig.data_dir`` so the stores persist under
     ``<data_dir>/<namespace>/`` (config.py:65-123) — enabling ``--ingest-only``
-    then ``--eval-only`` reload. Link expansion is toggled on the pipeline
-    (``link_expansion_cap`` 5=on / 0=off). ``trace_path`` (when given) turns on
-    the client's full-I/O trace sink so every LLM call of this conversation is
+    then ``--eval-only`` reload. ``trace_path`` (when given) turns on the
+    client's full-I/O trace sink so every LLM call of this conversation is
     appended to the shared run trace."""
     cfg = AgmemConfig(
         profile="lite",
@@ -257,6 +256,16 @@ def build_memory(
         llm_roles=roles,
         use_guided_json=False,
         lexical_types=("episodic",),
+        # --expand-links belongs HERE, not on the built pipeline. It used to be
+        # `mem.pipeline.link_expansion_cap = 5 if ... else 0` after construction,
+        # which was live only while the cap was a RetrievalPipeline attribute;
+        # once read-path steps became plugins (3b39c7d) the registry was already
+        # built from this config field in __init__, and the post-hoc assignment
+        # just set a dead attribute nothing reads. The flag was therefore a no-op
+        # — both `--expand-links on` and `off` ran with LinkExpansion(cap=5) —
+        # while the run tag and result filename still said `expand-off`. Results
+        # stamped at or before e2e7ebe predate 3b39c7d and are unaffected.
+        link_expansion_cap=5 if args.expand_links == "on" else 0,
         # Pin synchronous writes: the ingest-completion sentinel attests that the
         # ingest LOOP finished, and that only implies every note was actually
         # built+persisted if organizer writes run inline (a hard failure then
@@ -272,7 +281,6 @@ def build_memory(
         embedder=embedder,
         config=cfg,
     )
-    mem.pipeline.link_expansion_cap = 5 if args.expand_links == "on" else 0
     if trace_path is not None and mem.llm is not None:
         mem.llm.trace_path = trace_path
     return mem
@@ -280,17 +288,28 @@ def build_memory(
 
 def combine_aggs(aggs: list[dict]) -> dict:
     """Exact micro-average of per-conversation agg dicts (each carries mean
-    f1/bleu1 as 0-100 percentages plus row count ``n``). Weighting each conv's
+    f1 as a 0-100 percentage plus row count ``n``). Weighting each conv's
     mean by its ``n`` recovers the total F1 sum, so this equals scoring every
-    QA in one pool. Also folds ``j_score``/``j_n`` when present."""
+    QA in one pool. Also folds ``bleu1`` and ``j_score``/``j_n`` when present.
+
+    ``bleu1`` is conditional because ``locomo.agg`` omits it when nothing scored
+    one (wujiang mode without nltk); each conv's BLEU denominator is its own
+    ``bleu1_n`` when present, so a partially-scored sweep still micro-averages
+    over the rows that actually have the metric rather than over all rows."""
     n = sum(a["n"] for a in aggs)
     if n == 0:
         return {}
     out = {
         "f1": round(sum(a["f1"] * a["n"] for a in aggs) / n, 2),
-        "bleu1": round(sum(a["bleu1"] * a["n"] for a in aggs) / n, 2),
         "n": n,
     }
+    bleu_n = sum(a.get("bleu1_n", a["n"]) for a in aggs if "bleu1" in a)
+    if bleu_n:
+        out["bleu1"] = round(
+            sum(a["bleu1"] * a.get("bleu1_n", a["n"]) for a in aggs if "bleu1" in a) / bleu_n, 2
+        )
+        if bleu_n != n:
+            out["bleu1_n"] = bleu_n
     jn = sum(a.get("j_n", 0) for a in aggs)
     if jn:
         out["j_score"] = round(sum(a.get("j_score", 0) * a.get("j_n", 0) for a in aggs) / jn, 2)
@@ -651,17 +670,22 @@ def main() -> None:
     total_s = round(time.perf_counter() - total_t0, 1)
     utc_finished = datetime.now(timezone.utc).isoformat()
 
-    # mean±std across runs (overall F1/BLEU-1)
+    # mean±std across runs (overall F1/BLEU-1). BLEU keys appear only when the
+    # metric was actually scored: `locomo.agg` omits `bleu1` in wujiang mode
+    # without nltk, and `.get("bleu1", 0.0)` would have averaged that absence in
+    # as a real 0.0 — the same "unmeasured reported as measured" failure the
+    # metric split exists to prevent.
     run_summary = {}
     if args.runs > 1:
         f1s = [r["overall"].get("f1", 0.0) for r in runs_out]
-        b1s = [r["overall"].get("bleu1", 0.0) for r in runs_out]
+        b1s = [r["overall"]["bleu1"] for r in runs_out if "bleu1" in r["overall"]]
         run_summary = {
             "f1_mean": round(statistics.mean(f1s), 2),
             "f1_std": round(statistics.stdev(f1s), 2) if len(f1s) > 1 else 0.0,
-            "bleu1_mean": round(statistics.mean(b1s), 2),
-            "bleu1_std": round(statistics.stdev(b1s), 2) if len(b1s) > 1 else 0.0,
         }
+        if b1s:
+            run_summary["bleu1_mean"] = round(statistics.mean(b1s), 2)
+            run_summary["bleu1_std"] = round(statistics.stdev(b1s), 2) if len(b1s) > 1 else 0.0
 
     first = runs_out[0]
     # Top-level budget/cost reflect what was ACTUALLY paid across ALL runs (each

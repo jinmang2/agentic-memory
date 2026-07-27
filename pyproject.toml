@@ -41,6 +41,11 @@ backends = [
 default-groups = ["dev", "embed", "backends"]
 
 [project.optional-dependencies]
+# Upstream scorers we call rather than reimplement. nltk is what
+# WujiangXu/A-Mem's calculate_metrics uses for BLEU-1 (word_tokenize +
+# sentence_bleu); without it `locomo.bleu1_wujiang` degrades to None and the
+# metric is omitted, never substituted (see its docstring).
+eval = ["nltk>=3.9"]
 train = [
     "transformers>=4.51",
     "datasets>=3.0",

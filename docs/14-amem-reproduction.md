@@ -89,8 +89,8 @@ LoCoMo, F1 (BLEU-1은 참고용 2번째 수치 — docs/08/13의 선행 분석 �
 
 | 코드베이스 | 채점 규칙 | 우리 대응 |
 |---|---|---|
-| **snap-research/locomo** | SQuAD-style `normalize_answer`: lowercase + 구두점제거 + **관사(a/an/the/and) 제거 + Porter stemming**, multiset F1 + BLEU-1 | `--eval-mode ours` (`locomo.normalize`/`token_f1`) |
-| **WujiangXu/A-Mem** (`utils.calculate_metrics`) | **set-based** token F1, lowercase + `.,!?`→space, **stemming/관사제거 없음** | `--eval-mode wujiang` (`locomo.token_f1_wujiang`) |
+| **snap-research/locomo** | SQuAD-style `normalize_answer`: lowercase + 구두점제거 + **관사(a/an/the/and) 제거 + Porter stemming**, multiset F1. **BLEU는 없음** — 지표는 EM / stemmed token-F1 / `rougel_score`(이름과 달리 rouge-1 F 반환) 3종 | `--eval-mode ours` (`locomo.normalize`/`token_f1`). `locomo.bleu1`은 **공식 대응물이 없는 우리 지표** |
+| **WujiangXu/A-Mem** (`utils.calculate_metrics`) | F1은 **set-based** token F1, lowercase + `.,!?`→space, **stemming/관사제거 없음**. BLEU-1은 **다른 토크나이저** — `nltk.word_tokenize(lower)` + `sentence_bleu(weights=(1,0,0,0), SmoothingFunction().method1)` | `--eval-mode wujiang` (`locomo.token_f1_wujiang` / `locomo.bleu1_wujiang`) |
 | **Mem0-J** | LLM binary judge (CORRECT/WRONG), cat1–4만 | `--judge` (ours 모드 전용, `locomo.judge_answer`) |
 
 **왜 우리의 이전 eval 수정(commit e74534a)은 snap-research를 겨냥했나**: 우리 원래
@@ -109,7 +109,8 @@ LoCoMo, F1 (BLEU-1은 참고용 2번째 수치 — docs/08/13의 선행 분석 �
 | 파일:심볼 | 무엇 | 왜 |
 |---|---|---|
 | `locomo.py:normalize` | lowercase+구두점제거에 **관사(a/an/the/and) 제거 + Porter stemming** 추가 | snap-research `normalize_answer` 정합 |
-| `locomo.py:token_f1`/`bleu1` | multiset(Counter) 겹침 기반 F1/BLEU-1 | 공식 채점기 미러 |
+| `locomo.py:token_f1` | multiset(Counter) 겹침 기반 F1 | snap-research `f1_score` 미러 |
+| `locomo.py:bleu1` | 같은 `normalize` 위의 unigram precision + brevity penalty | **우리 지표** — snap-research/locomo에는 BLEU가 없음(리포 전량 검색 0건). "공식 채점기 미러"라는 종전 표기는 오류 |
 | `locomo.py:gold_for` | cat3 gold `"A; B; C"` → 첫 alias `"A"` truncation | snap-research가 primary answer로 채점 |
 | `locomo.py:ANSWER_PROMPT_NO_ABSTAIN` | cat5는 abstention 문장 제거한 프롬프트 | cat5는 답을 강제(거부 불가) |
 | `locomo.py:judge_answer` + `evaluate(judge=)` | Mem0-style binary J-score (cat1–4, opt-in) | Mem0 판정 재현 |
@@ -163,6 +164,10 @@ LoCoMo, F1 (BLEU-1은 참고용 2번째 수치 — docs/08/13의 선행 분석 �
 --k             (기본 10)
 --eval-mode     (wujiang|ours, 기본 wujiang)
 --expand-links  (off|on, 기본 off) — A-Mem 1-hop 노트 링크 확장 토글
+                (주의: read-path 플러그인화(3b39c7d) 이후 한동안 무효 토글이었다 —
+                 구 코드가 `mem.pipeline.link_expansion_cap`이라는 죽은 속성에 대입해
+                 on/off 양쪽이 cap=5로 돌았다. 지금은 `AgmemConfig.link_expansion_cap`로
+                 배선됨. sha e2e7ebe 이하의 `expand-off` 산출물은 리팩터 이전이라 유효)
 --judge         (store_true; ours 모드에서만 적용)
 --runs          (기본 1) — answer 경로 반복해 answer-temp mean±std (write 경로는 불변)
 --workers       (기본 1) — QA 동시 실행 워커 수. store는 read-only·전 store 락 보호·A-Mem
@@ -343,6 +348,14 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
    흔들림. `--runs N`으로 mean±std 측정 권장.
 3. **메트릭 차이**: snap-research(stem+관사) vs WujiangXu(set-based, no-stem)는 **같은
    답에도 다른 F1**을 준다. rung 비교 시 반드시 같은 `--eval-mode`로.
+3b. **[정정] 저장된 wujiang BLEU-1은 혼종이다**: `eval_mode="wujiang"`은 gold·F1·cat5만
+   업스트림으로 갈아끼우고 BLEU-1은 `ours` 정규화(구두점 제거 + 관사 제거 + Porter
+   stemming)를 쓰고 있었다. 업스트림은 BLEU에 **다른 토크나이저**(`nltk.word_tokenize`)를
+   쓴다. 현재는 `locomo.bleu1_wujiang`이 실제 nltk를 호출하고, nltk가 없으면 지표를
+   **생략**한다(0.0으로 보고하지 않음 — `agg`가 키 자체를 뺀다). 이 함수 이전에 기록된
+   wujiang 산출물(`results/repro/*_wujiang_*.json`의 `bleu1`)은 **`ours`/`wujiang` 혼종
+   값**이므로 논문 BLEU-1과 대조 금지. **F1은 영향 없음** — 그 경로는 처음부터 분리돼
+   있었고 헤드라인 수치는 전부 F1 기반이다.
 4. **QA 개수 7,512 vs 1,986**: 논문/일부 분석이 인용하는 7,512는 다른 카운팅(대화·turn
    단위 등). 우리 `data/locomo10.json`은 **1,986 QA**(cat1=282/cat2=321/cat3=96/cat4=841/
    cat5=446). 절대 수치 인용 시 어느 카운트인지 명시.
