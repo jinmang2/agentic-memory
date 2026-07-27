@@ -202,7 +202,14 @@ class SqliteDocStore:
                 "DELETE FROM items_fts WHERE item_id = ? AND memory_type = ?",
                 (item_id, memory_type),
             )
-            content = str(data.get("content") or "")
+            # ``lexical_text`` overrides what the BM25 channel indexes, exactly as
+            # ``embedding_text`` overrides what the dense channel embeds. The two
+            # are not always the same field upstream: Graphiti indexes entity
+            # nodes on (name, summary) but embeds the name alone, and indexes
+            # community nodes on the name alone while rendering name + summary.
+            # Without this the lexical channel is hardwired to whatever ``render``
+            # wants, which is a different requirement.
+            content = str(data.get("lexical_text") or data.get("content") or "")
             if content and not data.get("deleted"):
                 self._conn.execute(
                     "INSERT INTO items_fts (content, item_id, memory_type,"

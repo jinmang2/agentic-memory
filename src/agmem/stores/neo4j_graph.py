@@ -176,12 +176,112 @@ class Neo4jGraphStore:
             ns=namespace,
         )
 
+    # -- communities (paper §2.2.4) -------------------------------------------
+
+    def entity_projection(
+        self, namespace: str, active_only: bool = False
+    ) -> dict[str, dict[str, int]]:
+        """node id -> {neighbor id: edge count}, isolated nodes included with an
+        empty map. ``active_only=False`` matches upstream's unfiltered
+        projection query (see ``SqliteGraphStore.entity_projection``)."""
+        active = " AND e.invalid_at IS NULL" if active_only else ""
+        projection: dict[str, dict[str, int]] = {
+            str(r["id"]): {}
+            for r in self._run(
+                "MATCH (n:Entity) WHERE n.namespace=$ns RETURN n.id AS id", ns=namespace
+            )
+        }
+        rows = self._run(
+            "MATCH (a:Entity)-[e:RELATES]->(b:Entity) WHERE e.namespace=$ns"
+            + active
+            + " RETURN a.id AS src, b.id AS dst, count(e) AS c",
+            ns=namespace,
+        )
+        for row in rows:
+            src, dst, count = str(row["src"]), str(row["dst"]), int(row["c"])
+            if src in projection and dst in projection:
+                projection[src][dst] = projection[src].get(dst, 0) + count
+                projection[dst][src] = projection[dst].get(src, 0) + count
+        return projection
+
+    def upsert_community(
+        self, community_id: str, namespace: str, name: str, summary: str = ""
+    ) -> None:
+        self._run(
+            "MERGE (c:Community {id: $id})"
+            " ON CREATE SET c.namespace=$ns, c.created_at=$now"
+            " SET c.name=$name, c.summary=$summary",
+            id=community_id,
+            ns=namespace,
+            name=name,
+            summary=summary,
+            now=_now(),
+        )
+
+    def set_community_members(self, community_id: str, namespace: str, node_ids: list[str]) -> None:
+        """Replace membership wholesale so a replayed op converges."""
+        self._run(
+            "MATCH (c:Community {id: $id})-[r:HAS_MEMBER]->(:Entity) DELETE r", id=community_id
+        )
+        self._run(
+            "MATCH (c:Community {id: $id}) UNWIND $ids AS nid"
+            " MATCH (n:Entity {id: nid}) MERGE (c)-[:HAS_MEMBER]->(n)",
+            id=community_id,
+            ids=node_ids,
+        )
+
+    def community_of_node(self, node_id: str, namespace: str) -> dict | None:
+        rows = self._run(
+            "MATCH (c:Community)-[:HAS_MEMBER]->(n:Entity {id: $nid})"
+            " WHERE c.namespace=$ns RETURN c.id AS id, c.namespace AS namespace,"
+            " c.name AS name, c.summary AS summary, c.created_at AS created_at LIMIT 1",
+            nid=node_id,
+            ns=namespace,
+        )
+        return rows[0] if rows else None
+
+    def neighbor_communities(self, node_id: str, namespace: str) -> list[dict]:
+        """One row per (relating edge, community) path — the repeats are the
+        votes the caller takes a plurality over."""
+        return self._run(
+            "MATCH (c:Community)-[:HAS_MEMBER]->(m:Entity)-[e:RELATES]-(n:Entity {id: $nid})"
+            " WHERE e.namespace=$ns AND m.id <> $nid"
+            " RETURN c.id AS id, c.namespace AS namespace, c.name AS name,"
+            " c.summary AS summary, c.created_at AS created_at",
+            nid=node_id,
+            ns=namespace,
+        )
+
+    def communities(self, namespace: str) -> list[dict]:
+        return self._run(
+            "MATCH (c:Community) WHERE c.namespace=$ns"
+            " RETURN c.id AS id, c.namespace AS namespace, c.name AS name,"
+            " c.summary AS summary, c.created_at AS created_at"
+            " ORDER BY c.created_at, c.id",
+            ns=namespace,
+        )
+
+    def community_members(self, community_id: str) -> list[str]:
+        return [
+            str(r["id"])
+            for r in self._run(
+                "MATCH (c:Community {id: $id})-[:HAS_MEMBER]->(n:Entity)"
+                " RETURN n.id AS id ORDER BY n.id",
+                id=community_id,
+            )
+        ]
+
+    def remove_community(self, community_id: str) -> None:
+        """Hard delete with its membership — communities are derived state."""
+        self._run("MATCH (c:Community {id: $id}) DETACH DELETE c", id=community_id)
+
     def counts(self) -> dict[str, int]:
         """Edge count includes invalidated edges (never deleted, so `edges` is
         a lifetime total, not an active-only count)."""
         n = self._run("MATCH (n:Entity) RETURN count(n) AS c")[0]["c"]
         e = self._run("MATCH ()-[e:RELATES]->() RETURN count(e) AS c")[0]["c"]
-        return {"nodes": int(n), "edges": int(e)}
+        c = self._run("MATCH (c:Community) RETURN count(c) AS c")[0]["c"]
+        return {"nodes": int(n), "edges": int(e), "communities": int(c)}
 
     def close(self) -> None:
         self._driver.close()

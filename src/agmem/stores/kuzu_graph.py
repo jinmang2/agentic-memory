@@ -28,6 +28,7 @@ _EDGE_COLS = (
     "valid_at",
     "invalid_at",
 )
+_COMMUNITY_COLS = ("id", "namespace", "name", "summary", "created_at")
 
 
 def _now() -> str:
@@ -64,6 +65,14 @@ class KuzuGraphStore:
                 " id STRING, namespace STRING, predicate STRING, content STRING,"
                 " created_at STRING, expired_at STRING, valid_at STRING,"
                 " invalid_at STRING)"
+            )
+            self._conn.execute(
+                "CREATE NODE TABLE IF NOT EXISTS Community("
+                "id STRING PRIMARY KEY, namespace STRING, name STRING,"
+                " summary STRING, created_at STRING)"
+            )
+            self._conn.execute(
+                "CREATE REL TABLE IF NOT EXISTS HAS_MEMBER(FROM Community TO Entity)"
             )
 
     def _rows(self, result, cols: tuple[str, ...]) -> list[dict]:
@@ -223,13 +232,136 @@ class KuzuGraphStore:
                     out.extend(self._rows(res, _NODE_COLS))
         return out
 
+    # -- communities (paper §2.2.4) -------------------------------------------
+
+    def entity_projection(
+        self, namespace: str, active_only: bool = False
+    ) -> dict[str, dict[str, int]]:
+        """node id -> {neighbor id: edge count}, every node present (isolated
+        ones with an empty map). ``active_only=False`` matches upstream's
+        unfiltered projection query; see ``SqliteGraphStore.entity_projection``
+        for why that differs from what recall wants."""
+        active = " AND e.invalid_at IS NULL" if active_only else ""
+        with self._lock:
+            res = self._conn.execute(
+                "MATCH (n:Entity) WHERE n.namespace=$ns RETURN n.id", {"ns": namespace}
+            )
+            projection: dict[str, dict[str, int]] = {}
+            while res.has_next():
+                projection[str(res.get_next()[0])] = {}
+            # Counted in Python rather than with a grouped count(), for the same
+            # version-stability reason `neighbors` walks the frontier by hand.
+            res = self._conn.execute(
+                "MATCH (a:Entity)-[e:RELATES]->(b:Entity) WHERE e.namespace=$ns"
+                + active
+                + " RETURN a.id, b.id",
+                {"ns": namespace},
+            )
+            pairs = []
+            while res.has_next():
+                row = res.get_next()
+                pairs.append((str(row[0]), str(row[1])))
+        for src, dst in pairs:
+            if src in projection and dst in projection:
+                projection[src][dst] = projection[src].get(dst, 0) + 1
+                projection[dst][src] = projection[dst].get(src, 0) + 1
+        return projection
+
+    def upsert_community(
+        self, community_id: str, namespace: str, name: str, summary: str = ""
+    ) -> None:
+        """Merge by id; name/summary refresh on every call, `created_at` only on
+        first insert."""
+        with self._lock:
+            self._conn.execute(
+                "MERGE (c:Community {id: $id})"
+                " ON CREATE SET c.namespace=$ns, c.name=$name, c.summary=$summary,"
+                "  c.created_at=$now"
+                " ON MATCH SET c.name=$name, c.summary=$summary",
+                {
+                    "id": community_id,
+                    "ns": namespace,
+                    "name": name,
+                    "summary": summary,
+                    "now": _now(),
+                },
+            )
+
+    def set_community_members(self, community_id: str, namespace: str, node_ids: list[str]) -> None:
+        """Replace membership wholesale so a replayed op converges."""
+        with self._lock:
+            self._conn.execute(
+                "MATCH (c:Community {id: $id})-[r:HAS_MEMBER]->(:Entity) DELETE r",
+                {"id": community_id},
+            )
+            for node_id in node_ids:
+                self._conn.execute(
+                    "MATCH (c:Community {id: $cid}), (n:Entity {id: $nid})"
+                    " MERGE (c)-[:HAS_MEMBER]->(n)",
+                    {"cid": community_id, "nid": node_id},
+                )
+
+    def community_of_node(self, node_id: str, namespace: str) -> dict | None:
+        with self._lock:
+            res = self._conn.execute(
+                "MATCH (c:Community)-[:HAS_MEMBER]->(n:Entity)"
+                " WHERE n.id=$nid AND c.namespace=$ns"
+                " RETURN c.id, c.namespace, c.name, c.summary, c.created_at",
+                {"nid": node_id, "ns": namespace},
+            )
+            rows = self._rows(res, _COMMUNITY_COLS)
+        return rows[0] if rows else None
+
+    def neighbor_communities(self, node_id: str, namespace: str) -> list[dict]:
+        """One row per (relating edge, community) path — repeats are the votes
+        the caller takes a plurality over."""
+        with self._lock:
+            res = self._conn.execute(
+                "MATCH (c:Community)-[:HAS_MEMBER]->(m:Entity)-[e:RELATES]-(n:Entity)"
+                " WHERE n.id=$nid AND m.id<>$nid AND e.namespace=$ns"
+                " RETURN c.id, c.namespace, c.name, c.summary, c.created_at",
+                {"nid": node_id, "ns": namespace},
+            )
+            return self._rows(res, _COMMUNITY_COLS)
+
+    def communities(self, namespace: str) -> list[dict]:
+        with self._lock:
+            res = self._conn.execute(
+                "MATCH (c:Community) WHERE c.namespace=$ns"
+                " RETURN c.id, c.namespace, c.name, c.summary, c.created_at"
+                " ORDER BY c.created_at, c.id",
+                {"ns": namespace},
+            )
+            return self._rows(res, _COMMUNITY_COLS)
+
+    def community_members(self, community_id: str) -> list[str]:
+        with self._lock:
+            res = self._conn.execute(
+                "MATCH (c:Community {id: $id})-[:HAS_MEMBER]->(n:Entity) RETURN n.id ORDER BY n.id",
+                {"id": community_id},
+            )
+            out = []
+            while res.has_next():
+                out.append(str(res.get_next()[0]))
+        return out
+
+    def remove_community(self, community_id: str) -> None:
+        """Hard delete with its membership — communities are derived state."""
+        with self._lock:
+            self._conn.execute(
+                "MATCH (c:Community {id: $id})-[r:HAS_MEMBER]->(:Entity) DELETE r",
+                {"id": community_id},
+            )
+            self._conn.execute("MATCH (c:Community {id: $id}) DELETE c", {"id": community_id})
+
     def counts(self) -> dict[str, int]:
         """Edge count includes invalidated edges (never deleted, so `edges` is
         a lifetime total, not an active-only count)."""
         with self._lock:
             n = self._conn.execute("MATCH (n:Entity) RETURN count(n)").get_next()[0]
             e = self._conn.execute("MATCH ()-[e:RELATES]->() RETURN count(e)").get_next()[0]
-        return {"nodes": int(n), "edges": int(e)}
+            c = self._conn.execute("MATCH (c:Community) RETURN count(c)").get_next()[0]
+        return {"nodes": int(n), "edges": int(e), "communities": int(c)}
 
     def close(self) -> None:
         self._conn.close()

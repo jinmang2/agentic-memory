@@ -1,7 +1,19 @@
-"""Rerankers: Noop, MMR, LLM (listwise), cross-encoder.
+"""Rerankers: Noop, MMR, LLM (listwise), cross-encoder, episode-mentions,
+node-distance.
 
-Interface: rerank(query_emb, candidates, vectors, k) -> reordered candidates.
-``candidates`` are (id, score) from fusion; ``vectors`` maps id -> embedding.
+Interface: ``rerank(query_emb, candidates, vectors, k, texts, query, meta,
+center_node_id) -> reordered candidates``. ``candidates`` are (id, score) from
+fusion and ``vectors`` maps id -> embedding; everything after ``k`` is optional
+context that some rerankers need and others ignore, gated by a ``needs_*`` flag
+so the pipeline only pays for what will be read:
+
+- ``texts`` (``needs_text``): id -> item text, for the two that score text.
+- ``meta`` (``needs_meta``): id -> the stored item dict, for episode-mentions.
+- ``center_node_id``: the centroid node for node-distance.
+
+The last five are the Zep paper's own list (§3.2: RRF, MMR, episode-mentions,
+node-distance, cross-encoder), with RRF living in ``fusion.py`` since it is
+also how the channels are combined before any reranker runs.
 """
 
 from __future__ import annotations
@@ -27,6 +39,8 @@ class NoopReranker:
         k: int,
         texts: dict[str, str] | None = None,
         query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
     ) -> list[tuple[str, float]]:
         """Truncates to ``k`` without reordering."""
         return candidates[:k]
@@ -55,6 +69,8 @@ class MMRReranker:
         k: int,
         texts: dict[str, str] | None = None,
         query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
     ) -> list[tuple[str, float]]:
         """Greedily selects up to ``k`` items maximizing relevance minus
         redundancy with what's already selected; candidates missing a
@@ -130,6 +146,8 @@ Return JSON: {{"ranking": [most relevant index numbers, e.g. 2, 0, 1, ...]}}"""
         k,
         texts: dict[str, str] | None = None,
         query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
     ):
         """Sends up to ``max(2k, 10)`` candidates to the 'rerank' LLM role in
         one listwise call. Falls back to incoming order (no reorder) if the
@@ -181,6 +199,8 @@ class CrossEncoderReranker:
         k,
         texts: dict[str, str] | None = None,
         query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
     ):
         """Scores each candidate's text against the query with the loaded
         cross-encoder and sorts descending. Candidates with no text fall
@@ -200,9 +220,109 @@ class CrossEncoderReranker:
         return (ranked + missing)[:k]
 
 
+class EpisodeMentionsReranker:
+    """Zep's graph-based episode-mentions reranker (paper §3.2): "prioritizes
+    results based on the frequency of entity or fact mentions within a
+    conversation, enabling a system where frequently referenced information
+    becomes more readily accessible."
+
+    Upstream counts ``MENTIONS`` edges from episodes to the node/edge
+    (``search_utils.episode_mentions_reranker``). Our equivalent count is
+    ``len(source_episode_ids)``, the provenance every organizer already records
+    — same quantity, since that list is exactly which episodes produced the
+    item. Ties keep fusion order (``sorted`` is stable), so this only ever
+    promotes; it never invents an order among equally-mentioned items."""
+
+    requires = Requires()
+    name = "episode-mentions"
+    needs_text = False
+    needs_meta = True
+
+    def rerank(
+        self,
+        query_emb: list[float],
+        candidates: list[tuple[str, float]],
+        vectors: dict[str, list[float]],
+        k: int,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """Sorts by mention count descending. With no ``meta`` (nothing
+        hydrated) this is fusion order truncated — the same degradation the
+        text-based rerankers take when ``texts`` is empty."""
+        if not meta:
+            return candidates[:k]
+        counts = {
+            cid: len(meta.get(cid, {}).get("source_episode_ids", []) or []) for cid, _ in candidates
+        }
+        return sorted(candidates, key=lambda c: counts.get(c[0], 0), reverse=True)[:k]
+
+
+class NodeDistanceReranker:
+    """Zep's node-distance reranker (paper §3.2): "reorders results based on
+    their graph distance from a designated centroid node, providing context
+    localized to specific areas of the knowledge graph."
+
+    Needs both a graph and a centroid. The graph comes at construction (a
+    framework handle, like the doc store elsewhere); the centroid is per-query,
+    so it arrives as ``center_node_id`` — upstream's ``center_node_uuid``
+    argument to ``search()``. With no centroid this is a no-op truncation,
+    which is also what upstream does: ``node_distance_reranker`` is only
+    reachable from a config that supplies one.
+
+    Distance is computed by widening BFS rings from the centroid
+    (``graph_store.neighbors`` at increasing depth), so an item at hop 1 beats
+    one at hop 2; unreachable items sort last, keeping fusion order among
+    themselves. Upstream reranks by shortest-path length over ``RELATES_TO``,
+    which is the same ordering.
+    """
+
+    requires = Requires()
+    name = "node-distance"
+    needs_text = False
+    needs_meta = False
+
+    def __init__(self, graph_store=None, namespace: str = "main", max_hops: int = 3) -> None:
+        """``graph_store=None`` makes this a no-op truncation (no graph to
+        measure distance in). ``max_hops`` bounds the ring expansion; items
+        beyond it are treated as unreachable."""
+        self.graph_store = graph_store
+        self.namespace = namespace
+        self.max_hops = max_hops
+
+    def rerank(
+        self,
+        query_emb: list[float],
+        candidates: list[tuple[str, float]],
+        vectors: dict[str, list[float]],
+        k: int,
+        texts: dict[str, str] | None = None,
+        query: str = "",
+        meta: dict[str, dict] | None = None,
+        center_node_id: str | None = None,
+    ) -> list[tuple[str, float]]:
+        if self.graph_store is None or not center_node_id:
+            return candidates[:k]
+        distance = {center_node_id: 0}
+        for hops in range(1, self.max_hops + 1):
+            for node in self.graph_store.neighbors(center_node_id, self.namespace, hops):
+                distance.setdefault(str(node["id"]), hops)
+        far = self.max_hops + 1
+        return sorted(candidates, key=lambda c: distance.get(c[0], far))[:k]
+
+
 RERANKER_CANDIDATES: list[type] = [
     CrossEncoderReranker,
     LLMReranker,
     MMRReranker,
+    # Order matters: these two are capability-free, so they would be picked by
+    # a bare `resolve("reranker")` if they preceded MMR. They are meaningful
+    # only for the Zep recipes that name them explicitly — node-distance is a
+    # no-op without a centroid — so they sit BELOW MMR, which stays the
+    # capability-free fallback when a profile default is unavailable.
+    EpisodeMentionsReranker,
+    NodeDistanceReranker,
     NoopReranker,
 ]

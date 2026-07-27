@@ -1,10 +1,16 @@
-"""SQLite graph store: entity nodes + bi-temporal edges (Zep design).
+"""SQLite graph store: entity nodes + bi-temporal edges + communities (Zep design).
 
 Edges are never deleted — ``invalidate_edge`` records both temporal axes
 (``invalid_at`` = when the fact stopped holding, T; ``expired_at`` = when
 the system learned it, T', as upstream edge_operations does) so "what was
 true then" and "what we believed then" stay queryable
 (docs/research/zep-graphiti.md §A.2). k-hop via recursive CTE.
+
+Communities are the third subgraph of the paper's three (§2.2.4): a
+community node with a name and summary, plus ``HAS_MEMBER`` links to the
+entity nodes it covers. They are derived state — label propagation over
+the entity subgraph rebuilds them — so unlike edges they ARE deletable
+(upstream ``remove_communities`` then rebuilds).
 """
 
 from __future__ import annotations
@@ -31,6 +37,16 @@ CREATE TABLE IF NOT EXISTS graph_edges (
     expired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_edges_pair ON graph_edges(namespace, src, dst);
+CREATE TABLE IF NOT EXISTS graph_communities (
+    id TEXT PRIMARY KEY, namespace TEXT NOT NULL, name TEXT NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+);
+CREATE TABLE IF NOT EXISTS graph_community_members (
+    community_id TEXT NOT NULL, node_id TEXT NOT NULL, namespace TEXT NOT NULL,
+    PRIMARY KEY (community_id, node_id)
+);
+CREATE INDEX IF NOT EXISTS idx_members_node ON graph_community_members(namespace, node_id);
 """
 
 _ACTIVE = "invalid_at IS NULL AND expired_at IS NULL"
@@ -174,13 +190,133 @@ class SqliteGraphStore:
             rows = self._conn.execute(sql, (namespace, *node_ids, *node_ids)).fetchall()
         return [dict(r) for r in rows]
 
+    # -- communities (paper §2.2.4) -------------------------------------------
+
+    def entity_projection(
+        self, namespace: str, active_only: bool = False
+    ) -> dict[str, dict[str, int]]:
+        """node id -> {neighbor id: edge count}, the input label propagation
+        needs (upstream ``get_community_clusters`` builds exactly this).
+
+        EVERY node in the namespace is a key, isolated ones included with an
+        empty map — upstream seeds the projection from ``get_by_group_ids``, so
+        an entity with no relations still gets its own singleton community
+        rather than disappearing.
+
+        ``active_only=False`` by default because upstream's projection query
+        (``MATCH (n:Entity)-[e:RELATES_TO]-(m:Entity)``) applies no temporal
+        filter: an invalidated fact still counts as evidence that two entities
+        belong together, which is the opposite of what recall wants but is what
+        the published clustering does. Direction is collapsed — one undirected
+        count per pair, as the upstream ``count(e)`` per neighbour is."""
+        with self._lock:
+            node_rows = self._conn.execute(
+                "SELECT id FROM graph_nodes WHERE namespace=?", (namespace,)
+            ).fetchall()
+            sql = "SELECT src, dst, COUNT(*) AS c FROM graph_edges WHERE namespace=?"
+            if active_only:
+                sql += f" AND {_ACTIVE}"
+            edge_rows = self._conn.execute(sql + " GROUP BY src, dst", (namespace,)).fetchall()
+        projection: dict[str, dict[str, int]] = {str(r["id"]): {} for r in node_rows}
+        for row in edge_rows:
+            src, dst, count = str(row["src"]), str(row["dst"]), int(row["c"])
+            if src in projection and dst in projection:
+                projection[src][dst] = projection[src].get(dst, 0) + count
+                projection[dst][src] = projection[dst].get(src, 0) + count
+        return projection
+
+    def upsert_community(
+        self, community_id: str, namespace: str, name: str, summary: str = ""
+    ) -> None:
+        """Upsert by id; name/summary are replaced in place (an incremental
+        member addition rewrites both, as upstream ``update_community`` does)."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT INTO graph_communities (id, namespace, name, summary)"
+                " VALUES (?,?,?,?) ON CONFLICT(id) DO UPDATE SET"
+                " name=excluded.name, summary=excluded.summary",
+                (community_id, namespace, name, summary),
+            )
+
+    def set_community_members(self, community_id: str, namespace: str, node_ids: list[str]) -> None:
+        """Replace the community's membership wholesale — the applied op carries
+        the full member list, so a replayed log converges instead of
+        accumulating stale members."""
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM graph_community_members WHERE community_id=?", (community_id,)
+            )
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO graph_community_members"
+                " (community_id, node_id, namespace) VALUES (?,?,?)",
+                [(community_id, node_id, namespace) for node_id in node_ids],
+            )
+
+    def community_of_node(self, node_id: str, namespace: str) -> dict | None:
+        """The community this entity already belongs to, or None. First match
+        only — membership is 1:1 in this design, as upstream's
+        ``determine_entity_community`` assumes when it reads ``records[0]``."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT c.* FROM graph_communities c"
+                " JOIN graph_community_members m ON m.community_id = c.id"
+                " WHERE m.node_id=? AND c.namespace=?",
+                (node_id, namespace),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def neighbor_communities(self, node_id: str, namespace: str) -> list[dict]:
+        """One row per (relating edge, community) path from this node, so the
+        caller can take a plurality over repeats — the shape upstream's
+        ``(c:Community)-[:HAS_MEMBER]->(m:Entity)-[:RELATES_TO]-(n)`` match
+        returns, where a neighbour joined by three edges votes three times.
+        No temporal filter, matching that query."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.* FROM graph_edges e"
+                " JOIN graph_community_members m"
+                "   ON m.node_id = CASE WHEN e.src=? THEN e.dst ELSE e.src END"
+                " JOIN graph_communities c ON c.id = m.community_id"
+                " WHERE e.namespace=? AND (e.src=? OR e.dst=?) AND m.node_id != ?",
+                (node_id, namespace, node_id, node_id, node_id),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def communities(self, namespace: str) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM graph_communities WHERE namespace=? ORDER BY created_at, id",
+                (namespace,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def community_members(self, community_id: str) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT node_id FROM graph_community_members WHERE community_id=? ORDER BY node_id",
+                (community_id,),
+            ).fetchall()
+        return [str(r["node_id"]) for r in rows]
+
+    def remove_community(self, community_id: str) -> None:
+        """Hard delete, membership included. Communities are derived state, so
+        unlike edges they carry no history worth keeping — upstream's
+        ``build_communities`` opens with ``remove_communities`` for the same
+        reason."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM graph_communities WHERE id=?", (community_id,))
+            self._conn.execute(
+                "DELETE FROM graph_community_members WHERE community_id=?", (community_id,)
+            )
+
     def counts(self) -> dict[str, int]:
         """Edge count includes invalidated edges (never deleted, so `edges` is
         a lifetime total, not an active-only count)."""
         with self._lock:
             n = self._conn.execute("SELECT COUNT(*) FROM graph_nodes").fetchone()[0]
             e = self._conn.execute("SELECT COUNT(*) FROM graph_edges").fetchone()[0]
-        return {"nodes": int(n), "edges": int(e)}
+            c = self._conn.execute("SELECT COUNT(*) FROM graph_communities").fetchone()[0]
+        return {"nodes": int(n), "edges": int(e), "communities": int(c)}
 
     def close(self) -> None:
         with self._lock:
