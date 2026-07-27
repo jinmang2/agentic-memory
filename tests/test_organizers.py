@@ -82,6 +82,51 @@ def test_reasoning_bank_known_outcome_skips_judge():
         mem.close()
 
 
+def test_matts_contrasts_the_trajectory_set_instead_of_judging_each():
+    """MaTTS parallel induction (paper §3.3, upstream `induce_scaling.py`): the
+    signal is the MIXTURE of attempts, so there is no per-trajectory judge call
+    and no success/failure label — upstream computes the labels and never puts
+    them in the prompt. Budget is 5 items, not the single-trajectory 3."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(), llm)
+    try:
+        mem.add_scaled_task_result(
+            trajectories=[[{"step": "a"}], [{"step": "b"}], [{"step": "c"}]],
+            task="filter products by price",
+        )
+        assert [r for r, _ in llm.calls] == ["distill"]  # no judge, once per SET
+        system, prompt = llm.systems[0], llm.calls[0][1]
+        assert "compare and contrast" in system.lower() and "at most 5" in system.lower()
+        # upstream's own layout, including the space before the colon
+        assert "**Trajectory 1 :**" in prompt and "**Trajectory 3 :**" in prompt
+        assert prompt.startswith("**Query:** filter products by price")
+
+        strategy_ops = [o for o in mem.log.tail(20) if o.target_type == "strategies"]
+        assert len(strategy_ops) == 2
+        # neither "success" nor "failure" is true of a contrast-derived item
+        assert {o.payload["outcome"] for o in strategy_ops} == {"contrast"}
+    finally:
+        mem.close()
+
+
+def test_a_single_attempt_is_not_a_contrast_and_falls_back():
+    """Contrasting a set of one is not the mechanism — it must take the ordinary
+    single-trajectory path, judge included, rather than run the parallel prompt
+    over one item."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(), llm)
+    try:
+        mem.add_scaled_task_result(trajectories=[[{"step": "a"}]], task="t")
+        assert [r for r, _ in llm.calls] == ["judge", "distill"]
+        assert "compare and contrast" not in llm.systems[0].lower()
+    finally:
+        mem.close()
+
+
 def test_reasoning_bank_no_llm_explicit_skip():
     from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
 
