@@ -24,7 +24,11 @@ and WujiangXu's plain memory_layer.py lacks ``import re`` so metadata
 falls back to empty keywords/tags and context "General"; only
 memory_layer_robust.py behaves as the paper describes.
 Read-path counterpart (1-hop link expansion, upstream eval's
-find_related_memories_raw) is implemented in retrieval/pipeline.py.
+find_related_memories_raw) is ``LinkExpansion`` in retrieval/steps.py,
+configured by ``AgmemConfig.link_expansion_cap``. It used to live in
+retrieval/pipeline.py and this line went stale when the read path was
+plugin-ised; the same refactor also broke the ``--expand-links`` ablation
+for a while (round-6 A1), so the pointer is worth keeping exact.
 """
 
 from __future__ import annotations

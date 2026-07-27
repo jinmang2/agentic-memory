@@ -14,8 +14,23 @@ Score semantics follow the official code (round-5): ADD init 2, EDIT/AGREE
 +1, REMOVE soft -1 (-3 full), prune at <=0 (clear_insights); backward
 reward +1/-2 applies to insights served since the last backward
 (on_retrieval cache).
-- No official license upstream: this is a clean-room reimplementation
-  from the paper + published research notes.
+Provenance, stated precisely because the previous wording was wrong: this
+is NOT a clean-room reimplementation. ``github.com/bingreeky/GMemory`` was
+cloned and read as the primary reference (round-5,
+docs/research/round5/gmemory-verify-report.md cites commit ``7b581c5``),
+and it had to be — the paper and the code disagree about the central
+mechanism (§4.3 describes a summarisation function J plus a supporting
+query set, the code implements Reflexion-style critique finetune with
+ADD/EDIT/REMOVE/AGREE, backward reward and FINCH), and this port follows
+the CODE. The score constants two lines up are read off that code.
+
+That repository carries NO license file (checked again 2026-07-27), so
+nothing there is granted for reuse by default. What is reproduced here is
+behaviour and numeric constants rather than source text, which is the
+same footing as every other port in this package — but the earlier
+"clean-room ... from the paper" claim asserted an independence that the
+audit trail contradicts, and an inaccurate provenance note is worse than
+none.
 """
 
 from __future__ import annotations
