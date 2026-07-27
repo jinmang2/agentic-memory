@@ -26,10 +26,12 @@ from agmem.llm.client import RoleConfig
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.experimental import ChainedConsumer
 from agmem.organizers.gated import AdmissionGated
+from agmem.organizers.memmachine import MemMachineOrganizer, MemMachineProfileOrganizer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.zep_graph import SearchRecipe, zep_search_recipe
 from agmem.policies.admission import AdmissionGate
+from agmem.policies.retrieval import STRATEGIES
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
 OUT = Path(__file__).resolve().parent.parent / "results"
@@ -153,6 +155,8 @@ def run(
     memoryos_lineage: str = "pypi",
     memmachine_expand_context: int | None = None,
     memmachine_context_limit: int | None = None,
+    query_strategy: str | None = None,
+    agent_limit: int = 20,
 ) -> dict:
     """Run one config end-to-end: build a fresh `AgenticMemory`, ingest
     `sample` (flushing tail buffers and calling `consolidate()`), answer the
@@ -235,6 +239,11 @@ def run(
             keyword_queries=keyword_queries,
             judge=judge,
             memoryos_lineage=memoryos_lineage,
+            # Read-side control policy, off unless a config names one. It spends
+            # LLM calls per QUESTION (1 for routing, 1-3 more inside the chosen
+            # strategy), so it belongs to the config rather than the default.
+            query_strategy=(STRATEGIES[query_strategy]() if query_strategy else None),
+            agent_limit=agent_limit,
             progress=lambda i, n: (
                 print(f"[{config_name}] {i}/{n}", flush=True) if i % 20 == 0 else None
             ),
@@ -593,6 +602,60 @@ def main() -> None:
             None,
             None,
             (),
+        ),
+        # MemMachine's Retrieval Agent on the same store — the read-side control
+        # policy (policies/retrieval.py) its own evaluation runs by default
+        # (`agent_name="ToolSelectAgent"`). Same ingest as `memmachine`, so the
+        # pair isolates the READ path: identical derivatives, identical
+        # contextualization, different number of searches and query rewrites.
+        # This is the one config here whose read path spends LLM calls per
+        # question (1 routing + 1-3 inside the chosen strategy), which is also
+        # the paper's own claim under test ("retrieval-stage optimizations
+        # outperformed ingestion-stage improvements").
+        "memmachine_agent": (
+            ["memmachine"],
+            ("derivatives",),
+            150,
+            False,
+            None,
+            None,
+            (),
+            None,
+            {
+                "memmachine_expand_context": 3,
+                "memmachine_context_limit": 30,
+                "query_strategy": "tool_select",
+                # `agent_utils.process_question`'s `search_limit` default, which
+                # is what its LoCoMo/LongMemEval drivers pass as QueryParam.limit.
+                "agent_limit": 20,
+            },
+        ),
+        # MemMachine's OTHER tier: semantic memory (= the paper's "profile").
+        # This is where its LLM budget goes — one call per message per category
+        # — so `memmachine` vs this pair is the cost contrast that the "zero
+        # LLM calls" headline is only true of on the left. Upstream's own LoCoMo
+        # config disables it (`semantic_memory.enabled: false`), so this config
+        # is OUR extension of the comparison, not a reproduction of a published
+        # number; `memmachine_full` runs both tiers as a deployed server would.
+        "memmachine_profile": (
+            [lambda: MemMachineProfileOrganizer()],
+            ("semantic",),
+            10,
+            False,
+            None,
+            None,
+            (),
+        ),
+        "memmachine_full": (
+            [lambda: MemMachineOrganizer(), lambda: MemMachineProfileOrganizer()],
+            ("derivatives", "semantic"),
+            {"derivatives": 150, "semantic": 10},
+            False,
+            None,
+            None,
+            (),
+            None,
+            {"memmachine_expand_context": 3, "memmachine_context_limit": 30},
         ),
         # Zep read paths come from the recipe table, not from this tuple: the
         # paper describes three search functions and five rerankers and upstream

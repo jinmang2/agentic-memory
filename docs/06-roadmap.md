@@ -145,6 +145,17 @@
    부수 발견: 동봉 하네스는 **두 벌**이고 논문 수치를 낸 `evaluation/episodic_memory/` 쪽은
    `18f1211`에서 실행 불가(5-튜플을 3개로 언팩) — "네 번째 독립 참조"로 쓰려면 이 사실을
    전제해야 한다.
+   **같은 날 2차분 완료**: Retrieval Agent 4종을 `policies/retrieval.py`로
+   (**policies/의 첫 read-side 멤버**, 지배 연산 = *retrieve*; seam은 bound `search`
+   callable이라 write 쪽 wrapper 같은 어댑터가 필요 없다) + semantic tier를
+   `organizers/memmachine/profile.py`로. 테스트 43건.
+   **비교표 스코프 정정**: "write 경로 LLM 콜 0회"는 **episodic 한정**이다 — semantic
+   (=논문의 profile) tier는 **메시지×카테고리당 1콜**을 쓴다. 공개 수치는 이 tier를 끈
+   설정(`semantic_memory.enabled: false`)이라 비용에 포함돼 있지 않다.
+   추가 결함 4건: `QueryPolicy` 6필드 전부 사문 / split 결과 dedup 없음 / consolidation
+   프롬프트가 파서가 안 읽는 키를 문서화(따르면 그룹 소실) / update 프롬프트의 delete
+   예시가 자기 스키마에 invalid. 클러스터링(`cluster_manager`)은 **의도적 제외** —
+   feature가 아니라 event를 묶는 별도 상태기계이고 ingestion 경로가 호출하지 않는다.
 4. **GRAVITY** (2순위) — **2026-07-26 재분류: read-path 기법이 아니다.** anchor 3종은 offline
    build phase 산출물이고 standalone 저장되므로 **자체 organizer**(새 메모리 타입 3종 + offline
    단계는 `consolidate()`) **＋** read step 양쪽이 필요하다. ReadStep 레지스트리만으로는 절반도

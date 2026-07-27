@@ -382,3 +382,263 @@ def test_episode_type_is_declared():
 
     assert MemMachineOrganizer.produces == ("derivatives",)
     assert set(MemMachineOrganizer.produces) <= set(MEMORY_TYPES)
+
+
+# ---- semantic memory: the paper's "profile" tier ---------------------------
+
+
+def profile_features(mem):
+    return [
+        row
+        for row in mem.doc_store.list_items("semantic", "t")
+        if row.get("kind") == "profile_feature" and not row.get("deleted")
+    ]
+
+
+def test_the_profile_tier_costs_one_llm_call_per_message_per_category():
+    """The scoping fact for the whole comparison table: MemMachine is LLM-free
+    on the EPISODIC path only. ``semantic_ingestion.py`` loops messages inside a
+    loop over categories, one ``llm_feature_update`` call each."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer, SemanticCategory
+
+    categories = [
+        SemanticCategory("profile", {"Demographic Information": "..."}),
+        SemanticCategory("coding", {"Tech Proficiency": "..."}),
+    ]
+    llm = StubLLM({"distill": [{"commands": []} for _ in range(6)]})
+    organizer = MemMachineProfileOrganizer(categories=categories, consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        ingest(mem, TURNS[:3])
+        assert len(llm.calls) == 6  # 3 messages x 2 categories
+    finally:
+        mem.close()
+
+
+def test_add_and_delete_commands_are_applied_in_sequence():
+    """``_apply_commands``: delete removes EVERY value under
+    ``(category, tag, feature)``, and an update is delete-then-add."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "commands": [
+                        {
+                            "command": "add",
+                            "tag": "Hobbies & Interests",
+                            "feature": "dog_owner",
+                            "value": "User adopted a beagle named Luna",
+                        }
+                    ]
+                },
+                {
+                    "commands": [
+                        {
+                            "command": "delete",
+                            "tag": "Hobbies & Interests",
+                            "feature": "dog_owner",
+                            "value": "irrelevant",
+                        },
+                        {
+                            "command": "add",
+                            "tag": "Hobbies & Interests",
+                            "feature": "dog_owner",
+                            "value": "User owns two dogs",
+                        },
+                    ]
+                },
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        ingest(mem, TURNS[:2])
+        rows = profile_features(mem)
+        assert [row["value"] for row in rows] == ["User owns two dogs"]
+        assert rows[0]["content"] == "[Hobbies & Interests] dog_owner: User owns two dogs"
+        assert rows[0]["embedding_text"] == "User owns two dogs"  # value alone, as upstream
+    finally:
+        mem.close()
+
+
+def test_a_delete_retracts_an_add_queued_in_the_same_message():
+    """Upstream applies commands sequentially against storage, so a delete after
+    an add of the same feature removes it. Ours has to retract the queued op,
+    since the row does not exist yet when the batch is built."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "commands": [
+                        {"command": "add", "tag": "T", "feature": "f", "value": "v"},
+                        {"command": "delete", "tag": "T", "feature": "f", "value": "v"},
+                    ]
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        ingest(mem, TURNS[:1])
+        assert profile_features(mem) == []
+    finally:
+        mem.close()
+
+
+def test_one_malformed_command_drops_the_whole_message():
+    """Upstream's failure granularity, and its own delete EXAMPLE is malformed
+    against its schema (no ``value``) — so this path is reachable by a model
+    that copies the prompt."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "commands": [
+                        {"command": "add", "tag": "T", "feature": "good", "value": "kept?"},
+                        {"command": "delete", "tag": "T", "feature": "no_value"},
+                    ]
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        ingest(mem, TURNS[:1])
+        assert profile_features(mem) == []  # the well-formed command dies with the batch
+        assert organizer.dropped_commands == 2
+    finally:
+        mem.close()
+
+
+def test_consolidation_fires_only_over_the_tag_threshold():
+    """``consolidated_threshold=20`` features under ONE tag. Under it the pass
+    is a storage read and costs nothing."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    organizer = MemMachineProfileOrganizer(consolidation_threshold=3, consolidate_every=0)
+    llm = StubLLM({"distill": []})
+    mem = make_mem(organizer, llm=llm)
+    try:
+        for index in range(2):
+            mem.doc_store.put_item(
+                f"f{index}",
+                "semantic",
+                "t",
+                {
+                    "id": f"f{index}",
+                    "kind": "profile_feature",
+                    "category": "profile",
+                    "tag": "Hobbies & Interests",
+                    "feature": f"f{index}",
+                    "value": f"v{index}",
+                    "source_episode_ids": [f"e{index}"],
+                },
+            )
+        assert organizer.consolidate(mem._ctx) == []
+        assert llm.calls == []
+    finally:
+        mem.close()
+
+
+def test_consolidation_deletes_what_is_not_kept_and_inherits_its_citations():
+    """``keep_memories`` is an allowlist — everything else is deleted — and the
+    merged feature carries the union of the deleted features' citations."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "keep_memories": ["f0"],
+                    "consolidated_memories": [
+                        {"tag": "Hobbies & Interests", "feature": "pets", "value": "two dogs"}
+                    ],
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidation_threshold=3, consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        for index in range(3):
+            mem.doc_store.put_item(
+                f"f{index}",
+                "semantic",
+                "t",
+                {
+                    "id": f"f{index}",
+                    "kind": "profile_feature",
+                    "category": "profile",
+                    "tag": "Hobbies & Interests",
+                    "feature": f"f{index}",
+                    "value": f"v{index}",
+                    "source_episode_ids": [f"e{index}"],
+                },
+            )
+        mem._apply_ops(organizer.consolidate(mem._ctx), organizer.name)
+        rows = {row["id"]: row for row in profile_features(mem)}
+        assert "f0" in rows and "f1" not in rows and "f2" not in rows
+        merged = next(row for row in rows.values() if row.get("consolidated"))
+        assert merged["value"] == "two dogs"
+        assert sorted(merged["source_episode_ids"]) == ["e1", "e2"]
+    finally:
+        mem.close()
+
+
+def test_the_prompts_key_for_merged_features_is_read_too():
+    """Defect 1: the consolidation prompt documents ``consolidate_memories``
+    while the parser reads ``consolidated_memories``. Upstream would delete
+    everything not kept and write nothing back."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "keep_memories": [],
+                    "consolidate_memories": [{"tag": "T", "feature": "merged", "value": "one"}],
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidation_threshold=2, consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        for index in range(2):
+            mem.doc_store.put_item(
+                f"f{index}",
+                "semantic",
+                "t",
+                {
+                    "id": f"f{index}",
+                    "kind": "profile_feature",
+                    "category": "profile",
+                    "tag": "T",
+                    "feature": f"f{index}",
+                    "value": f"v{index}",
+                },
+            )
+        mem._apply_ops(organizer.consolidate(mem._ctx), organizer.name)
+        values = [row["value"] for row in profile_features(mem)]
+        assert values == ["one"]  # upstream would leave this empty
+    finally:
+        mem.close()
+
+
+def test_profile_features_do_not_land_in_memoryos_profile_section():
+    """``bench/locomo.py`` injects every ``semantic`` row with ``kind="profile"``
+    verbatim as "User Profile:" — MemoryOS's single LPM document. These are
+    (tag, feature, value) triples and carry their own kind so they reach the
+    prompt through retrieval instead."""
+    from agmem.organizers.memmachine.profile import PROFILE_FEATURE_KIND
+
+    assert PROFILE_FEATURE_KIND != "profile"

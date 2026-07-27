@@ -27,6 +27,7 @@ Members, keyed by the survey operation they govern:
 | module | operation | papers |
 |---|---|---|
 | ``admission`` | *store* | A-MAC (2603.04549, implemented), SAGE (2605.30711, candidate) |
+| ``retrieval`` | *retrieve* | MemMachine's Retrieval Agent (2604.04853, implemented) |
 | *(none yet)* | *discard* / *retrieve* suppression | Memory Worth (2604.12007, candidate) |
 | *(none yet)* | *store/update/discard*, learned | Mem-alpha (2509.25911, candidate) |
 
@@ -41,16 +42,23 @@ turns) and by *kind* (heuristic / prompted / learned, survey §3.3).
 A policy is attached to a mechanism by a wrapper, never by a constructor
 argument on the mechanism: ``organizers/gated.py::AdmissionGated`` applies any
 admission gate to any message-driven organizer, which is what makes the
-cross-cutting claim true rather than aspirational. **No mechanism imports this
+cross-cutting claim true rather than aspirational. The read side needs no such
+adapter module — its seam is a bound ``search`` callable
+(``retrieval.QueryContext``), so a strategy reaches any mechanism without either
+side importing the other. Same rule, cheaper: the write side had to wrap because
+it intercepts a hook the mechanism owns, while a read policy only decides which
+searches to run. **No mechanism imports this
 package** — inside ``organizers/`` only that one adapter module does, and the
 dependency the other way is limited to ``organizers.base.OrganizerContext``. See that module for the verified applicability limits — task-driven
 organizers (ACE, G-Memory, ReasoningBank) declare no ``on_message`` and so are
 outside *admission*'s reach specifically, though not outside ``policies/``.
 
-There is deliberately no ``base.py`` policy Protocol yet: with one implemented
-member, any shared interface would be guessed from a single example. The second
-member (SAGE is also a write-admission gate for an A-Mem host, so it lands in
-``admission``) is what should force the abstraction out.
+There is deliberately no ``base.py`` policy Protocol yet, and the second module
+did not change that: ``admission`` gates one candidate at write time and
+``retrieval`` plans N searches at read time, so their only common shape would be
+the word "policy". A shared base should be forced out by a second member of the
+SAME operation (SAGE is another write-admission gate for an A-Mem host, so it
+lands inside ``admission``), not by two operations that merely share a package.
 
 Read-path *post-steps* are a different thing and live in ``retrieval/steps.py``:
 those are keyed on memory type and belong to whichever mechanism produced the
@@ -69,13 +77,31 @@ from agmem.policies.admission import (
     AdmissionStats,
     TypePriorClassifier,
 )
+from agmem.policies.retrieval import (
+    STRATEGIES,
+    ChainOfQuery,
+    DirectRetrieval,
+    QueryContext,
+    QueryResult,
+    QueryStrategy,
+    SplitQuery,
+    ToolSelect,
+)
 
 __all__ = [
     "AdmissionDecision",
     "AdmissionFeatures",
     "AdmissionGate",
     "AdmissionStats",
+    "ChainOfQuery",
+    "DirectRetrieval",
     "PAPER_THRESHOLD",
     "PAPER_WEIGHTS",
+    "QueryContext",
+    "QueryResult",
+    "QueryStrategy",
+    "SplitQuery",
+    "STRATEGIES",
+    "ToolSelect",
     "TypePriorClassifier",
 ]

@@ -66,6 +66,12 @@ max_forward_segments = expand_context - max_backward_segments
 
 ### 1.3 논문의 3-tier와 배포 코드의 계층이 **이름부터 다르다**
 
+> **정정(§4.5):** "profile 패키지는 없고 대신 클러스터링 서브시스템이 있다"는 절반만 맞다.
+> `semantic_memory/`가 **곧 profile tier**다 — LLM이 메시지를 add/delete 커맨드로 바꿔
+> tag→feature→value 2단 프로파일을 갱신하고, citation과 임계값 기반 consolidation까지 있다.
+> 클러스터링(`cluster_manager`/`cluster_splitter`)은 그 경로가 **호출하지 않는** 별도
+> 이벤트 그룹핑이다. ⇒ 논문↔코드 괴리는 우리가 적어둔 것보다 **작다**(이름만 다름).
+
 논문: short-term / long-term episodic / **profile**.
 코드: `episodic_memory/{short_term_memory, long_term_memory, event_memory,
 declarative_memory}` + **최상위 별도 `semantic_memory/`**(cluster_manager,
@@ -221,6 +227,47 @@ max_forward_episodes = expand_context - max_backward_episodes
 - 날짜 포맷이 두 계보에서 다르다: declarative는 `strftime("%A, %B %d, %Y")`(0 패딩),
   event 앵커는 babel CLDR `full`(0 패딩 없음). 같은 시각이 다르게 찍힌다.
 
+### 4.5 semantic_memory = profile tier이고, **여기가 LLM 예산이 나가는 곳**이다
+
+`semantic_ingestion.py::_process_single_set`은 카테고리 루프 안에서 메시지 루프를 돈다 —
+즉 **메시지 1건 × 카테고리 1개당 LLM 콜 1회**(`llm_feature_update`), 그리고 한 tag의
+feature가 임계값(기본 20)을 넘으면 tag당 consolidation 콜 1회가 더 붙는다.
+
+⇒ **"write 경로 LLM 콜 0회"는 episodic 경로 한정이다.** 비교표에 MemMachine을 "추출 축의
+반대 극단"으로 올릴 때 이 스코프를 반드시 붙일 것. 단, `locomo_config.yaml`이
+`semantic_memory.enabled: false`이므로 **공개 수치에는 이 비용이 포함돼 있지 않다.**
+
+포팅하며 나온 결함 3건(전부 재현 또는 기록):
+1. **consolidation 프롬프트가 파서가 읽지 않는 키를 문서화한다.** 프롬프트의 스키마와
+   noop 예시는 `consolidate_memories`, 파싱 모델 필드는 `consolidated_memories`.
+   업스트림은 `instructor`로 디코딩하므로 스키마를 강제하는 프로바이더에선 가려지지만,
+   프롬프트를 따르는 모델에선 **keep_memories에 없는 feature 전부 삭제 + 병합본 0건 기록**
+   = 그룹 전체 소실. 우리는 두 철자를 다 읽고 경고를 남긴다.
+2. **update 프롬프트의 delete 예시가 자기 스키마에 대해 invalid**다(`value` 없음).
+   `SemanticCommand`는 4필드 전부 필수라 예시를 그대로 따르면 검증 실패 →
+   업스트림은 **그 메시지의 커맨드 전부**를 잃는다(예외가 caller의 `continue`로 흡수).
+3. **JSON 배열을 `}`로 닫은 few-shot 예시**가 하나 있다(4번째 예시). 그대로 뒀다 —
+   모델이 실제로 보는 텍스트이고, few-shot을 "고치면" 추출 분포가 조용히 바뀐다.
+
+### 4.6 Retrieval Agent — `QueryPolicy` 6필드가 전부 사문(死文)
+
+`retrieval_agent/` 안에서 `grep -rn 'policy\.'`는 **아무것도 나오지 않는다.**
+`token_cost`/`time_cost`/`accuracy_score`/`confidence_score`/`max_attempts`/`max_return_len`이
+모든 `do_query` 시그니처를 타고 다니지만 어느 에이전트도 읽지 않고, `MemMachineAgent`는
+`_ = policy`로 시작한다. 실제로 사는 값(`max_attempts`, `confidence_score`)은 `extra_params`
+에서 오는데 **세 개의 생성 지점 어디도 그걸 채우지 않아** 항상 클래스 기본값 3 / 0.8이다.
+harness가 policy에 넣는 `max_attempts=3, confidence_score=10`은 무의미하다.
+A-MAC의 죽은 `X_train`, MemoryOS의 죽은 keyword 항과 같은 계열.
+
+부수 2건:
+- `SplitQueryAgent`는 서브쿼리 결과를 **dedup 없이 concat**한다 → 두 서브쿼리가 같은
+  에피소드를 잡으면 프롬프트에 2번 들어간다(우리가 80bcb37에서 고친 그 결함이 여기선 업스트림 동작).
+- rerank 질의가 **구분자 없는 접합**이다: `param.query += "\n".join(sub_queries)`,
+  `q.query = query.query + "\n".join(used_query)`. cross-encoder가 실제로 채점한 문자열이다.
+- `ChainOfQueryAgent`의 최종 집합은 `evidence ∪ **마지막 라운드** 검색결과`다. 이전 라운드
+  히트는 모델이 `evidence_indices`로 승격시켜야만 살아남는다 — 그 필드가 텔레메트리가 아니라
+  load-bearing인 이유.
+
 ## 5. 우리 구현 — 확정 프리셋 표
 
 `src/agmem/organizers/memmachine/organizer.py`의 `MEMMACHINE_PRESETS`.
@@ -242,8 +289,25 @@ read 경로는 프리셋이 아니라 **레시피**다(`AgmemConfig.memmachine_*
 3 / 30은 실험 config에서 명시적으로 준다. MemoryOS `page_recall_cap` 사고와 같은 이유다 —
 기본값이 조용히 eval 계보의 숫자를 물고 있으면 "기본 설정 실행"이 전부 eval 계보 실행이 된다.
 
-미구현/분리 항목: Retrieval Agent(3-way 라우팅)는 policy read-side 계약이 선행이라 별건이고,
-`semantic_memory/` 클러스터링도 이번 범위 밖이다.
+### 5.1 구현 범위 (2026-07-27 기준)
+
+| 상류 | 우리 자리 | 상태 |
+|---|---|---|
+| episodic: segmenter+deriver | `organizers/memmachine/organizer.py` | ✅ |
+| episodic: STM 요약 | 같은 파일 (`stm_capacity`, 두 프리셋 다 0) | ✅ |
+| declarative contextualized retrieval | `retrieval/steps.py::MemMachineContextualize` | ✅ |
+| Retrieval Agent 4종 | `policies/retrieval.py` (**read-side control policy 첫 멤버**) | ✅ |
+| semantic_memory (= profile tier) | `organizers/memmachine/profile.py` | ✅ |
+| `cluster_manager`/`cluster_splitter` | — | ❌ 의도적 제외 |
+| `config_store/` 멀티테넌트 카테고리 | 생성자 인자로 대체 | ❌ 배포 인프라 |
+
+클러스터링 제외 근거: **feature가 아니라 event를 묶는 별도 상태기계**이고 ingestion 경로가
+호출하지 않는다. 각주로 처리할 게 아니라 자체 조사가 필요한 별건이다(Nemori 분절과 비교 대상).
+
+Retrieval Agent를 `policies/`에 둔 근거: 메모리 타입을 선언하지 않고 `MemoryOp`도 발행하지
+않으며, 지배하는 연산이 *retrieve*다. write 쪽 A-MAC이 wrapper로 붙는 것과 달리 read 쪽은
+**bound `search` callable**이 seam이라 어댑터 모듈이 필요 없다. 두 모듈의 공통 base는
+뽑지 않았다 — 공통점이 "policy라는 단어"뿐이라서(자세한 건 `policies/__init__.py`).
 
 ## 6. 참고
 

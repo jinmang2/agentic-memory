@@ -74,8 +74,11 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   │   └── stages.py            #   Segmenter/EpisodeMerger/Integrator/Consolidator
 │   │   │                            #   (fidelity 스위치, docs/11 §4)
 │   │   ├── memmachine/              # 기계적 derivative 인덱싱 (write LLM 콜 0회).
-│   │   │                            #   배포 코드 계보, MEMMACHINE_PRESETS로 declarative/event
-│   │   │                            #   분리 — 읽기는 retrieval/steps.py의 Contextualize
+│   │   │   │                        #   배포 코드 계보, MEMMACHINE_PRESETS로 declarative/event
+│   │   │   │                        #   분리 — 읽기는 retrieval/steps.py의 Contextualize
+│   │   │   ├── organizer.py         #   episodic tier (분절→파생→앵커, +STM 요약)
+│   │   │   └── profile.py           #   semantic tier = 논문의 "profile".
+│   │   │                            #   메시지×카테고리당 LLM 1콜 — 0콜 주장은 episodic 한정
 │   │   ├── zep_graph/               # entity 추출→resolution→fact→invalidation
 │   │   ├── ace/                     # Generator/Reflector/Curator + playbook delta
 │   │   ├── reasoning_bank/          # self-judge→성공/실패 증류→append (+MaTTS 훅)
@@ -86,11 +89,14 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   ├── policies/                    # ★ control policy = mechanism과 직교하는 cross-cutting 규칙
 │   │   │                            #   소속 판정: 메모리 타입 미선언 + MemoryOp 미발행.
 │   │   │                            #   근거/조사: docs/research/memory-component-taxonomy.md
-│   │   └── admission.py             # store 연산 게이트: A-MAC(2603.04549) 구현,
-│   │                                #   SAGE(2605.30711)가 같은 seam의 다음 후보.
-│   │                                #   적용은 organizers/gated.py wrapper 경유 —
-│   │                                #   어떤 mechanism도 이 패키지를 import하지 않는다
-│   │                                #   (organizers 중 gated.py만 import)
+│   │   ├── admission.py             # store 연산 게이트: A-MAC(2603.04549) 구현,
+│   │   │                            #   SAGE(2605.30711)가 같은 seam의 다음 후보.
+│   │   │                            #   적용은 organizers/gated.py wrapper 경유 —
+│   │   │                            #   어떤 mechanism도 이 패키지를 import하지 않는다
+│   │   │                            #   (organizers 중 gated.py만 import)
+│   │   └── retrieval.py             # retrieve 연산 정책: MemMachine Retrieval Agent
+│   │                                #   (direct/split/chain-of-query/tool-select).
+│   │                                #   seam은 bound `search` callable이라 어댑터 불필요
 │   │
 │   ├── memory.py                    # AgenticMemory 퍼사드 (05 문서의 공개 API)
 │   │                                #   + 비동기 write 워커 (내장 스레드+큐, sync_write=False 시)
@@ -293,8 +299,9 @@ read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드�
 | ReasoningBank | ADD(strategy), ADD(experience) | `strategies`, `experiences` | doc+vec |
 | G-Memory | ADD(traj/insight), UPDATE(reward), DELETE(prune) | `strategies` | doc+vec+graph |
 | MemMachine | ADD(derivative) — LLM 콜 없음 | `derivatives` | doc+vec |
+| MemMachine-profile | ADD(feature), DELETE(커맨드/consolidation) | `semantic` | doc+vec |
 
-→ 9개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
+→ 10개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
 A-Mem/ReasoningBank로 먼저 검증.
 
 **memory type은 방법론 전용이 아니다**: `semantic`을 Nemori와 MemoryOS가, `strategies`를

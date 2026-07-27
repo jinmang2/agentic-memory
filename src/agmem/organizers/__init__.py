@@ -8,7 +8,7 @@ from agmem.organizers.ace import ACEOrganizer
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext, overrides
 from agmem.organizers.gmemory import GMemoryOrganizer
-from agmem.organizers.memmachine import MemMachineOrganizer
+from agmem.organizers.memmachine import MemMachineOrganizer, MemMachineProfileOrganizer
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.passthrough import PassthroughOrganizer
@@ -22,6 +22,7 @@ ORGANIZERS: dict[str, type[Organizer]] = {
     "nemori": NemoriOrganizer,
     "memoryos": MemoryOSOrganizer,
     "memmachine": MemMachineOrganizer,
+    "memmachine_profile": MemMachineProfileOrganizer,
     "ace": ACEOrganizer,
     "zep_graph": ZepGraphOrganizer,
     "gmemory": GMemoryOrganizer,
@@ -39,6 +40,7 @@ __all__ = [
     "NemoriOrganizer",
     "MemoryOSOrganizer",
     "MemMachineOrganizer",
+    "MemMachineProfileOrganizer",
     "ACEOrganizer",
     "ZepGraphOrganizer",
     "GMemoryOrganizer",
