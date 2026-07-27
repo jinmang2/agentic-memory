@@ -1,8 +1,12 @@
 """LoCoMo benchmark pipeline (snap-research/locomo, 10 conversations).
 
-The primary metrics are string-based (token F1 + BLEU-1, SQuAD-style
-normalization with Porter stemming) — the cheapest reproduction entry point
-(docs/06 Phase 2). A Mem0-style binary J-score LLM judge is additionally
+The primary metric is string-based token F1 with SQuAD-style normalization and
+Porter stemming, mirroring snap-research/locomo's ``normalize_answer`` +
+``f1_score`` — the cheapest reproduction entry point (docs/06 Phase 2). BLEU-1
+accompanies it but has two distinct provenances, which must not be conflated:
+``bleu1`` is ours (upstream locomo computes no BLEU at all — its third metric is
+a rouge-1 F under a ``rougel_score`` name), while ``bleu1_wujiang`` mirrors
+WujiangXu/A-Mem's nltk BLEU-1 and is what ``eval_mode="wujiang"`` scores. A Mem0-style binary J-score LLM judge is additionally
 available (opt-in via ``evaluate(judge=True)``) for cat 1-4. Categories:
 1=multi-hop, 2=temporal, 3=open-domain, 4=single-hop, 5=adversarial (gold in
 ``adversarial_answer``).
@@ -12,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import string
 from collections import Counter, defaultdict
@@ -21,6 +26,9 @@ from typing import Any, Callable
 
 from agmem._porter import PorterStemmer
 from agmem.memory import AgenticMemory
+from agmem.organizers.base import overrides as base_overrides
+
+logger = logging.getLogger("agmem.bench.locomo")
 
 CATEGORY_NAMES = {
     1: "multi-hop",
@@ -48,6 +56,25 @@ Format your response as a JSON object with a "keywords" field containing the sel
 
 Example response format:
 {{"keywords": "keyword1, keyword2, keyword3"}}"""
+
+# MemoryOS EVAL lineage only: `llm_extract_keywords` (eval/utils.py:361), one LLM
+# call per question whose result is added to the segment score as a containment
+# overlap. `memoryos-pypi` deleted the same term (`query_keywords = set()`
+# "Keywords extraction removed"), so this is a real lineage difference and a
+# read-time cost the pypi shape does not pay. Prompt transcribed; the object
+# wrapper is this project's structured-output adaptation of a bare comma string.
+MEMORYOS_KEYWORD_SCHEMA = {
+    "type": "object",
+    "properties": {"keywords": {"type": "string"}},
+    "required": ["keywords"],
+}
+
+MEMORYOS_KEYWORD_PROMPT = """You are a keyword extraction expert. Please extract the keywords \
+of the conversation topic from the following dialogue, separated by commas, and do
+not exceed three:
+{question}
+
+Return JSON: {{"keywords": "keyword1, keyword2, keyword3"}}"""
 
 # Common across all methodologies (fair relative comparison). The temporal
 # instructions are shared by both upstream evals (Nemori search.py computes
@@ -192,7 +219,14 @@ def token_f1(pred: str, gold: str) -> float:
 
 def bleu1(pred: str, gold: str) -> float:
     """Same empty-token edge case as `token_f1`; otherwise unigram precision
-    scaled by a brevity penalty when `pred` is shorter than `gold`."""
+    scaled by a brevity penalty when `pred` is shorter than `gold`.
+
+    Ours, not anyone's: snap-research/locomo computes NO BLEU at all (its
+    `evaluation.py` scores exact match, stemmed token F1, and a `rougel_score`
+    that actually returns rouge-1 F). This shares `normalize` with `token_f1`
+    so the two `ours`-mode numbers are at least mutually consistent, but it is
+    not a port of an official scorer and must not be cited as one — see
+    `bleu1_wujiang` for the one BLEU that does mirror an upstream."""
     p, g = normalize(pred), normalize(gold)
     if not p or not g:
         return float(p == g)
@@ -228,6 +262,26 @@ CAT5_NOT_MENTIONED = "Not mentioned in the conversation"
 # advancedMemAgent.answer_question (:155-159): a 2-option choice between the
 # gold answer and the "Not mentioned" distractor, scored by set-based F1
 # against the gold. Kept as one f-string with the same wording/spacing.
+# MemoryOS's role-play system prompt, transcribed from its LoCoMo driver
+# (`main_loco_parse.generate_system_response_with_meta`). OPT-IN, and off by
+# default, for a reason that is about this harness rather than about fidelity:
+# every config here answers through the same `ANSWER_PROMPT` so that a score
+# difference is attributable to the memory system, and a per-methodology answer
+# prompt breaks that. Upstream's own harness does use this, so a run that wants
+# to reproduce MemoryOS's published operating point end-to-end should pass
+# `persona=` — and then its numbers are comparable to upstream's, not to the
+# other configs in docs/09.
+PERSONA_SYSTEM_PROMPT = """You are role-playing as {speaker_b} in a conversation with the user \
+who is playing {speaker_a}. Here are some of your character traits and knowledge:
+{assistant_knowledge}
+Any content referring to 'User' in the prompt refers to {speaker_a}'s content, \
+and any content referring to 'AI' or 'assistant' refers to {speaker_b}'s content.
+Your task is to answer questions about {speaker_a} or {speaker_b} in an \
+extremely concise manner.
+When the question is: "What did the charity race raise awareness for?", you \
+should not answer in the form of: "The charity race raised awareness for mental \
+health." Instead, it should be: "mental health", as this is more concise."""
+
 CAT5_MCQ_PROMPT = """Based on the context: {context}, answer the following \
 question. {question}
 
@@ -266,6 +320,64 @@ def token_f1_wujiang(pred: str, gold: str) -> float:
     if precision + recall == 0:
         return 0.0
     return 2 * precision * recall / (precision + recall)
+
+
+_WUJIANG_BLEU_WARNED = False
+
+
+def bleu1_wujiang(pred: str, gold: str) -> float | None:
+    """Upstream BLEU-1 (``utils.calculate_metrics``), or ``None`` when nltk is absent.
+
+    Upstream computes BLEU with a DIFFERENT tokenizer than its F1:
+    ``nltk.word_tokenize(text.lower())`` (not ``simple_tokenize``), fed to
+    ``nltk.translate.bleu_score.sentence_bleu`` with ``weights=(1, 0, 0, 0)``
+    and ``SmoothingFunction().method1``. Reference is a single-element list.
+
+    This calls the real nltk rather than reimplementing it, on the opposite
+    terms from ``agmem._porter``: Porter is a fully specified algorithm that
+    transcribes cleanly, whereas ``word_tokenize`` is punkt sentence splitting
+    plus the Treebank tokenizer, and a hand-rolled approximation of it would be
+    exactly the "naive in-python fallback" this project bans (docs/03 §5).
+    So nltk is an optional dependency (``[eval]``) and its absence degrades
+    EXPLICITLY to ``None`` — never to ``bleu1``, whose article-stripping,
+    Porter-stemming ``normalize`` would silently report an ``ours`` number
+    under a ``wujiang`` label. That substitution is what
+    ``eval_mode="wujiang"`` used to do, so every stored wujiang ``bleu1``
+    predating this function is an ``ours``/``wujiang`` hybrid (docs/14 §4)."""
+    global _WUJIANG_BLEU_WARNED
+    try:
+        from nltk.tokenize import word_tokenize
+        from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
+    except ImportError:
+        if not _WUJIANG_BLEU_WARNED:
+            logger.warning(
+                "locomo: nltk not installed — upstream BLEU-1 unavailable in wujiang mode, "
+                "omitting the metric (explicit degradation; install the [eval] extra). "
+                "F1 is unaffected."
+            )
+            _WUJIANG_BLEU_WARNED = True
+        return None
+    try:
+        pred_tokens = word_tokenize(str(pred).lower())
+        ref_tokens = [word_tokenize(str(gold).lower())]
+    except LookupError:  # nltk present, punkt corpus not downloaded
+        if not _WUJIANG_BLEU_WARNED:
+            logger.warning(
+                "locomo: nltk punkt data missing — upstream BLEU-1 unavailable in wujiang "
+                "mode, omitting the metric (run nltk.download('punkt_tab'))."
+            )
+            _WUJIANG_BLEU_WARNED = True
+        return None
+    if not pred_tokens:
+        return 0.0  # sentence_bleu warns and returns 0 on an empty hypothesis
+    return float(
+        sentence_bleu(
+            ref_tokens,
+            pred_tokens,
+            weights=(1, 0, 0, 0),
+            smoothing_function=SmoothingFunction().method1,
+        )
+    )
 
 
 def gold_for_wujiang(q: dict[str, Any]) -> str:
@@ -362,12 +474,33 @@ def answer(
     gold: str | None = None,
     cat5_temperature: float | None = None,
     capture: dict[str, Any] | None = None,
+    persona: dict[str, str] | None = None,
+    memoryos_lineage: str = "pypi",
 ) -> str:
     """One QA turn: optionally rewrite `question` into keywords (A-Mem's
     upstream eval query style) before `mem.search`, inject the MemoryOS
     profile section unconditionally when `"semantic"` is in `memory_types`,
     then generate. Raises `RuntimeError` if `mem.llm` is unset. Returns `""`
     if the LLM reply is empty after stripping.
+
+    `memoryos_lineage` selects the READ path of one of MemoryOS's two upstream
+    lineages, and it is ONE argument rather than several because that is the
+    lesson of the defect it replaces: the assistant-knowledge dump and the
+    retrieval-queue size were independent knobs pinned at the eval harness's
+    values, so the default (pypi) config read with settings no single upstream
+    has. Two things move together here:
+
+    - assistant knowledge — `"pypi"` retrieves top-20 through the `semantic`
+      channel our search already covers; `"eval"` additionally dumps the whole
+      store into every prompt (`main_loco_parse`: `get_assistant_knowledge()`).
+    - query keywords — `"eval"` spends an LLM call per question
+      (`llm_extract_keywords`) and the result is added to the segment score;
+      `"pypi"` deleted that term, so no call and no keyword channel.
+
+    The third setting, `page_recall_cap` (7 vs 10), is construction-time config
+    and so lives on `AgmemConfig`; a lineage-faithful run has to set it too. It
+    is an argument rather than a constant for the same reason `persona` is: a
+    run that mixes lineages cannot be compared to either.
 
     When `capture` (a mutable dict) is passed, it is filled with the exact
     retrieval detail for this question — the raw `query`, the keyword-rewritten
@@ -387,7 +520,25 @@ def answer(
         )
         if keyword_result and str(keyword_result.get("keywords", "")).strip():
             query = str(keyword_result["keywords"]).strip()
-    bundle = mem.search(query, memory_types=memory_types, k=k)
+    # MemoryOS eval lineage: keywords ADD a term to the segment score rather than
+    # replacing the query, so this is a separate extraction from A-Mem's above
+    # and the two can be on at once without interfering. A dropped call degrades
+    # to no keyword term, which is exactly the pypi behaviour.
+    query_keywords: set[str] = set()
+    if memoryos_lineage == "eval" and mem.structured is not None:
+        extracted = mem.structured.call(
+            "extract",
+            MEMORYOS_KEYWORD_PROMPT.format(question=question),
+            MEMORYOS_KEYWORD_SCHEMA,
+            required_keys=("keywords",),
+        )
+        if extracted:
+            query_keywords = {
+                word.strip().lower()
+                for word in str(extracted.get("keywords", "")).split(",")
+                if word.strip()
+            }
+    bundle = mem.search(query, memory_types=memory_types, k=k, query_keywords=query_keywords)
     if capture is not None:
         capture["query"] = question
         capture["rewritten_query"] = query if query != question else None
@@ -410,15 +561,50 @@ def answer(
     context = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
     # MemoryOS injects the user profile UNCONDITIONALLY (upstream eval puts
     # the whole profile doc in every QA prompt — round-5 memoryos §3). Only
-    # organizers that emit kind="profile" facts produce this section.
+    # organizers that emit kind="profile" items produce this section.
+    #
+    # That is now ONE document, not a bulleted fact list: MemoryOS's LPM keeps a
+    # single evolving profile replaced by `update_user_profile(merge=False)`, so
+    # it is injected verbatim. The old `- {fact}` bullets and the `[-100:]` cap
+    # belonged to the append-only profile this replaced; a cap on a single
+    # document would just have been a truncation with no upstream counterpart.
+    # Several documents can only appear if two profile-producing organizers are
+    # active at once, which no config does — they are joined rather than dropped.
     if "semantic" in memory_types:
-        profile = [
-            d.get("content", "")
-            for d in mem.doc_store.list_items("semantic", namespace=mem.namespace)
-            if d.get("kind") == "profile"
-        ][-100:]  # upstream KB cap=100
+        semantic_items = mem.doc_store.list_items("semantic", namespace=mem.namespace)
+        profile = [d.get("content", "") for d in semantic_items if d.get("kind") == "profile"]
         if profile:
-            context = "User Profile:\n" + "\n".join(f"- {p}" for p in profile) + "\n\n" + context
+            context = "User Profile:\n" + "\n\n".join(profile) + "\n\n" + context
+        # Assistant knowledge, in FULL — the EVAL lineage only, hence the gate.
+        # Upstream's two lineages differ here: the harness that produced the
+        # paper's LoCoMo numbers injects all of it
+        # (`main_loco_parse.generate_system_response_with_meta`:
+        # `long_mem.get_assistant_knowledge()`), while the pypi library searches
+        # top-20 (`Retriever._retrieve_assistant_knowledge`) — which the
+        # `semantic` retrieval channel already approximates, since these items
+        # live in that type and are indexed. Running the section unconditionally,
+        # as this did, gave a pypi-lineage run BOTH channels: top-20 retrieval
+        # plus the eval lineage's full dump. Same class of mixing as
+        # `page_recall_cap`, and `MEMORYOS_PRESETS` exists to prevent it.
+        assistant_knowledge = [
+            d.get("content", "")
+            for d in semantic_items
+            if d.get("kind") == "assistant_knowledge" and d.get("content")
+        ]
+        if assistant_knowledge and memoryos_lineage == "eval":
+            context = (
+                "Assistant Knowledge:\n"
+                + "\n".join(f"- {line}" for line in assistant_knowledge)
+                + "\n\n"
+                + context
+            )
+    # The recent-turn window some methodologies keep OUTSIDE retrieval and inject
+    # verbatim on every question (MemoryOS's STM — upstream `get_response` builds
+    # `history_text` from `short_term_memory.get_all()`). It leads the context
+    # because it is the most recent thing said, and upstream puts it first too.
+    recent = "\n".join(text for text in (org.recent_context() for org in mem.organizers) if text)
+    if recent:
+        context = "Recent conversation:\n" + recent + "\n\n" + context
     if mem.llm is None:
         raise RuntimeError("generate role LLM required for LoCoMo QA")
     # wujiang cat5: 2-option MCQ (gold vs "Not mentioned") in a deterministic
@@ -436,11 +622,23 @@ def answer(
     chat_overrides: dict[str, Any] = {}
     if wujiang_cat5 and cat5_temperature is not None:
         chat_overrides["temperature"] = cat5_temperature
-    reply = mem.llm.chat(
-        "generate",
-        [{"role": "user", "content": prompt_text}],
-        **chat_overrides,
-    )
+    messages = [{"role": "user", "content": prompt_text}]
+    if persona:
+        # Upstream puts the assistant's knowledge in the SYSTEM turn as the
+        # role-played character's traits, not in the retrieved context.
+        messages.insert(
+            0,
+            {
+                "role": "system",
+                "content": PERSONA_SYSTEM_PROMPT.format(
+                    speaker_a=persona.get("speaker_a", "the user"),
+                    speaker_b=persona.get("speaker_b", "the assistant"),
+                    assistant_knowledge=persona.get("assistant_knowledge")
+                    or "- No assistant knowledge recorded yet.",
+                ),
+            },
+        )
+    reply = mem.llm.chat("generate", messages, **chat_overrides)
     reply = reply.strip().splitlines()[0] if reply.strip() else ""
     if wujiang_cat5:
         return resolve_cat5_reply(reply, options)
@@ -460,6 +658,8 @@ def evaluate(
     capture_retrieval: bool = False,
     workers: int = 1,
     progress: Callable[[int, int], None] | None = None,
+    persona: dict[str, str] | None = None,
+    memoryos_lineage: str = "pypi",
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
     per category; `progress(i, total)` (1-indexed `i`) fires after each
@@ -469,10 +669,20 @@ def evaluate(
     adversarial is excluded, matching Mem0), adding `j_score`/`j_n` to each
     aggregate bucket that has judged rows and a `j` bool to those `records`.
 
+    ``persona`` turns on MemoryOS's role-play system turn
+    (``PERSONA_SYSTEM_PROMPT``) with ``{"speaker_a", "speaker_b"}`` and, when the
+    caller wants upstream's exact framing, ``"assistant_knowledge"``. It is off
+    by default because it replaces the shared answer framing for one
+    methodology — see that constant. ``memoryos_lineage`` selects which of
+    MemoryOS's two upstream read paths runs and defaults to the pypi one; see
+    ``answer``.
+
     ``eval_mode="wujiang"`` swaps in the WujiangXu/A-Mem faithful path: gold via
     ``gold_for_wujiang`` (no cat3 truncation), F1 via ``token_f1_wujiang``
-    (set-based, no stemming), and the cat5 2-option MCQ generation. Upstream
-    ``utils.py`` has NO LLM judge, so ``judge`` is forced off in this mode.
+    (set-based, no stemming), BLEU-1 via ``bleu1_wujiang`` (nltk word_tokenize +
+    sentence_bleu, omitted when nltk is absent), and the cat5 2-option MCQ
+    generation. Upstream ``utils.py`` has NO LLM judge, so ``judge`` is forced
+    off in this mode.
 
     When ``capture_retrieval`` is set, each record additionally carries a
     ``retrieval`` field (the raw+rewritten query and the retrieved chunks with
@@ -480,16 +690,38 @@ def evaluate(
     context for every question. Off by default — the non-capturing path and the
     record schema are otherwise unchanged.
 
-    ``workers`` > 1 answers/scores questions concurrently over a fixed, read-only
-    memory (every store read path is lock-guarded and A-Mem's ``on_retrieval`` is
-    a no-op, so QA is side-effect-free): each question is independent, results are
-    reassembled in the original question order, and the aggregates are therefore
-    IDENTICAL to the sequential path (``workers=1``, the default) — only wall-clock
-    and the interleaving of trace lines differ. This is a throughput knob for the
-    write-once/read-sweep eval passes, never a fidelity change."""
+    ``workers`` > 1 answers/scores questions concurrently: each question is
+    independent, results are reassembled in the original question order, and the
+    aggregates are IDENTICAL to the sequential path (``workers=1``, the default) —
+    only wall-clock and the interleaving of trace lines differ. This is a
+    throughput knob for the write-once/read-sweep eval passes, never a fidelity
+    change.
+
+    That identity holds because every store read path is lock-guarded AND the
+    active organizers make the read path side-effect-free. The second half is a
+    property of the METHODOLOGY, not of this function: A-Mem's ``on_retrieval``
+    is the base no-op, but MemoryOS bumps ``n_visit``/``last_access`` in
+    ``self._heat`` and G-Memory accumulates ``self._served`` — plain dict/set
+    mutations from every pool thread, so their read-path state (and any heat
+    that later depends on it) becomes worker-count dependent. The claim was
+    previously stated unconditionally with "A-Mem's on_retrieval is a no-op" as
+    the reason, which reads as a guarantee for organizers it was never checked
+    against; a run that trips this now says so instead."""
     wujiang = eval_mode == "wujiang"
     if wujiang:
         judge = False  # upstream utils.calculate_metrics has no J-score judge
+    if workers > 1:
+        feedback_organizers = [
+            org.name for org in mem.organizers if base_overrides(org, "on_retrieval")
+        ]
+        if feedback_organizers:
+            logger.warning(
+                "locomo: workers=%d with read->write organizers %s — their on_retrieval "
+                "mutates in-memory state per hit, so results are no longer bit-identical "
+                "to workers=1. Use workers=1 for measured runs of these methodologies.",
+                workers,
+                feedback_organizers,
+            )
 
     def _answer_and_score(q: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
         """Answer + score ONE question. Returns (cat_name, per_cat_cell, record).
@@ -511,9 +743,15 @@ def evaluate(
             gold=gold,
             cat5_temperature=cat5_temperature,
             capture=capture,
+            persona=persona,
+            memoryos_lineage=memoryos_lineage,
         )
         if wujiang:
-            f1, b1 = token_f1_wujiang(pred, gold), bleu1(pred, gold)
+            # BLEU must switch with F1: upstream's BLEU tokenizer is nltk
+            # word_tokenize, not `normalize` (bleu1_wujiang). Scoring F1 the
+            # upstream way while scoring BLEU the `ours` way produced a hybrid
+            # number under a `wujiang` label — the defect this pairing fixes.
+            f1, b1 = token_f1_wujiang(pred, gold), bleu1_wujiang(pred, gold)
         else:
             f1, b1 = token_f1(pred, gold), bleu1(pred, gold)
         j = (
@@ -565,12 +803,22 @@ def evaluate(
     def agg(rows: list[dict[str, Any]]) -> dict[str, float]:
         """Mean F1/BLEU-1 as 0-100 percentages, plus the row count. When any
         row carries a judge verdict, also emits `j_score` (mean of the judged
-        rows as a 0-100 percentage) and `j_n` (count of judged rows)."""
+        rows as a 0-100 percentage) and `j_n` (count of judged rows).
+
+        `bleu1` is OMITTED entirely when no row scored one — `bleu1_wujiang`
+        returns None without nltk, and reporting 0.0 (or the `ours` BLEU) for
+        an unavailable metric is exactly the mislabeling this path exists to
+        stop. A wujiang result JSON with no `bleu1` key means "not measured",
+        not "measured as zero"."""
         out = {
             "f1": round(100 * sum(r["f1"] for r in rows) / len(rows), 2),
-            "bleu1": round(100 * sum(r["b1"] for r in rows) / len(rows), 2),
             "n": len(rows),
         }
+        scored_bleu = [r["b1"] for r in rows if r["b1"] is not None]
+        if scored_bleu:
+            out["bleu1"] = round(100 * sum(scored_bleu) / len(scored_bleu), 2)
+            if len(scored_bleu) != len(rows):
+                out["bleu1_n"] = len(scored_bleu)
         judged = [r["j"] for r in rows if r["j"] is not None]
         if judged:
             out["j_score"] = round(100 * sum(judged) / len(judged), 2)

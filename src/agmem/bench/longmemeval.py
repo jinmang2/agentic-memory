@@ -299,6 +299,22 @@ def answer(
     if history is None:
         bundle = mem.search(question, memory_types=memory_types, k=k)
         history = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
+        # The verbatim recency window a methodology keeps OUTSIDE retrieval and
+        # injects on every question (``Organizer.recent_context()`` — MemoryOS's
+        # resident STM, which upstream's ``get_response`` puts at the front of
+        # the prompt). LoCoMo's ``answer`` has always done this; this path did
+        # not, so measuring such a methodology here silently dropped the channel
+        # without so much as a degradation note. It leads the context for the
+        # same reason it does there, and because ``max_history_tokens`` truncates
+        # from the tail.
+        #
+        # Retrieval path only: an explicit ``history`` is the full-context
+        # baseline, which reads no memory at all.
+        recent = "\n".join(
+            text for text in (org.recent_context() for org in mem.organizers) if text
+        )
+        if recent:
+            history = "Recent conversation:\n" + recent + "\n\n" + history
         if capture is not None:
             capture["query"] = question
             capture["k"] = k
@@ -518,17 +534,25 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
     upstream does (``round(np.mean(task_acc), 4)`` over raw means, :31).
     Averaging the reported per-type percentages instead shifts the headline by
     up to 0.01pp -- small, but self-inflicted drift in the one number this
-    module exists to report unambiguously."""
+    module exists to report unambiguously.
+
+    ``overall`` is the concatenation of the SIX known type buckets, not of every
+    row: upstream builds ``all_acc`` inside its ``for k, v in type2acc.items()``
+    report loop (:28-30), so a row whose ``question_type`` is outside
+    ``QUESTION_TYPES`` cannot reach it -- upstream would in fact ``KeyError`` on
+    one. Such rows still appear in ``by_type`` (as ``extra``) so they are not
+    silently dropped, but they stay out of both headline numbers. On official
+    data the two definitions coincide; they diverge only on augmented or
+    relabelled sets, which is exactly when a headline must not shift for a
+    reason the paper never had."""
     by_type: dict[str, list[int]] = defaultdict(list)
     abstention: list[int] = []
-    everything: list[int] = []
     for row in records:
         label = row.get("label")
         if label is None:
             continue
         hit = 1 if label else 0
         by_type[str(row["question_type"])].append(hit)
-        everything.append(hit)
         if is_abstention(str(row["question_id"])):
             abstention.append(hit)
 
@@ -540,6 +564,7 @@ def aggregate(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     ordered = [t for t in QUESTION_TYPES if by_type.get(t)]
     extra = sorted(t for t in by_type if t not in QUESTION_TYPES)
+    everything = [hit for t in ordered for hit in by_type[t]]
     return {
         "by_type": {t: {"acc": pct(by_type[t]), "n": len(by_type[t])} for t in [*ordered, *extra]},
         "task_averaged": (

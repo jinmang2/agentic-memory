@@ -28,6 +28,7 @@ from agmem.organizers.experimental import ChainedConsumer
 from agmem.organizers.gated import AdmissionGated
 from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
+from agmem.organizers.zep_graph import SearchRecipe, zep_search_recipe
 from agmem.policies.admission import AdmissionGate
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
@@ -147,17 +148,46 @@ def run(
     slot_overrides: dict[str, str] | None = None,
     lexical_types: tuple[str, ...] = ("episodic",),
     judge: bool = False,
+    recipe: SearchRecipe | None = None,
+    page_recall_cap: int | None = None,
+    memoryos_lineage: str = "pypi",
 ) -> dict:
     """Run one config end-to-end: build a fresh `AgenticMemory`, ingest
     `sample` (flushing tail buffers and calling `consolidate()`), answer the
     selected questions, then write `results/locomo-conv0-<config_name>.json`
     and return the same result dict. Always closes the memory instance, even
-    on failure."""
+    on failure.
+
+    A `recipe` (Zep only, `organizers/zep_graph/search.py`) supplies the whole
+    read path at once — memory types, which of them get BM25 and BFS channels,
+    the reranker and its parameters, and `k`. It overrides `memory_types`,
+    `k` and `lexical_types`, because upstream ships those four as ONE named
+    `SearchConfig` and splitting them across call sites is how a run ends up
+    being a combination no upstream recipe has. The recipe name is stamped into
+    the result so a saved run says which read path produced it.
+
+    `page_recall_cap` and `memoryos_lineage` are MemoryOS's read-path
+    LINEAGE knobs, split out of `AgmemConfig`/`locomo.answer` defaults for the
+    reason `MEMORYOS_PRESETS` exists: the library and the harness that produced
+    the paper's numbers disagree on both, and both were pinned at the harness's
+    value for every config, so the pypi-lineage config was reading with the eval
+    lineage's queue size and its full assistant-knowledge dump."""
     # 0-arg factory callables (lambdas in ``known``) build a fresh organizer
     # instance per run() call — reusing one instance across configs/runs
     # would leak Nemori's message buffer and MemoryOS/A-Mem's episode-id
     # reverse-index state between them.
     organizers = [o() if callable(o) and not isinstance(o, str) else o for o in organizers]
+    read_path: dict = {"lexical_types": lexical_types}
+    overrides = dict(slot_overrides or {})
+    if recipe is not None:
+        read_path = recipe.config_kwargs()
+        overrides.update(read_path.pop("overrides", {}))
+        memory_types, k = recipe.memory_types, recipe.limit
+    # After the recipe branch, which replaces `read_path` wholesale: an explicit
+    # per-config value must not be silently dropped by a recipe that has no
+    # opinion about it.
+    if page_recall_cap is not None:
+        read_path["page_recall_cap"] = page_recall_cap
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}",
         organizers=organizers,
@@ -165,8 +195,8 @@ def run(
         config=AgmemConfig(
             llm_roles=make_roles(role_overrides),
             use_guided_json=False,
-            overrides=slot_overrides or {},
-            lexical_types=lexical_types,
+            overrides=overrides,
+            **read_path,
         ),
     )
     try:
@@ -194,6 +224,7 @@ def run(
             memory_types=memory_types,
             keyword_queries=keyword_queries,
             judge=judge,
+            memoryos_lineage=memoryos_lineage,
             progress=lambda i, n: (
                 print(f"[{config_name}] {i}/{n}", flush=True) if i % 20 == 0 else None
             ),
@@ -209,6 +240,16 @@ def run(
                 for o in organizers
             ],
             "memory_types": list(memory_types),
+            # Which read path produced these numbers. Zep ships a menu of them
+            # (search_config_recipes.py) and the paper measures one, so a result
+            # without this field cannot be compared to a published figure.
+            "search_recipe": recipe.name if recipe is not None else None,
+            # MemoryOS's read path splits by lineage the same way its write path
+            # does, so a stored run has to say which one it used — otherwise
+            # `memoryos` and `memoryos_eval` results are indistinguishable on the
+            # axis that actually differs between them.
+            "page_recall_cap": read_path.get("page_recall_cap", AgmemConfig().page_recall_cap),
+            "memoryos_lineage": memoryos_lineage,
             "n_turns": n_turns,
             "ingest_seconds": round(ingest_s, 1),
             "eval_seconds": round(eval_s, 1),
@@ -447,24 +488,85 @@ def main() -> None:
             NEMORI_TEMPS,
             NEMORI_STORE,
         ),
+        # Two MemoryOS lineages, because the paper's LoCoMo numbers came from
+        # the repo's `eval/` harness and not from the maintained `memoryos-pypi`
+        # library — different heat weights, recency handling, keyword-overlap
+        # formula, STM capacity and eviction policy (MEMORYOS_PRESETS). Running
+        # only one of them cannot say whether a gap is the method or the
+        # lineage, so both are configs rather than a constant.
+        # Methodology-PURE, on the same rule as `amem`/`nemori`: upstream's QA
+        # prompt is STM history + the retrieved MTM pages + profile/knowledge,
+        # and it has NO search channel over raw messages. `episodic` was one,
+        # and round-8 made it worse rather than better — once `MemoryOSPageRecall`
+        # started serving verbatim pages and `recent_context()` started injecting
+        # the resident STM, raw text reached the prompt through three routes
+        # where upstream has two. The old wiring lives on as `memoryos_mixed`.
+        # `lexical_types=()`: upstream's MTM search is dense-only (FAISS IP over
+        # summary embeddings; its keyword term is dead code, `query_keywords =
+        # set()`), so there is nothing for BM25 to mirror.
         "memoryos": (
-            ["memoryos"],
+            ["memoryos"],  # = fidelity="pypi"
+            ("pages", "semantic"),
+            10,
+            False,
+            None,
+            None,
+            (),
+        ),
+        "memoryos_eval": (
+            [lambda: MemoryOSOrganizer(fidelity="eval")],
+            ("pages", "semantic"),
+            10,
+            False,
+            None,
+            None,
+            (),
+            None,
+            # The eval lineage's read path, which is NOT the library's: its
+            # driver builds the retrieval queue at capacity 10 (pypi passes 7)
+            # and dumps the whole assistant-knowledge store into every prompt
+            # (pypi retrieves top-20). Both were on for every config before, so
+            # `memoryos` was reading with this lineage's settings.
+            {"page_recall_cap": 10, "memoryos_lineage": "eval"},
+        ),
+        # The docs/09 MemoryOS run, reconstructed: raw-episodic channel included,
+        # STM force-drained at flush, no dialogue chain. Not a paper reproduction
+        # — it exists so those stored numbers stay re-derivable after round-6 and
+        # round-8 changed the organizer out from under them.
+        "memoryos_mixed": (
+            [lambda: MemoryOSOrganizer(dialogue_chain=False, flush_stm_on_drain=True)],
             ("episodic", "pages", "semantic"),
             10,
             False,
             None,
             None,
+            ("episodic",),
+            None,
+            # docs/09 predates the two-stage page recall, so its `pages` hits
+            # were segment SUMMARIES; 0 is what restores that.
+            {"page_recall_cap": 0},
         ),
-        # Zep hybrid read-path (round-5 ④): facts/entities get BM25+dense
-        # fusion, plus GraphRecall edge expansion wired in the pipeline.
-        "zep_graph": (
+        # Zep read paths come from the recipe table, not from this tuple: the
+        # paper describes three search functions and five rerankers and upstream
+        # ships the combinations as named SearchConfigs, so the read path is a
+        # named preset (organizers/zep_graph/search.py) exactly as Nemori's and
+        # MemoryOS's write-path lineages are. `zep_graph` is the paper's own
+        # operating point (§4.1: BGE-m3 reranking = cross-encoder, the only
+        # family with a BFS channel); the others are ablations over it.
+        # memory_types/k/lexical_types in these tuples are ignored — the recipe
+        # supplies them (see run()).
+        "zep_graph": (["zep_graph"], (), 10, False, None, None, (), "cross_encoder"),
+        "zep_graph_rrf": (["zep_graph"], (), 10, False, None, None, (), "rrf"),
+        "zep_graph_mmr": (["zep_graph"], (), 10, False, None, None, (), "mmr"),
+        "zep_graph_mentions": (
             ["zep_graph"],
-            ("episodic", "facts", "entities"),
+            (),
             10,
             False,
             None,
             None,
-            ("episodic", "facts", "entities"),
+            (),
+            "edge_episode_mentions",
         ),
     }
     for cfg in args.configs:
@@ -478,6 +580,10 @@ def main() -> None:
             slot_overrides,
         ) = entry[:6]
         lexical_types = entry[6] if len(entry) > 6 else ("episodic",)
+        recipe = zep_search_recipe(entry[7]) if len(entry) > 7 and entry[7] else None
+        # Trailing slot for the knobs only a couple of configs set, so the other
+        # entries do not all grow a column of Nones.
+        extras = entry[8] if len(entry) > 8 else {}
         run(
             cfg,
             organizers,
@@ -492,6 +598,8 @@ def main() -> None:
             slot_overrides=slot_overrides,
             lexical_types=lexical_types,
             judge=args.judge,
+            recipe=recipe,
+            **extras,
         )
 
 

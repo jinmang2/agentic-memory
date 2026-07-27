@@ -90,6 +90,53 @@ def test_keyword_queries_rewrite_the_search_query():
         mem.close()
 
 
+class _RecordingLLM:
+    def __init__(self):
+        self.prompts = []
+
+    def chat(self, role, messages, **kwargs):
+        self.prompts.append(messages[-1]["content"])
+        return "stub answer"
+
+
+def _mem_with_assistant_knowledge():
+    mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
+    mem.llm = _RecordingLLM()
+    mem.doc_store.put_item(
+        "ak1",
+        "semantic",
+        "t",
+        {"id": "ak1", "kind": "assistant_knowledge", "content": "Assistant booked a flight"},
+    )
+    return mem
+
+
+def test_full_assistant_knowledge_is_the_eval_lineage_only():
+    """MemoryOS's two lineages serve assistant knowledge differently: the pypi
+    library retrieves top-20 through the same `semantic` channel our search
+    already covers, while the eval harness that produced the paper's LoCoMo
+    numbers dumps the whole store into every prompt
+    (`main_loco_parse`: `long_mem.get_assistant_knowledge()`). Injecting it
+    unconditionally gave a pypi-lineage run BOTH, which is the lineage mixing
+    `MEMORYOS_PRESETS` exists to prevent."""
+    mem = _mem_with_assistant_knowledge()
+    try:
+        answer(mem, "what happened?", memory_types=("semantic",))
+        assert "Assistant Knowledge:" not in mem.llm.prompts[-1]
+
+        answer(
+            mem,
+            "what happened?",
+            memory_types=("semantic",),
+            memoryos_lineage="eval",
+        )
+        prompt = mem.llm.prompts[-1]
+        assert "Assistant Knowledge:" in prompt
+        assert "Assistant booked a flight" in prompt
+    finally:
+        mem.close()
+
+
 def test_keyword_queries_fall_back_to_question_on_llm_failure():
     mem = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
     try:

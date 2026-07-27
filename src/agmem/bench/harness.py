@@ -3,7 +3,7 @@
 Reproducibility discipline (docs/02 §4, the Zep-LoCoMo lesson): every run
 is stamped with the full experiment condition, cost is recorded next to
 accuracy, and multi-run mean±std is the reporting unit. Loaders: LoCoMo
-(bench/locomo.py); LongMemEval not yet implemented.
+(bench/locomo.py) and LongMemEval (bench/longmemeval.py).
 """
 
 from __future__ import annotations

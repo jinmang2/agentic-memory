@@ -24,6 +24,7 @@ from agmem.bench.longmemeval import (
 )
 from agmem.embed.fake import FakeEmbedder
 from agmem.llm.client import RoleConfig
+from agmem.organizers.base import Organizer
 
 INSTANCE = {
     "question_id": "q1",
@@ -327,6 +328,32 @@ def test_con_separate_is_rejected_rather_than_silently_downgraded():
         mem.llm = _StubLLM()
         with pytest.raises(ValueError, match="con-separate"):
             answer(mem, INSTANCE, reading_method="con-separate")
+    finally:
+        mem.close()
+
+
+def test_the_verbatim_recency_window_reaches_this_benchmark_too():
+    """`Organizer.recent_context()` is a channel the methodology injects OUTSIDE
+    retrieval on every question (MemoryOS's resident STM). LoCoMo's `answer` has
+    always honoured it; this path did not, so measuring such an organizer here
+    dropped the channel with no degradation note. Not on the full-context
+    baseline, which reads no memory at all."""
+
+    class _Recent(Organizer):
+        name = "recent"
+
+        def recent_context(self):
+            return "A: the keycode is 4417"
+
+    mem = _mem(organizers=[_Recent()])
+    try:
+        mem.llm = _StubLLM()
+        answer(mem, INSTANCE)
+        prompt = mem.llm.calls[-1]["prompt"]
+        assert "Recent conversation:" in prompt and "the keycode is 4417" in prompt
+
+        answer(mem, INSTANCE, history=render_sessions(INSTANCE))
+        assert "the keycode is 4417" not in mem.llm.calls[-1]["prompt"]
     finally:
         mem.close()
 
