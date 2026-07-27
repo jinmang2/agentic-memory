@@ -311,12 +311,105 @@ def test_the_reranker_is_skipped_when_the_candidates_already_fit():
     )
 
 
-def test_the_bench_seam_is_off_by_default_and_records_the_agent_when_on():
-    """``locomo.answer(query_strategy=...)`` is the only place the policy meets a
-    real memory. Default None must leave the existing one-search path exactly as
-    it was — every stored result depends on that."""
+def test_every_read_entry_point_goes_through_one_seam():
+    """The defect this adapter exists for: the first wiring assembled the
+    ``QueryContext`` inside ``locomo.answer``, so of the three public read
+    entry points only the benchmark could reach a policy. All three now call
+    ``searcher_for``, and ``PlannedSearch`` has ``AgenticMemory.search``'s shape
+    so none of them branches on whether one is attached."""
+    import inspect
+
+    from agmem.bench import locomo, longmemeval
+    from agmem.mcp import server
+    from agmem.memory import AgenticMemory
+    from agmem.retrieval.planned import PlannedSearch
+
+    for module in (locomo, longmemeval, server):
+        assert "searcher_for" in inspect.getsource(module), module.__name__
+
+    facade = inspect.signature(AgenticMemory.search).parameters
+    planned = inspect.signature(PlannedSearch.search).parameters
+    # `metrics` is the parity point: both sides report how the bundle was
+    # obtained, so a caller needs no isinstance check to record it.
+    assert "metrics" in facade and "metrics" in planned
+
+
+def test_the_adapter_is_the_only_read_path_module_importing_policies():
+    """Mirror of ``test_no_mechanism_imports_the_policies_package``: on the write
+    side exactly one adapter (`organizers/gated.py`) knows policies exist, and
+    the read side gets exactly one too."""
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1] / "src" / "agmem" / "retrieval"
+    offenders = [
+        path.name
+        for path in root.glob("*.py")
+        if path.name != "planned.py" and "agmem.policies" in path.read_text()
+    ]
+    assert offenders == [], f"read-path modules importing policies: {offenders}"
+
+
+def test_a_configured_strategy_reaches_search_without_a_call_site_change():
+    """``AgmemConfig.query_strategy`` is the single switch. A caller that only
+    ever calls ``.search(...)`` picks the policy up through ``searcher_for``."""
+    from agmem import AgenticMemory
+    from agmem.config import AgmemConfig
+    from agmem.embed.fake import FakeEmbedder
+    from agmem.retrieval.planned import PlannedSearch, searcher_for
+
+    plain = AgenticMemory(namespace="t", organizers=["passthrough"], embedder=FakeEmbedder(dim=128))
+    try:
+        assert searcher_for(plain) is plain  # no policy -> the memory itself
+    finally:
+        plain.close()
+
+    planned = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(query_strategy="split_query", query_strategy_limit=7),
+    )
+    try:
+        searcher = searcher_for(planned)
+        assert isinstance(searcher, PlannedSearch)
+        assert searcher.strategy.name == "SplitQueryAgent"
+        assert searcher.limit == 7
+
+        planned.add_message("Luna is a beagle.", "user")
+        planned.structured = StubLLM({"judge": [{"queries": ["what breed?", "whose dog?"]}]})
+        seen: list[str] = []
+        original = planned.search
+
+        def spy(query, **kwargs):
+            seen.append(query)
+            return original(query, **kwargs)
+
+        planned.search = spy
+        metrics: dict = {}
+        searcher.search("what dog?", memory_types=("episodic",), metrics=metrics)
+        assert seen == ["what breed?", "whose dog?"]
+        assert metrics["agent"] == "SplitQueryAgent"
+    finally:
+        planned.close()
+
+
+def test_an_unknown_strategy_name_fails_loudly():
+    from agmem.retrieval.planned import searcher_for
+
+    class FakeMemory:
+        config = type("C", (), {"query_strategy": "nope", "query_strategy_limit": 20})()
+
+    with pytest.raises(ValueError, match="unknown query_strategy"):
+        searcher_for(FakeMemory())
+
+
+def test_the_bench_records_which_strategy_answered_each_question():
+    """``capture["agent"]`` is filled either way — one plain search reports
+    itself as ``search``, a policy reports its own accounting. Artifact capture
+    must not go blind depending on which path ran."""
     from agmem import AgenticMemory
     from agmem.bench.locomo import answer
+    from agmem.config import AgmemConfig
     from agmem.embed.fake import FakeEmbedder
     from agmem.organizers.memmachine import MemMachineOrganizer
 
@@ -325,44 +418,34 @@ def test_the_bench_seam_is_off_by_default_and_records_the_agent_when_on():
             return "stub answer"
 
     mem = AgenticMemory(
-        namespace="t", organizers=[MemMachineOrganizer()], embedder=FakeEmbedder(dim=128)
+        namespace="t",
+        organizers=[MemMachineOrganizer()],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(query_strategy="tool_select"),
     )
     try:
         mem.add_message("Luna is a beagle.", "user", meta={"speaker": "Caroline"})
         mem.llm = GenerateLLM()
-        searches: list[str] = []
-        original_search = mem.search
-
-        def spy(query, **kwargs):
-            searches.append(query)
-            return original_search(query, **kwargs)
-
-        mem.search = spy
-
+        mem.structured = StubLLM(
+            {"judge": [{"tool": "MemMachineAgent"}, {"tool": "MemMachineAgent"}]}
+        )
         capture: dict = {}
         answer(mem, "what dog?", memory_types=("derivatives",), capture=capture)
-        assert searches == ["what dog?"]
-        assert "agent" not in capture
+        assert capture["agent"]["selected_tool"] == "MemMachineAgent"
 
-        searches.clear()
-        mem.structured = StubLLM(
-            {
-                "judge": [
-                    {"tool": "SplitQueryAgent"},
-                    {"queries": ["what breed?", "whose dog?"]},
-                ]
-            }
-        )
-        capture = {}
+        plain = capture_plain = {}
         answer(
             mem,
             "what dog?",
             memory_types=("derivatives",),
-            capture=capture,
-            query_strategy=ToolSelect(),
+            capture=capture_plain,
+            searcher=mem,  # explicit override wins over the configured policy
         )
-        assert searches == ["what breed?", "whose dog?"]
-        assert capture["agent"]["selected_tool"] == "SplitQueryAgent"
+        assert plain["agent"] == {
+            "agent": "search",
+            "memory_search_called": 1,
+            "queries": ["what dog?"],
+        }
     finally:
         mem.close()
 

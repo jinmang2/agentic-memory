@@ -42,12 +42,20 @@ turns) and by *kind* (heuristic / prompted / learned, survey §3.3).
 A policy is attached to a mechanism by a wrapper, never by a constructor
 argument on the mechanism: ``organizers/gated.py::AdmissionGated`` applies any
 admission gate to any message-driven organizer, which is what makes the
-cross-cutting claim true rather than aspirational. The read side needs no such
-adapter module — its seam is a bound ``search`` callable
-(``retrieval.QueryContext``), so a strategy reaches any mechanism without either
-side importing the other. Same rule, cheaper: the write side had to wrap because
-it intercepts a hook the mechanism owns, while a read policy only decides which
-searches to run. **No mechanism imports this
+cross-cutting claim true rather than aspirational, and the read side has the
+mirror of it in ``retrieval/planned.py::PlannedSearch``.
+
+A read policy's *dependency* seam is only a bound ``search`` callable
+(``retrieval.QueryContext``), which is why nothing here imports a mechanism —
+but that is not the same question as where it *attaches*. The first wiring of
+``retrieval`` confused the two and assembled the context inline in
+``bench/locomo.py``: of the three public read entry points (LoCoMo QA,
+LongMemEval QA, the MCP ``search_memory`` tool) exactly one could reach a
+policy, and it was the benchmark. ``PlannedSearch`` gives the read side one
+attachment point with ``AgenticMemory.search``'s own shape, and
+``AgmemConfig.query_strategy`` turns it on for all three at once. **The rule is
+"a mechanism and a policy never import each other, and a policy attaches in one
+place"; a wrapper is how the write side satisfies it, not the rule itself.** **No mechanism imports this
 package** — inside ``organizers/`` only that one adapter module does, and the
 dependency the other way is limited to ``organizers.base.OrganizerContext``. See that module for the verified applicability limits — task-driven
 organizers (ACE, G-Memory, ReasoningBank) declare no ``on_message`` and so are

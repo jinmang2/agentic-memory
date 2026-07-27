@@ -121,6 +121,18 @@ class AgmemConfig:
     # every "default config" run a mislabeled eval-lineage run.
     memmachine_expand_context: int = 0
     memmachine_context_limit: int = 20
+    # Read-side control policy (policies/retrieval.py), applied by
+    # `retrieval/planned.py::searcher_for`. One of STRATEGIES
+    # (direct/split_query/chain_of_query/tool_select), or None for a plain
+    # single search. It lives here rather than at each call site so the switch
+    # reaches the benchmarks, the MCP server and library callers alike — the
+    # thing the first wiring got wrong by threading it through one harness
+    # function. Non-None spends LLM calls PER QUESTION, so the default is off.
+    query_strategy: str | None = None
+    # The policy's rerank/truncate cap — upstream's `QueryParam.limit` where it
+    # is actually read (`agent_utils.process_question`'s `search_limit=20`), not
+    # the `k` of the inner searches.
+    query_strategy_limit: int = 20
 
     def slot_default(self, slot: str) -> str | None:
         """`overrides[slot]` if set, else the profile's default class name for
@@ -208,4 +220,6 @@ def load_config(path: str | Path) -> AgmemConfig:
         memmachine_context_limit=retrieval.get(
             "memmachine_context_limit", defaults.memmachine_context_limit
         ),
+        query_strategy=retrieval.get("query_strategy", defaults.query_strategy),
+        query_strategy_limit=retrieval.get("query_strategy_limit", defaults.query_strategy_limit),
     )

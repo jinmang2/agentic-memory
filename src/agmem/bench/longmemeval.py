@@ -68,6 +68,7 @@ from typing import Any, Iterator
 
 from agmem.core.types import MemoryBundle
 from agmem.memory import AgenticMemory
+from agmem.retrieval.planned import searcher_for
 
 logger = logging.getLogger("agmem.bench.longmemeval")
 
@@ -258,6 +259,7 @@ def answer(
     history: str | None = None,
     max_history_tokens: int | None = None,
     capture: dict[str, Any] | None = None,
+    searcher: Any | None = None,
 ) -> str:
     """One QA turn: retrieve, then generate with the official answer prompt.
 
@@ -297,7 +299,15 @@ def answer(
         )
     question = str(instance["question"])
     if history is None:
-        bundle = mem.search(question, memory_types=memory_types, k=k)
+        # Same uniform read entry as LoCoMo's `answer`: the memory itself, or
+        # the memory wrapped in the read policy its config names. This path used
+        # to be the one that silently could NOT reach a policy.
+        agent_metrics: dict[str, Any] = {}
+        bundle = (searcher if searcher is not None else searcher_for(mem)).search(
+            question, memory_types=memory_types, k=k, metrics=agent_metrics
+        )
+        if capture is not None:
+            capture["agent"] = agent_metrics
         history = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
         # The verbatim recency window a methodology keeps OUTSIDE retrieval and
         # injects on every question (``Organizer.recent_context()`` — MemoryOS's

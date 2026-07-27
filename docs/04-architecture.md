@@ -43,11 +43,17 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   ├── st_embedder.py           # sentence-transformers (e5-small/bge-m3 등)
 │   │   └── fake.py                  # 결정적 해시 임베더 (테스트 전용)
 │   │
-│   ├── retrieval/                   # §03 문서의 파이프라인
-│   │   ├── pipeline.py              # Recall(dense/lexical/graph) → Fusion → Rerank
-│   │   │                            #   + 링크/그래프/experience 확장, bi-temporal 렌더
+│   ├── retrieval/                   # ★ "검색 1회를 어떻게 실행하는가" (mechanism 층)
+│   │   │                            #   cf. policies/retrieval.py = "몇 번, 무슨 문장으로"
+│   │   ├── pipeline.py              # Recall(dense/lexical/φ_bfs) → RRF → Rerank
+│   │   │                            #   → hydrate → 타입별 post-step → 번들 dedup
+│   │   ├── steps.py                 # ReadStep 레지스트리 (memory type 키잉 = mechanism 부품)
 │   │   ├── fusion.py                # RRF
-│   │   └── rerank.py                # Noop / MMR / LLMReranker / CrossEncoder
+│   │   ├── bfs.py                   # Zep φ_bfs 채널
+│   │   ├── rerank.py                # Noop / MMR / LLMReranker / CrossEncoder / 그래프 2종
+│   │   └── planned.py               # [어댑터] PlannedSearch: policies/retrieval을 임의
+│   │                                #   memory에 부착. retrieval/ 중 유일한 policies import
+│   │                                #   (organizers/gated.py의 read 쪽 대칭)
 │   │
 │   ├── organizers/                  # ★ mechanism = 방법론 = Organizer 플러그인
 │   │   │                            #   ── 규칙: 루트의 평범한 모듈 = 프레임워크,
@@ -96,7 +102,8 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
 │   │   │                            #   (organizers 중 gated.py만 import)
 │   │   └── retrieval.py             # retrieve 연산 정책: MemMachine Retrieval Agent
 │   │                                #   (direct/split/chain-of-query/tool-select).
-│   │                                #   seam은 bound `search` callable이라 어댑터 불필요
+│   │                                #   부착은 retrieval/planned.py wrapper 경유 —
+│   │                                #   write 쪽 gated.py와 정확히 대칭
 │   │
 │   ├── memory.py                    # AgenticMemory 퍼사드 (05 문서의 공개 API)
 │   │                                #   + 비동기 write 워커 (내장 스레드+큐, sync_write=False 시)

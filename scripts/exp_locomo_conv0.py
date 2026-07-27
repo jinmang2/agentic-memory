@@ -31,7 +31,6 @@ from agmem.organizers.memoryos import MemoryOSOrganizer
 from agmem.organizers.nemori import NemoriOrganizer
 from agmem.organizers.zep_graph import SearchRecipe, zep_search_recipe
 from agmem.policies.admission import AdmissionGate
-from agmem.policies.retrieval import STRATEGIES
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
 OUT = Path(__file__).resolve().parent.parent / "results"
@@ -202,6 +201,12 @@ def run(
         read_path["memmachine_expand_context"] = memmachine_expand_context
     if memmachine_context_limit is not None:
         read_path["memmachine_context_limit"] = memmachine_context_limit
+    # The read-side control policy is config, not a call argument: that is what
+    # makes it reachable from the MCP server and LongMemEval too, instead of
+    # only from this script's path through `locomo.answer`.
+    if query_strategy is not None:
+        read_path["query_strategy"] = query_strategy
+        read_path["query_strategy_limit"] = agent_limit
     mem = AgenticMemory(
         namespace=f"locomo-c0-{config_name}",
         organizers=organizers,
@@ -239,11 +244,6 @@ def run(
             keyword_queries=keyword_queries,
             judge=judge,
             memoryos_lineage=memoryos_lineage,
-            # Read-side control policy, off unless a config names one. It spends
-            # LLM calls per QUESTION (1 for routing, 1-3 more inside the chosen
-            # strategy), so it belongs to the config rather than the default.
-            query_strategy=(STRATEGIES[query_strategy]() if query_strategy else None),
-            agent_limit=agent_limit,
             progress=lambda i, n: (
                 print(f"[{config_name}] {i}/{n}", flush=True) if i % 20 == 0 else None
             ),

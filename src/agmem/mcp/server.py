@@ -21,6 +21,7 @@ from mcp.server.fastmcp import FastMCP
 
 from agmem.config import AgmemConfig, load_config
 from agmem.memory import AgenticMemory
+from agmem.retrieval.planned import searcher_for
 
 logger = logging.getLogger("agmem.mcp")
 
@@ -34,6 +35,16 @@ def get_mem() -> AgenticMemory:
     execute after the server is up, so this should never fire in practice."""
     assert _mem is not None, "server not initialized"
     return _mem
+
+
+def get_searcher():
+    """What ``search_memory`` calls: the memory, or the memory wrapped in the
+    read-side control policy ``AgmemConfig.query_strategy`` names.
+
+    Resolved per call rather than cached at startup so the wrapper never
+    outlives a rebuilt memory; ``searcher_for`` is a couple of attribute reads
+    when no policy is configured, which is the default."""
+    return searcher_for(get_mem())
 
 
 mcp = FastMCP("agmem")
@@ -73,10 +84,16 @@ def search_memory(
     returned raw messages instead of, say, A-Mem notes.
     Returns rendered context plus item provenance."""
     types = tuple(t.strip() for t in memory_types.split(",") if t.strip()) or None
-    bundle = get_mem().search(query, memory_types=types, k=k)
+    metrics: dict = {}
+    bundle = get_searcher().search(query, memory_types=types, k=k, metrics=metrics)
     return json.dumps(
         {
             "context": bundle.render(budget_tokens=budget_tokens),
+            # How the bundle was obtained: one plain search by default, or the
+            # planned searches a configured read policy ran. Reported because a
+            # policy spends LLM calls per query and a caller should be able to
+            # see that it did.
+            "retrieval": metrics,
             "items": [
                 {
                     "memory_type": s.memory_type,

@@ -146,9 +146,15 @@
    `18f1211`에서 실행 불가(5-튜플을 3개로 언팩) — "네 번째 독립 참조"로 쓰려면 이 사실을
    전제해야 한다.
    **같은 날 2차분 완료**: Retrieval Agent 4종을 `policies/retrieval.py`로
-   (**policies/의 첫 read-side 멤버**, 지배 연산 = *retrieve*; seam은 bound `search`
-   callable이라 write 쪽 wrapper 같은 어댑터가 필요 없다) + semantic tier를
-   `organizers/memmachine/profile.py`로. 테스트 43건.
+   (**policies/의 첫 read-side 멤버**, 지배 연산 = *retrieve*) + 부착 어댑터
+   `retrieval/planned.py::PlannedSearch`(write 쪽 `gated.py`의 대칭) + semantic tier를
+   `organizers/memmachine/profile.py`로. 테스트 47건.
+   **1차 배선의 결함을 스스로 잡아 수정**: "read 쪽은 seam이 callable이라 어댑터 불필요"라
+   판단해 `bench/locomo.py`에서 `QueryContext`를 인라인 조립했더니, 공개 read 진입점
+   3개(LoCoMo QA / LongMemEval QA / MCP `search_memory`) 중 **벤치마크 1개에서만** 정책에
+   닿았다. *의존성* seam과 *부착 지점*은 다른 질문이다 — cross-cutting을 지탱하는 건 후자.
+   지금은 `AgmemConfig.query_strategy` 하나로 셋 다 켜지고, `PlannedSearch`가
+   `AgenticMemory.search`와 같은 모양이라 호출부는 분기하지 않는다.
    **비교표 스코프 정정**: "write 경로 LLM 콜 0회"는 **episodic 한정**이다 — semantic
    (=논문의 profile) tier는 **메시지×카테고리당 1콜**을 쓴다. 공개 수치는 이 tier를 끈
    설정(`semantic_memory.enabled: false`)이라 비용에 포함돼 있지 않다.

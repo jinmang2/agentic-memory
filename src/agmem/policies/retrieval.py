@@ -8,6 +8,10 @@ nothing here knows a MemMachine derivative from an A-Mem note, which is what
 makes "cross-cutting" true rather than aspirational (the same claim
 ``AdmissionGated`` makes on the write side).
 
+Attachment is ``retrieval/planned.py::PlannedSearch``, the read-side mirror of
+that wrapper — a strategy is never wired at a call site. See that module for
+why: doing it inline once left the policy reachable from the benchmark only.
+
 Upstream layout (``packages/server/src/memmachine_server/retrieval_agent/``,
 read at commit ``18f1211``): an ``AgentToolBase`` tree, built by
 ``service_locator.create_retrieval_agent``:

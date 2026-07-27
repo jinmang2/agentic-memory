@@ -27,6 +27,7 @@ from typing import Any, Callable
 from agmem._porter import PorterStemmer
 from agmem.memory import AgenticMemory
 from agmem.organizers.base import overrides as base_overrides
+from agmem.retrieval.planned import searcher_for
 
 logger = logging.getLogger("agmem.bench.locomo")
 
@@ -476,8 +477,7 @@ def answer(
     capture: dict[str, Any] | None = None,
     persona: dict[str, str] | None = None,
     memoryos_lineage: str = "pypi",
-    query_strategy: Any | None = None,
-    agent_limit: int = 20,
+    searcher: Any | None = None,
 ) -> str:
     """One QA turn: optionally rewrite `question` into keywords (A-Mem's
     upstream eval query style) before `mem.search`, inject the MemoryOS
@@ -540,35 +540,22 @@ def answer(
                 for word in str(extracted.get("keywords", "")).split(",")
                 if word.strip()
             }
-    # A read-side control policy (policies/retrieval.py) replaces the single
-    # search with however many it decides to run — MemMachine's Retrieval Agent
-    # is the implemented member. The default stays `None`, so every existing
-    # config takes the identical one-search path it always did.
-    #
-    # `agent_limit` is separate from `k` on purpose: upstream passes one number
-    # for both (`QueryParam.limit`), but our `k` is per memory type and can be a
-    # dict, and for MemMachine it is the DERIVATIVE over-fetch (150) while the
-    # agent's rerank cap is the EPISODE limit. Collapsing them would silently
-    # rerank 150 candidates down to 150.
-    if query_strategy is None:
-        bundle = mem.search(query, memory_types=memory_types, k=k, query_keywords=query_keywords)
-    else:
-        from agmem.policies.retrieval import QueryContext
-
-        agent_result = query_strategy.run(
-            query,
-            QueryContext(
-                search=lambda sub_query: mem.search(
-                    sub_query, memory_types=memory_types, k=k, query_keywords=query_keywords
-                ),
-                llm=mem.structured,
-                reranker=mem.reranker,
-                limit=agent_limit,
-            ),
-        )
-        bundle = agent_result.bundle
-        if capture is not None:
-            capture["agent"] = agent_result.metrics
+    # `searcher` is either the memory itself or the same memory wrapped in the
+    # read-side control policy its config names (`retrieval/planned.py`). Both
+    # expose the same `search(...)` shape, so this call site never branches on
+    # whether a policy is active — which is the property the first wiring of
+    # `policies/retrieval` lacked, when this function assembled the context by
+    # hand and was therefore the only entry point that could reach one.
+    agent_metrics: dict[str, Any] = {}
+    bundle = (searcher if searcher is not None else searcher_for(mem)).search(
+        query,
+        memory_types=memory_types,
+        k=k,
+        query_keywords=query_keywords,
+        metrics=agent_metrics,
+    )
+    if capture is not None:
+        capture["agent"] = agent_metrics
     if capture is not None:
         capture["query"] = question
         capture["rewritten_query"] = query if query != question else None
@@ -690,8 +677,7 @@ def evaluate(
     progress: Callable[[int, int], None] | None = None,
     persona: dict[str, str] | None = None,
     memoryos_lineage: str = "pypi",
-    query_strategy: Any | None = None,
-    agent_limit: int = 20,
+    searcher: Any | None = None,
 ) -> dict[str, Any]:
     """Runs `answer` over every question and aggregates F1/BLEU-1 overall and
     per category; `progress(i, total)` (1-indexed `i`) fires after each
@@ -777,8 +763,7 @@ def evaluate(
             capture=capture,
             persona=persona,
             memoryos_lineage=memoryos_lineage,
-            query_strategy=query_strategy,
-            agent_limit=agent_limit,
+            searcher=searcher,
         )
         if wujiang:
             # BLEU must switch with F1: upstream's BLEU tokenizer is nltk

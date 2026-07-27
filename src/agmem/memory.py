@@ -774,9 +774,16 @@ class AgenticMemory:
         center_node_id: str | None = None,
         bfs_origin_ids: list[str] | None = None,
         query_keywords: set[str] | frozenset[str] | None = None,
+        metrics: dict[str, Any] | None = None,
     ) -> MemoryBundle:
         """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
         read->write hooks.
+
+        ``metrics``, when a dict is passed, records how this bundle was obtained
+        — here always one plain search. It exists so that this signature and
+        ``retrieval/planned.py::PlannedSearch.search`` are interchangeable: a
+        caller that may or may not have a read policy attached needs no branch,
+        and gets the same accounting either way.
 
         ``memory_types=None`` falls back to ``default_memory_types`` (the active
         organizers' declared output); passing types explicitly overrides that, which
@@ -814,6 +821,8 @@ class AgenticMemory:
         segment score, where the pypi library disabled the same term. The caller
         supplies them because the extraction is an LLM call and this layer makes
         none (``MemoryOSPageRecall``)."""
+        if metrics is not None:
+            metrics.update({"agent": "search", "memory_search_called": 1, "queries": [query]})
         types = tuple(memory_types) if memory_types is not None else self.default_memory_types
         bundle = self.pipeline.search(
             query,

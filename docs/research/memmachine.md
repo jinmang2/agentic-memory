@@ -296,7 +296,7 @@ read 경로는 프리셋이 아니라 **레시피**다(`AgmemConfig.memmachine_*
 | episodic: segmenter+deriver | `organizers/memmachine/organizer.py` | ✅ |
 | episodic: STM 요약 | 같은 파일 (`stm_capacity`, 두 프리셋 다 0) | ✅ |
 | declarative contextualized retrieval | `retrieval/steps.py::MemMachineContextualize` | ✅ |
-| Retrieval Agent 4종 | `policies/retrieval.py` (**read-side control policy 첫 멤버**) | ✅ |
+| Retrieval Agent 4종 | `policies/retrieval.py` (**read-side control policy 첫 멤버**) + 부착 어댑터 `retrieval/planned.py` | ✅ |
 | semantic_memory (= profile tier) | `organizers/memmachine/profile.py` | ✅ |
 | `cluster_manager`/`cluster_splitter` | — | ❌ 의도적 제외 |
 | `config_store/` 멀티테넌트 카테고리 | 생성자 인자로 대체 | ❌ 배포 인프라 |
@@ -305,9 +305,16 @@ read 경로는 프리셋이 아니라 **레시피**다(`AgmemConfig.memmachine_*
 호출하지 않는다. 각주로 처리할 게 아니라 자체 조사가 필요한 별건이다(Nemori 분절과 비교 대상).
 
 Retrieval Agent를 `policies/`에 둔 근거: 메모리 타입을 선언하지 않고 `MemoryOp`도 발행하지
-않으며, 지배하는 연산이 *retrieve*다. write 쪽 A-MAC이 wrapper로 붙는 것과 달리 read 쪽은
-**bound `search` callable**이 seam이라 어댑터 모듈이 필요 없다. 두 모듈의 공통 base는
-뽑지 않았다 — 공통점이 "policy라는 단어"뿐이라서(자세한 건 `policies/__init__.py`).
+않으며, 지배하는 연산이 *retrieve*다. 두 모듈의 공통 base는 뽑지 않았다 — 공통점이
+"policy라는 단어"뿐이라서(자세한 건 `policies/__init__.py`).
+
+**부착은 `retrieval/planned.py::PlannedSearch`** (write 쪽 `organizers/gated.py`의 대칭).
+1차 배선에서 "read 쪽은 seam이 callable이라 어댑터 불필요"라고 판단해 `bench/locomo.py`
+안에서 `QueryContext`를 직접 조립했는데, 그 결과 **공개 read 진입점 3개 중 1개(벤치마크)
+에서만 정책에 닿았다** — LongMemEval QA와 MCP `search_memory`는 못 닿았다.
+*의존성* seam과 *부착 지점*은 다른 질문이고, cross-cutting 주장을 지탱하는 건 후자다.
+`PlannedSearch`는 `AgenticMemory.search`와 같은 모양이라 호출부가 분기하지 않고,
+`AgmemConfig.query_strategy` 하나로 세 진입점이 동시에 켜진다.
 
 ## 6. 참고
 
