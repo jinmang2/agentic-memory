@@ -90,6 +90,17 @@ Return JSON: {{"key_insight": "...", "lessons": ["specific, actionable", ...],
 
 CURATE_PROMPT = """You are a curator of a playbook. Identify ONLY the NEW insights that are
 MISSING from the current playbook. Do NOT regenerate or rephrase existing bullets.
+Avoid redundancy — if similar advice already exists, only add content that
+complements it. Focus on quality over quantity. If there is nothing new to add,
+return an empty operations list.
+
+Training Context:
+- Total token budget: {token_budget} tokens
+- Playbook now uses about {playbook_tokens} tokens
+- Progress: step {current_step}{progress_total}
+
+Current Playbook Stats:
+{playbook_stats}
 
 Current playbook sections and bullets:
 {playbook}
@@ -102,6 +113,59 @@ Return JSON: {{"operations": [{{"type": "ADD", "section": "<snake_case_section>"
 "content": "one self-contained strategy/fact/pitfall"}}]}}"""
 
 DEDUP_THRESHOLD = 0.90
+
+# Upstream `playbook_token_budget` (ace.py:127). The curator is TOLD the budget
+# rather than truncated at it: ACE's whole claim is that a comprehensive playbook
+# is what prevents context collapse, so growth is steered by telling the model
+# how much room is left, never by dropping bullets.
+PLAYBOOK_TOKEN_BUDGET = 80000
+
+# Upstream counts tokens with a tokenizer; a chars/4 estimate is enough for a
+# number whose only consumer is a prompt line, and it avoids making a tokenizer
+# a hard dependency of the organizer.
+CHARS_PER_TOKEN = 4
+
+# Environment feedback, verbatim from upstream's two branches (ace.py:507/554).
+# Our `outcome` is a free-form string, so this mapping only fires when it names
+# one of the two states; anything else passes through as the no-ground-truth
+# variant upstream also supports (`REFLECTOR_PROMPT_NO_GT`).
+ENVIRONMENT_FEEDBACK = {
+    "success": "Predicted answer matches ground truth",
+    "correct": "Predicted answer matches ground truth",
+    "failure": "Predicted answer does not match ground truth",
+    "incorrect": "Predicted answer does not match ground truth",
+    "wrong": "Predicted answer does not match ground truth",
+}
+
+
+def playbook_stats(bullets: list[dict]) -> str:
+    """Upstream ``get_playbook_stats`` (playbook_utils.py:218), rendered for the
+    curator prompt: totals plus the three health buckets it defines —
+    high-performing (helpful > 5 and harmful < 2), problematic
+    (harmful >= helpful, harmful > 0) and unused (no counter set) — and a
+    per-section count."""
+    total = high = problematic = unused = 0
+    by_section: dict[str, int] = {}
+    for bullet in bullets:
+        total += 1
+        helpful = int(bullet.get("helpful", 0))
+        harmful = int(bullet.get("harmful", 0))
+        if helpful > 5 and harmful < 2:
+            high += 1
+        elif harmful >= helpful and harmful > 0:
+            problematic += 1
+        if helpful + harmful == 0:
+            unused += 1
+        section = str(bullet.get("section", "general"))
+        by_section[section] = by_section.get(section, 0) + 1
+    sections = ", ".join(f"{name}={count}" for name, count in sorted(by_section.items()))
+    return (
+        f"- total bullets: {total}\n"
+        f"- high-performing: {high}\n"
+        f"- problematic: {problematic}\n"
+        f"- unused: {unused}\n"
+        f"- by section: {sections or '(none)'}"
+    )
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -121,13 +185,33 @@ class ACEOrganizer(Organizer):
 
     produces = ("playbook",)
 
-    def __init__(self, dedup_threshold: float = DEDUP_THRESHOLD, max_ops: int = 5) -> None:
+    def __init__(
+        self,
+        dedup_threshold: float = DEDUP_THRESHOLD,
+        max_ops: int = 5,
+        token_budget: int = PLAYBOOK_TOKEN_BUDGET,
+        total_samples: int | None = None,
+    ) -> None:
         """``dedup_threshold`` gates embedding-cosine dedup against both the
         existing playbook and the current curator batch (round-5 §3.4,
         always-on per module docstring); ``max_ops`` caps ADD operations
-        accepted from one curator call."""
+        accepted from one curator call.
+
+        ``token_budget`` is upstream's ``playbook_token_budget`` (80,000): the
+        curator is told the budget and the current size so it can slow the
+        playbook's growth. It is a prompt input, never a truncation — dropping
+        bullets to fit would be the context collapse the paper is about.
+        ``total_samples`` is upstream's "Sample X out of Y" progress line; a
+        memory layer does not know the dataset size, so it stays optional and
+        the line degrades to the step alone."""
         self.dedup_threshold = dedup_threshold
         self.max_ops = max_ops
+        self.token_budget = token_budget
+        self.total_samples = total_samples
+        # Upstream's `step`, which drives both the progress line and its
+        # `curator_frequency`. We curate on every task (frequency 1), so this
+        # only feeds the prompt.
+        self._step = 0
 
     # -- helpers -------------------------------------------------------------
 
@@ -196,16 +280,18 @@ class ACEOrganizer(Organizer):
         traj_text = "\n".join(_json.dumps(s, ensure_ascii=False, default=str) for s in trajectory)[
             :6000
         ]
+        self._step += 1
         playbook = self._current_playbook(ctx)
         by_id = {b["id"]: b for b in playbook}
+        rendered_playbook = self._render_playbook(playbook)
 
         reflection = ctx.llm.call(
             "distill",
             REFLECT_PROMPT.format(
                 task=task,
-                outcome=outcome,
+                outcome=ENVIRONMENT_FEEDBACK.get(str(outcome).strip().lower(), outcome),
                 trajectory=traj_text,
-                used_bullets=self._render_playbook(playbook),
+                used_bullets=rendered_playbook,
             ),
             REFLECT_SCHEMA,
             required_keys=("key_insight", "lessons"),
@@ -241,9 +327,16 @@ class ACEOrganizer(Organizer):
         curated = ctx.llm.call(
             "distill",
             CURATE_PROMPT.format(
-                playbook=self._render_playbook(playbook),
+                playbook=rendered_playbook,
                 key_insight=reflection.get("key_insight", ""),
                 lessons=reflection.get("lessons", []),
+                token_budget=self.token_budget,
+                playbook_tokens=len(rendered_playbook) // CHARS_PER_TOKEN,
+                current_step=self._step,
+                progress_total=(
+                    f" of {self.total_samples}" if self.total_samples is not None else ""
+                ),
+                playbook_stats=playbook_stats(playbook),
             ),
             CURATE_SCHEMA,
             required_keys=("operations",),

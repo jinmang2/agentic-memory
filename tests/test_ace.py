@@ -99,3 +99,52 @@ def test_llm_reranker_reorders_and_survives_failure():
     broken = StubLLM({})  # returns None -> drop -> fusion order preserved
     out = LLMReranker(broken).rerank(None, candidates, {}, 2, texts=texts, query="q")
     assert [c for c, _ in out] == ["a", "b"]
+
+
+def test_ace_curator_gets_the_token_budget_stats_and_progress():
+    """Upstream's curator prompt carries a "Training Context" block — token
+    budget, progress, and playbook stats (`ace.py` passes `token_budget`,
+    `current_step`, `total_samples`, `playbook_stats`).
+
+    It matters more here than it looks: ACE injects the WHOLE playbook, so the
+    only thing holding growth back is the curator knowing how much room is left.
+    The budget is a prompt input, never a truncation — dropping bullets to fit
+    would be the context collapse the paper is about."""
+    from agmem.organizers.ace.organizer import PLAYBOOK_TOKEN_BUDGET, playbook_stats
+
+    stats = playbook_stats(
+        [
+            {"section": "a", "helpful": 9, "harmful": 0},  # high-performing
+            {"section": "a", "helpful": 0, "harmful": 3},  # problematic
+            {"section": "b", "helpful": 0, "harmful": 0},  # unused
+        ]
+    )
+    assert "total bullets: 3" in stats
+    assert "high-performing: 1" in stats
+    assert "problematic: 1" in stats
+    assert "unused: 1" in stats
+    assert "a=2, b=1" in stats
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {"key_insight": "k", "lessons": ["l1"], "bullet_tags": []},
+                {"operations": [{"type": "ADD", "section": "general", "content": "new bullet"}]},
+            ]
+        }
+    )
+    org = ACEOrganizer(total_samples=50)
+    mem = AgenticMemory(namespace="t", organizers=[org], embedder=FakeEmbedder(dim=128))
+    mem.structured = llm
+    mem._ctx.llm = llm
+    try:
+        mem.add_task_result([{"step": 1}], "failure", "a task")
+        curator_prompt = next(p for role, p in llm.calls if "curator" in p)
+        assert f"Total token budget: {PLAYBOOK_TOKEN_BUDGET} tokens" in curator_prompt
+        assert "step 1 of 50" in curator_prompt
+        assert "Current Playbook Stats:" in curator_prompt
+        # upstream's environment feedback replaces a recognised outcome word
+        reflect_prompt = next(p for role, p in llm.calls if "reflector" in p)
+        assert "Predicted answer does not match ground truth" in reflect_prompt
+    finally:
+        mem.close()
