@@ -630,6 +630,85 @@ def _speaker(episode: Any) -> str:
     return str((getattr(episode, "meta", None) or {}).get("speaker") or episode.role)
 
 
+class TaskGraphExpansion(ReadStep):
+    """G-Memory query-graph read: 1-hop task expansion (paper Eq.(5)) plus
+    insight recall over the expanded task set (Eq.(6)'s Π projector).
+
+    Trajectory hits carry ``task_edges`` — adjacency built at ``on_task_end``
+    the way upstream ``TaskLayer.add_task_node`` links tasks (top-10
+    candidates, similarity >= 0.7) — and their 1-hop neighbours join the
+    bundle just below their parent, capped globally like ``LinkExpansion``.
+    Insights then join by task association, not rule-text embedding: upstream
+    ``_find_related_insights`` serves an insight when its
+    ``positive_correlation_tasks`` overlap the task set (count-sorted,
+    threshold 1), and the linear scan over stored insights here mirrors its
+    scan of the in-memory insights list.
+
+    ReasoningBank items share the ``strategies`` type but carry neither
+    field, so the step is inert on a ReasoningBank store."""
+
+    def __init__(self, cap: int = 5, insight_cap: int = 10) -> None:
+        self.cap = cap
+        self.insight_cap = insight_cap
+
+    def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
+        seen = {s.item.data["id"] for s in hits} | ctx.bundle_ids
+        wanted: list[tuple[str, float]] = []
+        for s in sorted(hits, key=lambda s: s.score, reverse=True):
+            if s.item.data.get("kind") != "trajectory":
+                continue
+            for linked_id in s.item.data.get("task_edges", []):
+                if linked_id not in seen and len(wanted) < self.cap:
+                    seen.add(linked_id)
+                    wanted.append((linked_id, s.score * 0.9))
+        out = list(hits)
+        if wanted:
+            by_id = dict(wanted)
+            for data in ctx.doc_store.get_items(list(by_id), "strategies"):
+                if not is_servable(data, "strategies") or data.get("kind") != "trajectory":
+                    continue
+                out.append(
+                    ScoredItem(
+                        item=_DictItem(data),
+                        memory_type="strategies",
+                        score=by_id.get(data.get("id"), 0.0),
+                        provenance=data.get("source_episode_ids", []),
+                    )
+                )
+
+        if not self.insight_cap:
+            return out
+        titles = {
+            s.item.data.get("title")
+            for s in out
+            if s.item.data.get("kind") == "trajectory" and s.item.data.get("title")
+        }
+        if not titles:
+            return out
+        top_score = max((s.score for s in out), default=0.0)
+        scored: list[tuple[int, dict]] = []
+        for data in ctx.doc_store.list_items("strategies", ctx.namespace):
+            if data.get("kind") != "insight" or data.get("id") in seen:
+                continue
+            if not is_servable(data, "strategies"):
+                continue
+            overlap = len(titles & set(data.get("positive_correlation_tasks", [])))
+            if overlap >= 1:
+                scored.append((overlap, data))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        for _overlap, data in scored[: self.insight_cap]:
+            seen.add(data["id"])
+            out.append(
+                ScoredItem(
+                    item=_DictItem(data),
+                    memory_type="strategies",
+                    score=top_score * 0.9,
+                    provenance=data.get("source_episode_ids", []),
+                )
+            )
+        return out
+
+
 def default_read_steps(
     link_expansion_cap: int = 5,
     attach_sources_top_r: int = 2,
@@ -641,6 +720,7 @@ def default_read_steps(
     page_recall_keyword_similarity: str = "containment_mean",
     memmachine_expand_context: int = 0,
     memmachine_context_limit: int = 20,
+    task_graph_expansion_cap: int = 5,
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 
@@ -660,6 +740,8 @@ def default_read_steps(
         steps["episodes"] = AttachSources(attach_sources_top_r)
     if graph_expansion_cap:
         steps["entities"] = GraphRecall(graph_expansion_cap, graph_expansion_hops)
+    if task_graph_expansion_cap:
+        steps["strategies"] = TaskGraphExpansion(task_graph_expansion_cap)
     if page_recall_cap:
         steps["pages"] = MemoryOSPageRecall(
             page_recall_cap,

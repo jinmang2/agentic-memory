@@ -656,6 +656,82 @@ def test_gmemory_trajectory_and_insight_finetune():
         assert trajs[0].payload["score"] == 1.0 and trajs[1].payload["score"] == -2.0
         assert len(insights) == 1  # hallucinated EDIT ignored
         assert not [o for o in strategies if o.op is OpType.UPDATE]
+        # the ADD carries the finetune round's task associations (upstream
+        # `relative_tasks` -> positive_correlation_tasks)
+        assert insights[0].payload["positive_correlation_tasks"]
+    finally:
+        mem.close()
+
+
+def test_gmemory_task_graph_edges_and_hop_expansion():
+    """Paper Eq.(9)/(5)/(6) — the query graph and its read side.
+
+    Two similar tasks (shared-token cosine >= 0.7 under FakeEmbedder) get
+    linked at on_task_end: the new trajectory's ADD carries ``task_edges`` and
+    the earlier one gains the back-edge via UPDATE (upstream
+    ``TaskLayer.add_task_node``, similarity_threshold 0.7). At read time
+    ``TaskGraphExpansion`` serves the 1-hop neighbour of a trajectory hit
+    (Eq.(5)) and any insight whose ``positive_correlation_tasks`` intersect
+    the served task titles (Eq.(6), upstream ``_find_related_insights``)."""
+    from agmem.core.types import ScoredItem
+    from agmem.retrieval.steps import ReadContext, TaskGraphExpansion, _DictItem
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {"key_steps": ["x"], "mistakes": []},
+                {"key_steps": ["x"], "mistakes": []},
+            ],
+        }
+    )
+    org = GMemoryOrganizer(finetune_every=100)  # keep finetune out of this test
+    mem = make_mem(org, llm)
+    try:
+        mem.add_task_result([{"s": 1}], "success", "buy red apples at market")
+        mem.add_task_result([{"s": 2}], "success", "buy red apples at store")
+        strategies = ops_of(mem, "strategies")
+        adds = [o for o in strategies if o.op is OpType.ADD]
+        updates = [o for o in strategies if o.op is OpType.UPDATE]
+        first_id, second_id = adds[0].payload["id"], adds[1].payload["id"]
+        assert adds[1].payload["task_edges"] == [first_id]
+        back_edge = next(u for u in updates if u.target_id == first_id)
+        assert back_edge.payload["task_edges"] == [second_id]
+
+        # read side: a hit on the FIRST trajectory pulls its 1-hop neighbour
+        first_item = mem.doc_store.get_items([first_id], "strategies")[0]
+        hits = [ScoredItem(item=_DictItem(first_item), memory_type="strategies", score=1.0)]
+        ctx = ReadContext(doc_store=mem.doc_store, namespace="t")
+        served = {s.item.data["id"] for s in TaskGraphExpansion().run(hits, ctx)}
+        assert second_id in served
+
+        # an insight supported by the served task title joins too (Eq.(6));
+        # one correlated with a different task does not
+        mem.doc_store.put_item(
+            "ins1",
+            "strategies",
+            "t",
+            {
+                "id": "ins1",
+                "kind": "insight",
+                "content": "prefer the sidebar",
+                "score": 2.0,
+                "positive_correlation_tasks": ["buy red apples at market"],
+            },
+        )
+        mem.doc_store.put_item(
+            "ins2",
+            "strategies",
+            "t",
+            {
+                "id": "ins2",
+                "kind": "insight",
+                "content": "unrelated",
+                "score": 2.0,
+                "positive_correlation_tasks": ["file taxes"],
+            },
+        )
+        served = {s.item.data["id"] for s in TaskGraphExpansion().run(hits, ctx)}
+        assert "ins1" in served and "ins2" not in served
     finally:
         mem.close()
 

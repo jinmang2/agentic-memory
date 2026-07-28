@@ -5,9 +5,18 @@ finetune (ADD/EDIT/REMOVE ops on the rule list — upstream parses these
 from free text with a regex; we get them as structured JSON).
 
 Deviations (documented per docs/research/g-memory.md):
-- The query graph (networkx, k-hop over task similarity) is approximated
-  by embedding retrieval — same recall role, no pickle sidecar. TODO:
-  optional SqliteGraphStore-backed task graph.
+- The query graph (upstream: networkx + pickle sidecar) is item-payload
+  adjacency instead: ``on_task_end`` links the new task to existing
+  trajectories at similarity >= 0.7 among the top-10 candidates
+  (``TaskLayer.add_task_node``'s constants) via ``task_edges``, and the
+  1-hop read expansion (paper Eq.(5)) plus task-association insight recall
+  (Eq.(6); upstream ``positive_correlation_tasks``, count-scored as
+  ``_find_related_insights`` does) is ``TaskGraphExpansion`` in
+  retrieval/steps.py — everything rides the op log, no sidecar.
+- Upstream ``retrieve_memory``'s per-successful-trajectory LLM importance
+  rerank (``generative_task_user_prompt``, one call per candidate) is NOT
+  ported — a read-side LLM cost the embedding ranking stands in for
+  (docs/16 session 5).
 - FINCH cluster-merge is deferred; the rule cap is enforced upstream-style
   by suppressing ADD when full + soft REMOVE (-3) + score<=0 pruning.
 Score semantics follow the official code (round-5): ADD init 2, EDIT/AGREE
@@ -183,6 +192,45 @@ class GMemoryOrganizer(Organizer):
 
         traj_id = new_id()
         content = "\n".join(key_steps) + ("\nMistakes: " + "; ".join(mistakes) if mistakes else "")
+
+        # Query-graph edges (paper Eq.(9); upstream TaskLayer.add_task_node):
+        # link the new task to existing trajectories at similarity >= 0.7
+        # among the top-10 candidates, undirected — each neighbor gains the
+        # back-edge via UPDATE. A repeat of an already-stored task title adds
+        # no edges, mirroring upstream's early return when the task text is
+        # already a node. The read-side 1-hop expansion over these edges is
+        # ``TaskGraphExpansion`` (retrieval/steps.py).
+        task_edges: list[str] = []
+        edge_updates: list[MemoryOp] = []
+        hit_scores = dict(
+            ctx.vector_store.search(
+                ctx.embedder.embed([task[:2000]])[0],
+                k=10,
+                memory_type="strategies",
+                namespace=ctx.namespace,
+            )
+        )
+        if hit_scores:
+            neighbors = [
+                n
+                for n in ctx.doc_store.get_items(list(hit_scores), "strategies")
+                if n.get("kind") == "trajectory" and not n.get("deleted")
+            ]
+            if not any(n.get("title") == task[:80] for n in neighbors):
+                for n in neighbors:
+                    # 0.7 is upstream TaskLayer.similarity_threshold
+                    if hit_scores.get(n["id"], 0.0) < 0.7:
+                        continue
+                    task_edges.append(n["id"])
+                    edge_updates.append(
+                        MemoryOp(
+                            op=OpType.UPDATE,
+                            target_type="strategies",
+                            target_id=n["id"],
+                            payload={"task_edges": [*n.get("task_edges", []), traj_id]},
+                        )
+                    )
+
         ops.append(
             MemoryOp(
                 op=OpType.ADD,
@@ -195,10 +243,12 @@ class GMemoryOrganizer(Organizer):
                     "outcome": outcome,
                     "kind": "trajectory",
                     "score": 1.0 if outcome == "success" else -2.0,
+                    "task_edges": task_edges,
                     "embedding_text": f"{task}\n{content}"[:2000],
                 },
             )
         )
+        ops.extend(edge_updates)
 
         if ctx.llm is not None and self._task_count % self.finetune_every == 0:
             ops.extend(self._finetune_insights(task, ctx))
@@ -215,6 +265,11 @@ class GMemoryOrganizer(Organizer):
     def _finetune_insights(self, task: str, ctx: OrganizerContext) -> list[MemoryOp]:
         insights = self._fetch(ctx, task, "insight", self.insight_max)
         trajectories = self._fetch(ctx, task, "trajectory", 10)
+        # Task titles this finetune round saw — recorded on every touched
+        # insight as upstream does (`relative_tasks` in _finetune_insights:
+        # ADD/EDIT/AGREE extend positive_correlation_tasks, REMOVE extends
+        # negative). TaskGraphExpansion's Eq.(6) recall reads the positive set.
+        relative_tasks = sorted({str(t.get("title", "")) for t in trajectories} - {""})
         result = ctx.llm.call(
             "distill",
             FINETUNE_PROMPT.format(
@@ -264,6 +319,8 @@ class GMemoryOrganizer(Organizer):
                             "content": rule,
                             "kind": "insight",
                             "score": 2.0,
+                            "positive_correlation_tasks": relative_tasks,
+                            "negative_correlation_tasks": [],
                             "embedding_text": rule,
                         },
                     )
@@ -283,6 +340,10 @@ class GMemoryOrganizer(Organizer):
                         payload={
                             "content": rule,
                             "score": scores[rule_id],
+                            "positive_correlation_tasks": sorted(
+                                set(valid[rule_id].get("positive_correlation_tasks", []))
+                                | set(relative_tasks)
+                            ),
                             "embedding_text": rule,
                         },
                     )
@@ -294,7 +355,13 @@ class GMemoryOrganizer(Organizer):
                         op=OpType.UPDATE,
                         target_type="strategies",
                         target_id=rule_id,
-                        payload={"score": scores[rule_id]},
+                        payload={
+                            "score": scores[rule_id],
+                            "positive_correlation_tasks": sorted(
+                                set(valid[rule_id].get("positive_correlation_tasks", []))
+                                | set(relative_tasks)
+                            ),
+                        },
                     )
                 )
             elif op == "REMOVE":
@@ -304,7 +371,13 @@ class GMemoryOrganizer(Organizer):
                         op=OpType.UPDATE,
                         target_type="strategies",
                         target_id=rule_id,
-                        payload={"score": scores[rule_id]},
+                        payload={
+                            "score": scores[rule_id],
+                            "negative_correlation_tasks": sorted(
+                                set(valid[rule_id].get("negative_correlation_tasks", []))
+                                | set(relative_tasks)
+                            ),
+                        },
                     )
                 )
 

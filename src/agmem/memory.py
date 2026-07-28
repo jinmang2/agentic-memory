@@ -250,6 +250,7 @@ class AgenticMemory:
             page_recall_keyword_similarity=self.config.page_recall_keyword_similarity,
             memmachine_expand_context=self.config.memmachine_expand_context,
             memmachine_context_limit=self.config.memmachine_context_limit,
+            task_graph_expansion_cap=self.config.task_graph_expansion_cap,
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------

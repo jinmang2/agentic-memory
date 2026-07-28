@@ -89,6 +89,11 @@ class AgmemConfig:
     # only ever a stand-in for it. Non-zero revives it — see `GraphRecall`.
     graph_expansion_cap: int = 0
     graph_expansion_hops: int = 1
+    # G-Memory query-graph read: 1-hop task expansion over `task_edges`
+    # (paper Eq.(5)) plus task-association insight recall (Eq.(6)). 0 disables
+    # the step; inert for stores whose `strategies` items lack the fields
+    # (ReasoningBank).
+    task_graph_expansion_cap: int = 5
     # MemoryOS second-stage page recall: upstream `retrieval_queue_capacity`
     # and `page_similarity_threshold`. 0 disables it, which serves segment
     # summaries — a channel upstream has no counterpart for.
@@ -204,6 +209,9 @@ def load_config(path: str | Path) -> AgmemConfig:
         attach_sources_top_r=retrieval.get("attach_sources_top_r", defaults.attach_sources_top_r),
         graph_expansion_cap=retrieval.get("graph_expansion_cap", defaults.graph_expansion_cap),
         graph_expansion_hops=retrieval.get("graph_expansion_hops", defaults.graph_expansion_hops),
+        task_graph_expansion_cap=retrieval.get(
+            "task_graph_expansion_cap", defaults.task_graph_expansion_cap
+        ),
         page_recall_cap=retrieval.get("page_recall_cap", defaults.page_recall_cap),
         page_recall_threshold=retrieval.get(
             "page_recall_threshold", defaults.page_recall_threshold
