@@ -13,15 +13,28 @@ def make_mem(llm):
     return mem
 
 
+def reflection_stub(key_insight="Always validate filter state", **overrides):
+    """A reflection in upstream's five-field shape (prompts/reflector.py:18-24):
+    reasoning / error_identification / root_cause_analysis / correct_approach /
+    key_insight (+ bullet_tags). The former `lessons` array was our invention
+    and is gone (round-12 #2(c))."""
+    reflection = {
+        "reasoning": "The trace skipped the filter check.",
+        "error_identification": "Submitted with a stale filter state.",
+        "root_cause_analysis": "Assumed defaults persist across reloads.",
+        "correct_approach": "Re-read every filter control before submitting.",
+        "key_insight": key_insight,
+        "bullet_tags": [],
+    }
+    reflection.update(overrides)
+    return reflection
+
+
 def ace_llm():
     return StubLLM(
         {
             "distill": [
-                {
-                    "key_insight": "Always validate filter state",
-                    "lessons": ["Check filters before submitting"],
-                    "bullet_tags": [],
-                },
+                reflection_stub(),
                 {
                     "operations": [
                         {
@@ -52,7 +65,7 @@ def test_ace_dedup_skips_near_duplicate():
     llm = ace_llm()
     # second task curates an identical bullet -> must be deduped
     llm.responses["distill"] += [
-        {"key_insight": "same", "lessons": ["same"], "bullet_tags": []},
+        reflection_stub(key_insight="same"),
         {
             "operations": [
                 {
@@ -128,7 +141,7 @@ def test_ace_curator_gets_the_token_budget_stats_and_progress():
     llm = StubLLM(
         {
             "distill": [
-                {"key_insight": "k", "lessons": ["l1"], "bullet_tags": []},
+                reflection_stub(key_insight="k"),
                 {"operations": [{"type": "ADD", "section": "general", "content": "new bullet"}]},
             ]
         }
@@ -146,5 +159,106 @@ def test_ace_curator_gets_the_token_budget_stats_and_progress():
         # upstream's environment feedback replaces a recognised outcome word
         reflect_prompt = next(p for role, p in llm.calls if "reflector" in p)
         assert "Predicted answer does not match ground truth" in reflect_prompt
+    finally:
+        mem.close()
+
+
+def test_ace_curator_inputs_match_upstream_shape():
+    """Round-12 #2: the curator's inputs are upstream CURATOR_PROMPT's, no more
+    and no less — (a) it is told the token budget but NEVER the current playbook
+    size (upstream's `count_tokens` is logging-only); (b) it receives the
+    question context; (c) it receives the FULL raw reflection, all five
+    reflector fields, not a `key_insight`+invented-`lessons` digest."""
+    llm = ace_llm()
+    mem = make_mem(llm)
+    try:
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
+        curator_prompt = next(p for role, p in llm.calls if "curator" in p)
+        # (a) budget yes, current-size line no
+        assert "Total token budget:" in curator_prompt
+        assert "now uses about" not in curator_prompt
+        # (b) question context = the task
+        assert "Question Context:" in curator_prompt
+        assert "filter products" in curator_prompt
+        # (c) the full reflection rides along, not just key_insight
+        assert "Recent Reflection:" in curator_prompt
+        for field_value in (
+            "The trace skipped the filter check.",
+            "Submitted with a stale filter state.",
+            "Assumed defaults persist across reloads.",
+            "Re-read every filter control before submitting.",
+            "Always validate filter state",
+        ):
+            assert field_value in curator_prompt
+        assert "lessons" not in curator_prompt
+        # and the reflector was asked for upstream's five fields
+        reflect_prompt = next(p for role, p in llm.calls if "reflector" in p)
+        for field in (
+            "reasoning",
+            "error_identification",
+            "root_cause_analysis",
+            "correct_approach",
+            "key_insight",
+        ):
+            assert field in reflect_prompt
+    finally:
+        mem.close()
+
+
+def test_ace_curator_operations_are_uncapped():
+    """Round-12 #2(d): upstream accepts an unbounded operations list — the old
+    maxItems:5 / max_ops=5 cap was our invention. Seven distinct ops must yield
+    seven bullets (token-disjoint contents, so dedup does not interfere)."""
+    from agmem.organizers.ace.organizer import CURATE_SCHEMA
+
+    assert "maxItems" not in CURATE_SCHEMA["properties"]["operations"]
+
+    contents = [
+        "alpha uno",
+        "bravo dos",
+        "charlie tres",
+        "delta cuatro",
+        "echo cinco",
+        "foxtrot seis",
+        "golf siete",
+    ]
+    llm = StubLLM(
+        {
+            "distill": [
+                reflection_stub(),
+                {
+                    "operations": [
+                        {"type": "ADD", "section": "general", "content": c} for c in contents
+                    ]
+                },
+            ]
+        }
+    )
+    mem = make_mem(llm)
+    try:
+        mem.add_task_result(trajectory=[], outcome="success", task="many insights")
+        adds = [o for o in mem.log.tail(20) if o.target_type == "playbook" and o.op is OpType.ADD]
+        assert len(adds) == 7
+    finally:
+        mem.close()
+
+
+def test_playbook_is_not_a_default_search_type_but_explicit_opt_in_serves_it():
+    """Round-12 #5: ACE's read contract (whole-playbook injection via
+    `get_playbook`) is structural, not conventional — `default_memory_types`
+    excludes `playbook`, so a plain `search()` cannot serve top-k bullets.
+    An EXPLICIT `memory_types=("playbook",)` remains the caller's choice."""
+    mem = make_mem(ace_llm())
+    try:
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="success", task="filter products")
+        assert "playbook" not in mem.default_memory_types
+
+        default_bundle = mem.search("verify filter control state before submit")
+        assert all(s.memory_type != "playbook" for s in default_bundle.items)
+
+        explicit = mem.search(
+            "verify filter control state before submit", memory_types=("playbook",), k=5
+        )
+        assert explicit.items and all(s.memory_type == "playbook" for s in explicit.items)
     finally:
         mem.close()

@@ -141,6 +141,94 @@ def test_reasoning_bank_no_llm_explicit_skip():
         mem.close()
 
 
+def test_reasoning_bank_outcome_synonyms_normalize_for_si_selection():
+    """Round-12 #14: with `self_judge=False`, a caller-supplied "correct" (any
+    case) must select the SUCCESS instructions — previously anything that was
+    not exactly "success" silently got the FAILURE SI. ACE normalizes the same
+    synonyms; now RB does too."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(self_judge=False), llm)
+    try:
+        mem.add_task_result(trajectory=[], outcome="Correct", task="t")
+        assert [r for r, _ in llm.calls] == ["distill"]  # no judge either way
+        assert "SUCCEEDED" in llm.systems[0]
+        # emitted items keep the caller's outcome string untouched (byte-shaped)
+        strategy_ops = [o for o in mem.log.tail(10) if o.target_type == "strategies"]
+        assert {o.payload["outcome"] for o in strategy_ops} == {"Correct"}
+    finally:
+        mem.close()
+
+
+def test_scaled_single_trajectory_fallback_routes_outcome_by_the_same_normalization():
+    """Round-12 #14, second half: `on_scaled_task_end`'s single-trajectory
+    fallback passes `outcome=""`. With `self_judge=False` that must land on the
+    failure SI through the explicit `_is_success` normalization (an empty string
+    is no success synonym), not through a silent exact-equality accident — and
+    with `self_judge=True` the judge still decides (covered elsewhere)."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(self_judge=False), llm)
+    try:
+        mem.add_scaled_task_result(trajectories=[[{"step": "a"}]], task="t")
+        assert [r for r, _ in llm.calls] == ["distill"]  # no judge with self_judge=False
+        assert "FAILED" in llm.systems[0]
+    finally:
+        mem.close()
+
+
+def test_reasoning_bank_max_items_drives_schema_and_prompt_and_cap():
+    """Round-12 #15: `max_items` is wired end to end — the schema's maxItems AND
+    the SI's "at most N" sentence derive from the knob (default 3 = upstream's
+    SUCCESSFUL_SI/FAILED_SI budget), and the emit cap agrees with what the
+    prompt advertised instead of silently truncating below it."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+    from agmem.organizers.reasoning_bank.organizer import SCALED_EXTRACT_SCHEMA
+
+    default = ReasoningBankOrganizer()
+    assert default._schema["properties"]["items"]["maxItems"] == 3
+    assert "at most 3" in default._success_si and "at most 3" in default._failure_si
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "items": [
+                        {"title": f"t{i}", "description": f"d{i}", "content": f"c{i}"}
+                        for i in range(3)
+                    ]
+                }
+            ]
+        }
+    )
+    org = ReasoningBankOrganizer(max_items=2, self_judge=False)
+    assert org._schema["properties"]["items"]["maxItems"] == 2
+    mem = make_mem(org, llm)
+    try:
+        mem.add_task_result(trajectory=[], outcome="success", task="t")
+        assert "at most 2" in llm.systems[0]
+        strategy_ops = [o for o in mem.log.tail(10) if o.target_type == "strategies"]
+        assert len(strategy_ops) == 2  # cap == the advertised budget
+    finally:
+        mem.close()
+
+    # the MaTTS budget is upstream's own constant (5), not the knob
+    assert SCALED_EXTRACT_SCHEMA["properties"]["items"]["maxItems"] == 5
+
+
+def test_rb_read_recipe_pins_the_upstream_operating_point():
+    """Round-12 #10: upstream's read side is top-1 EXPERIENCE by task-query
+    embedding, expanded to its member items — no direct item-level channel
+    (WebArena/run.py:177-193; minisweagent swebench.py:182). The constant is a
+    citable name for that operating point, same pattern as GMEMORY_READ_RECIPE
+    and the Zep search recipes; no preset auto-applies it."""
+    from agmem.organizers.reasoning_bank.organizer import RB_READ_RECIPE
+
+    assert RB_READ_RECIPE == {"experiences_topk": 1, "strategies_topk": 0}
+
+
 # ---------------- A-Mem ----------------
 
 
@@ -580,5 +668,55 @@ def test_feedback_is_owned_by_the_producing_organizer():
         org._served = {"rule-1"}
         assert mem.report_feedback(["rule-1"], helpful=True) == 1
         assert mem.doc_store.get_items(["rule-1"], "strategies")[0]["score"] == 2.0
+    finally:
+        mem.close()
+
+
+def test_mixed_gmemory_rb_config_feedback_leaves_rb_items_unscored():
+    """Round-12 #18 regression, MIXED-active config: with G-Memory AND
+    ReasoningBank both active, an RB strategies item that is actually SERVED
+    through the read path must not pick up a G-Memory `score` field on
+    feedback. Before the wave-1 fix, `on_retrieval` cached every served
+    strategies id (RB items included) and an empty cache bypassed the served
+    gate entirely, so exactly this flow stamped a score onto an append-only RB
+    item."""
+    from agmem.core.types import StrategyItem
+    from agmem.organizers.gmemory import GMemoryOrganizer
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    gm = GMemoryOrganizer()
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=[gm, ReasoningBankOrganizer()],
+        embedder=FakeEmbedder(dim=64),
+    )
+    try:
+        item = StrategyItem(title="check filters", description="d", content="check the filters")
+        add = MemoryOp(
+            op=OpType.ADD,
+            target_type="strategies",
+            target_id=item.id,
+            payload={
+                "id": item.id,
+                "title": item.title,
+                "description": item.description,
+                "content": item.content,
+                "outcome": "success",
+                "embedding_text": item.embedding_text(),
+            },
+        )
+        mem._apply_ops([add], actor="reasoning_bank")
+
+        # serve it for real: the facade's read->write hook feeds every served
+        # (id, type, score) triple to G-Memory's on_retrieval
+        bundle = mem.search("check the filters", memory_types=["strategies"], k=5)
+        assert any(s.item.data["id"] == item.id for s in bundle.items)
+        assert gm._served == set()  # kind-less RB item never enters the cache
+
+        # feedback on the served RB id: no organizer owns it -> 0 ops, no score
+        assert mem.report_feedback([item.id], helpful=True) == 0
+        assert mem.report_feedback([item.id], helpful=False) == 0
+        stored = mem.doc_store.get_items([item.id], "strategies")[0]
+        assert "score" not in stored
     finally:
         mem.close()

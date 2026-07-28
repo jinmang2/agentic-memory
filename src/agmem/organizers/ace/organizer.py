@@ -12,10 +12,14 @@ Deviations from the reference repo, on purpose:
   /ace-longmemeval.md §D), which is the reproduction trap we avoid.
 - Counter updates go through the evolution log (UPDATE ops), so
   helpful/harmful history is auditable.
-Read contract (round-5): ACE injects the FULL playbook — use
-``AgenticMemory.get_playbook()``, never top-k retrieval of bullets. The
-curator likewise sees the whole playbook, and dedup also compares within
-the current batch. Reflector tagging remains trajectory-evidence-based
+Read contract (round-5, structural since round-12 #5): ACE injects the
+FULL playbook — use ``AgenticMemory.get_playbook()``, never top-k
+retrieval of bullets. The facade enforces this structurally:
+``default_memory_types`` excludes ``playbook``, so a plain ``search()``
+cannot serve bullets; only an explicit ``memory_types=("playbook",)``
+opts a caller into the partial view. The curator likewise sees the whole
+playbook, and dedup also compares within the current batch. Reflector
+tagging remains trajectory-evidence-based
 (official attributes counters to bullets the Generator actually cited —
 we lack that signal in a post-hoc organizer; report_feedback() is the
 usage-accurate path).
@@ -31,11 +35,20 @@ from agmem.organizers.base import Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.ace")
 
+# Upstream REFLECTOR_PROMPT's five output fields (prompts/reflector.py:18-24):
+# reasoning / error_identification / root_cause_analysis / correct_approach /
+# key_insight, plus bullet_tags. The curator is fed the FULL raw reflection —
+# all five fields — as upstream passes the reflector's whole response string
+# through as `recent_reflection` (ace.py:586). An earlier version here invented
+# a `lessons` array instead; round-12 #2(c) removed it.
 REFLECT_SCHEMA = {
     "type": "object",
     "properties": {
+        "reasoning": {"type": "string"},
+        "error_identification": {"type": "string"},
+        "root_cause_analysis": {"type": "string"},
+        "correct_approach": {"type": "string"},
         "key_insight": {"type": "string"},
-        "lessons": {"type": "array", "items": {"type": "string"}},
         "bullet_tags": {
             "type": "array",
             "items": {
@@ -51,15 +64,22 @@ REFLECT_SCHEMA = {
             },
         },
     },
-    "required": ["key_insight", "lessons"],
+    "required": [
+        "reasoning",
+        "error_identification",
+        "root_cause_analysis",
+        "correct_approach",
+        "key_insight",
+    ],
 }
 
+# No maxItems: upstream's curator accepts an unbounded operations list (an
+# earlier cap of 5 here was our invention, round-12 #2(d)).
 CURATE_SCHEMA = {
     "type": "object",
     "properties": {
         "operations": {
             "type": "array",
-            "maxItems": 5,
             "items": {
                 "type": "object",
                 "properties": {
@@ -74,7 +94,8 @@ CURATE_SCHEMA = {
     "required": ["operations"],
 }
 
-REFLECT_PROMPT = """You are a reflector. Critique this task execution and extract concrete insight.
+REFLECT_PROMPT = """You are a reflector. Critique this task execution, diagnose what went wrong
+(or why it worked), and extract concrete insight.
 
 Task: {task}
 Outcome: {outcome}
@@ -85,7 +106,11 @@ Bullets from the playbook that were available (tag each as helpful/harmful/neutr
 if you can tell from the trajectory; else omit):
 {used_bullets}
 
-Return JSON: {{"key_insight": "...", "lessons": ["specific, actionable", ...],
+Return JSON: {{"reasoning": "chain of thought / detailed analysis",
+"error_identification": "what specifically went wrong (or 'nothing' on success)",
+"root_cause_analysis": "why did this occur? what concept was misunderstood?",
+"correct_approach": "what should have been done instead?",
+"key_insight": "what strategy, formula, or principle should be remembered?",
 "bullet_tags": [{{"id": "<bullet id>", "tag": "helpful"}}]}}"""
 
 CURATE_PROMPT = """You are a curator of a playbook. Identify ONLY the NEW insights that are
@@ -96,18 +121,19 @@ return an empty operations list.
 
 Training Context:
 - Total token budget: {token_budget} tokens
-- Playbook now uses about {playbook_tokens} tokens
 - Progress: step {current_step}{progress_total}
 
 Current Playbook Stats:
 {playbook_stats}
 
+Recent Reflection:
+{recent_reflection}
+
 Current playbook sections and bullets:
 {playbook}
 
-New reflection:
-key_insight: {key_insight}
-lessons: {lessons}
+Question Context:
+{question_context}
 
 Return JSON: {{"operations": [{{"type": "ADD", "section": "<snake_case_section>",
 "content": "one self-contained strategy/fact/pitfall"}}]}}"""
@@ -117,15 +143,13 @@ DEDUP_THRESHOLD = 0.90
 # Upstream `playbook_token_budget` (ace.py:127). The curator is TOLD the budget
 # rather than truncated at it: ACE's whole claim is that a comprehensive playbook
 # is what prevents context collapse, so growth is steered by telling the model
-# how much room is left, never by dropping bullets.
+# how much room is left, never by dropping bullets. Upstream never tells the
+# curator the CURRENT playbook size — `count_tokens` is logging-only (ace.py:491,
+# 626) — so neither do we (an invented "now uses about N tokens" line was
+# removed, round-12 #2(a)).
 PLAYBOOK_TOKEN_BUDGET = 80000
 
-# Upstream counts tokens with a tokenizer; a chars/4 estimate is enough for a
-# number whose only consumer is a prompt line, and it avoids making a tokenizer
-# a hard dependency of the organizer.
-CHARS_PER_TOKEN = 4
-
-# Environment feedback, verbatim from upstream's two branches (ace.py:507/554).
+# Environment feedback, verbatim from upstream's two branches (ace.py:515/558).
 # Our `outcome` is a free-form string, so this mapping only fires when it names
 # one of the two states; anything else passes through as the no-ground-truth
 # variant upstream also supports (`REFLECTOR_PROMPT_NO_GT`).
@@ -188,24 +212,23 @@ class ACEOrganizer(Organizer):
     def __init__(
         self,
         dedup_threshold: float = DEDUP_THRESHOLD,
-        max_ops: int = 5,
         token_budget: int = PLAYBOOK_TOKEN_BUDGET,
         total_samples: int | None = None,
     ) -> None:
         """``dedup_threshold`` gates embedding-cosine dedup against both the
         existing playbook and the current curator batch (round-5 §3.4,
-        always-on per module docstring); ``max_ops`` caps ADD operations
-        accepted from one curator call.
+        always-on per module docstring). The curator's operations list is
+        uncapped, as upstream's is (round-12 #2(d)).
 
         ``token_budget`` is upstream's ``playbook_token_budget`` (80,000): the
-        curator is told the budget and the current size so it can slow the
-        playbook's growth. It is a prompt input, never a truncation — dropping
-        bullets to fit would be the context collapse the paper is about.
-        ``total_samples`` is upstream's "Sample X out of Y" progress line; a
-        memory layer does not know the dataset size, so it stays optional and
-        the line degrades to the step alone."""
+        curator is told the budget so it can slow the playbook's growth —
+        only the budget, never the current size, which upstream keeps to its
+        logs (round-12 #2(a)). It is a prompt input, never a truncation —
+        dropping bullets to fit would be the context collapse the paper is
+        about. ``total_samples`` is upstream's "Sample X out of Y" progress
+        line; a memory layer does not know the dataset size, so it stays
+        optional and the line degrades to the step alone."""
         self.dedup_threshold = dedup_threshold
-        self.max_ops = max_ops
         self.token_budget = token_budget
         self.total_samples = total_samples
         # Upstream's `step`, which drives both the progress line and its
@@ -270,7 +293,7 @@ class ACEOrganizer(Organizer):
         call fails (explicit skip, logged); otherwise returns UPDATE ops
         for helpful/harmful counters on tag-validated existing bullet ids
         plus ADD ops for curated bullets that survive dedup (see
-        ``dedup_threshold``), up to ``max_ops``."""
+        ``dedup_threshold``)."""
         if ctx.llm is None:
             logger.warning("ace: no LLM configured — skipping reflection (explicit skip)")
             return []
@@ -285,6 +308,14 @@ class ACEOrganizer(Organizer):
         by_id = {b["id"]: b for b in playbook}
         rendered_playbook = self._render_playbook(playbook)
 
+        # Boundary-cut note (round-12 #3): upstream reflects — and tags counters —
+        # on EVERY reflection round of its generator loop (up to 3 per incorrect
+        # task, ace.py:499-545); we reflect once per task, so upstream counters
+        # accrue faster on failures. A consequence of cutting at on_task_end,
+        # not a bug. Both this call and the curate call below ride the "distill"
+        # role, so per-role model/temperature cannot split reflector from
+        # curator — upstream allows distinct reflector/curator models
+        # (ace.py:36-63); round-12 #7.
         reflection = ctx.llm.call(
             "distill",
             REFLECT_PROMPT.format(
@@ -294,7 +325,7 @@ class ACEOrganizer(Organizer):
                 used_bullets=rendered_playbook,
             ),
             REFLECT_SCHEMA,
-            required_keys=("key_insight", "lessons"),
+            required_keys=("key_insight",),
         )
         if reflection is None:
             return []
@@ -324,14 +355,17 @@ class ACEOrganizer(Organizer):
                 )
             )
 
+        # The curator sees the FULL raw reflection (all five reflector fields +
+        # tags), as upstream passes the reflector's whole response string through
+        # (`recent_reflection`), and the question context, as upstream does
+        # (`question_context`) — our closest counterpart is the task string.
         curated = ctx.llm.call(
             "distill",
             CURATE_PROMPT.format(
                 playbook=rendered_playbook,
-                key_insight=reflection.get("key_insight", ""),
-                lessons=reflection.get("lessons", []),
+                recent_reflection=_json.dumps(reflection, ensure_ascii=False, indent=2),
+                question_context=task,
                 token_budget=self.token_budget,
-                playbook_tokens=len(rendered_playbook) // CHARS_PER_TOKEN,
                 current_step=self._step,
                 progress_total=(
                     f" of {self.total_samples}" if self.total_samples is not None else ""
@@ -345,7 +379,7 @@ class ACEOrganizer(Organizer):
             return ops
 
         accepted_embeddings: list[list[float]] = []  # intra-batch dedup (round-5 §3.4)
-        for raw in (curated.get("operations") or [])[: self.max_ops]:
+        for raw in curated.get("operations") or []:
             content = str(raw.get("content", "")).strip()
             if not content:
                 continue

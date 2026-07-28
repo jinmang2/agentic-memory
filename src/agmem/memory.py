@@ -798,10 +798,21 @@ class AgenticMemory:
         (``_ingest_episode``), so no organizer declares them, yet they are always
         present. Then each active organizer's ``produces``, in organizer order,
         deduped — so ``--organizers amem`` searches notes without the caller
-        having to know that."""
+        having to know that.
+
+        ``playbook`` is excluded even when ACE is active: ACE's read contract is
+        whole-playbook injection via ``get_playbook()`` — a top-k retrieval of
+        bullets is exactly the partial view its organizer forbids (round-12 #5:
+        with playbook in the default set, a plain ``search()`` served bullets
+        through the generic pipeline, holding the "only injection route" claim
+        by convention rather than structure). An EXPLICIT
+        ``memory_types=("playbook",)`` from a caller still works — the exclusion
+        binds only the default."""
         types = ["episodic"]
         for org in self.organizers:
             for memory_type in org.produces:
+                if memory_type == "playbook":
+                    continue  # whole-playbook injection only by default; see docstring
                 if memory_type not in types:
                     types.append(memory_type)
         return tuple(types)
