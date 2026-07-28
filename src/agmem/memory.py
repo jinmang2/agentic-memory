@@ -250,7 +250,23 @@ class AgenticMemory:
             page_recall_keyword_similarity=self.config.page_recall_keyword_similarity,
             memmachine_expand_context=self.config.memmachine_expand_context,
             memmachine_context_limit=self.config.memmachine_context_limit,
+            # The one organizer-driven entry in the read-step registry: the
+            # MemMachine organizer knows which upstream backend wrote the
+            # derivatives, and the two backends READ differently
+            # (MemMachineContextualize vs MemMachineEventContextualize) —
+            # `MEMMACHINE_PRESETS`' "provenance never mixed inside one preset"
+            # has to hold on the read side too. No organizer -> declarative,
+            # upstream's own "missing discriminator means declarative" rule.
+            memmachine_backend=next(
+                (
+                    str(getattr(org, "backend", "declarative"))
+                    for org in self.organizers
+                    if org.name == "memmachine"
+                ),
+                "declarative",
+            ),
             task_graph_expansion_cap=self.config.task_graph_expansion_cap,
+            task_graph_insight_cap=self.config.task_graph_insight_cap,
         )
 
         # --- async write worker (docs/03 §3.2) ------------------------------
@@ -631,7 +647,15 @@ class AgenticMemory:
             # key) untouched so old stores keep resolving as before.
             data.setdefault("actor", op.actor)
             self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
-            text = data.get("embedding_text") or data.get("content")
+            # An explicitly-null ``embedding_text`` means DOC STORE ONLY — the
+            # item never gets a vector row (G-Memory insights: upstream never
+            # embeds rules; correlation counting is their only read channel,
+            # GMemory.py:490-506; MemoryOS's profile document: upstream serves
+            # it solely through the unconditional QA-prompt channel, so a
+            # vector row let it double-serve by also winning semantic-k slots —
+            # round-12 finding 14). Only an ABSENT key falls back to embedding
+            # ``content``.
+            text = data["embedding_text"] if "embedding_text" in data else data.get("content")
             if text:
                 self.vector_store.add(
                     op.target_id,

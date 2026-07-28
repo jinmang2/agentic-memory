@@ -630,65 +630,204 @@ def test_zep_incremental_extension_joins_the_neighbour_community():
 
 
 def test_gmemory_trajectory_and_insight_finetune():
+    """Write-path call and payload shape (round-12 findings 2, 6, 7, 8, 9, 14b).
+
+    Call count is load-bearing: a success task costs 1 sparsify call; a failed
+    task costs 2 (key steps + mistake detection, upstream U:265-290); one
+    finetune point costs 1 compare-pair call + 1 success-chunk call
+    (U:719-748) — 5 total here. Trajectories embed the TASK ONLY (upstream
+    ``page_content = task_main``, U:96-98), carry the full task text as the
+    correlation/repeat key, and insights carry ``embedding_text: None`` so
+    they NEVER enter the vector store (upstream serves rules by correlation
+    counting alone, U:490-506) — which also keeps the top-10 edge-candidate
+    pool all-trajectory (finding 3)."""
     llm = StubLLM(
         {
             "distill": [
-                {"key_steps": ["searched", "clicked"], "mistakes": []},
-                {"key_steps": ["opened settings"], "mistakes": ["wrong tab first"]},
-                {
+                {"key_steps": ["searched", "clicked"]},  # task one sparsify
+                {"key_steps": ["opened settings"]},  # task two sparsify
+                {"mistakes": ["wrong tab first"]},  # task two failed -> 2nd call
+                {  # finetune point: compare-pair call
                     "operations": [
                         {"op": "ADD", "rule": "Always open settings from the sidebar."},
                         {"op": "EDIT", "id": "fake-id", "rule": "ignored"},  # hallucinated
                     ]
                 },
+                {"operations": []},  # finetune point: success-chunk call
             ],
         }
     )
-    org = GMemoryOrganizer(finetune_every=2)
+    org = GMemoryOrganizer(finetune_every=2, finetune_points=1, finetune_seed=0)
     mem = make_mem(org, llm)
     try:
         mem.add_task_result([{"s": 1}], "success", "task one")
         mem.add_task_result([{"s": 2}], "failure", "task two")
+        assert len(llm.calls) == 5  # 1 + 2 + (1 compare + 1 success-chunk)
         strategies = ops_of(mem, "strategies")
         trajs = [o for o in strategies if o.payload.get("kind") == "trajectory"]
         insights = [o for o in strategies if o.payload.get("kind") == "insight"]
         assert len(trajs) == 2
         assert trajs[0].payload["score"] == 1.0 and trajs[1].payload["score"] == -2.0
+        # task-only embedding + full task text stored beside the display title
+        assert trajs[0].payload["embedding_text"] == "task one"
+        assert trajs[0].payload["task"] == "task one"
+        assert "Mistakes: wrong tab first" in trajs[1].payload["content"]
         assert len(insights) == 1  # hallucinated EDIT ignored
         assert not [o for o in strategies if o.op is OpType.UPDATE]
-        # the ADD carries the finetune round's task associations (upstream
-        # `relative_tasks` -> positive_correlation_tasks)
-        assert insights[0].payload["positive_correlation_tasks"]
+        # correlation keys are the FULL task strings shown in the compare
+        # prompt (upstream `relative_tasks`, U:725-728), not 80-char titles
+        assert insights[0].payload["positive_correlation_tasks"] == ["task one", "task two"]
+        # insights never enter the vector store; trajectories do
+        insight_id = insights[0].payload["id"]
+        traj_ids = [t.payload["id"] for t in trajs]
+        assert insights[0].payload["embedding_text"] is None
+        assert insight_id not in mem.vector_store.get([insight_id])
+        assert set(mem.vector_store.get(traj_ids)) == set(traj_ids)
+        # ...so the k=10 strategies candidate pool is all-trajectory
+        pool = mem.vector_store.search(
+            mem.embedder.embed(["task"])[0], k=10, memory_type="strategies", namespace="t"
+        )
+        assert {i for i, _ in pool} == set(traj_ids)
     finally:
         mem.close()
+
+
+def test_gmemory_edge_gate_is_effective_cosine_085():
+    """U:390-392 thresholds ``1 - distance`` at 0.7 where distance is Chroma's
+    default squared L2 over normalized MiniLM vectors: 1-(2-2cos) >= 0.7 is
+    cos >= 0.85. A pair at true cosine 0.75 — over upstream's literal 0.7 —
+    must NOT link; a pair at 0.875 must."""
+    from agmem.embed.fake import FakeEmbedder
+
+    near, far = "alpha beta gamma delta", "alpha beta gamma epsilon"
+    va, vb = FakeEmbedder(dim=128).embed([near, far])
+    cos = sum(x * y for x, y in zip(va, vb))
+    assert 0.7 <= cos < 0.85  # the pair that separates the two gates
+
+    org = GMemoryOrganizer(finetune_every=100)
+    mem = make_mem(org, StubLLM({}))  # sparsify falls back mechanically
+    try:
+        mem.add_task_result([{"s": 1}], "success", near)
+        mem.add_task_result([{"s": 2}], "success", far)  # 0.75: below the gate
+        mem.add_task_result([{"s": 3}], "success", "go buy fresh red apples at the market")
+        mem.add_task_result([{"s": 4}], "success", "go buy fresh red apples at the store")
+        adds = [o for o in ops_of(mem, "strategies") if o.op is OpType.ADD]
+        updates = [o for o in ops_of(mem, "strategies") if o.op is OpType.UPDATE]
+        assert adds[1].payload["task_edges"] == []  # 0.75 < 0.85: no edge
+        assert adds[3].payload["task_edges"] == [adds[2].payload["id"]]  # 0.875: edge
+        assert [u.target_id for u in updates] == [adds[2].payload["id"]]
+    finally:
+        mem.close()
+
+
+def test_gmemory_repeat_task_skips_store_and_edges_globally():
+    """Repeat detection is global and exact on the full task text (upstream
+    ``if task_main in self.graph: return``, U:380-381): the second occurrence
+    stores nothing and links nothing — repeats unify into the one node. The
+    sparsify call still happens (upstream extracts BEFORE the repeat check,
+    U:90-93), so call parity holds."""
+    llm = StubLLM({})
+    org = GMemoryOrganizer(finetune_every=100)
+    mem = make_mem(org, llm)
+    try:
+        mem.add_task_result([{"s": 1}], "success", "assemble the bookshelf")
+        mem.add_task_result([{"s": 2}], "success", "assemble the bookshelf")
+        strategies = ops_of(mem, "strategies")
+        assert len([o for o in strategies if o.op is OpType.ADD]) == 1
+        assert not [o for o in strategies if o.op is OpType.UPDATE]
+        assert len(llm.calls) == 2  # sparsify ran both times
+    finally:
+        mem.close()
+
+
+def test_gmemory_feedback_touches_served_insights_only():
+    """Upstream ``backward`` walks ``insights_cache`` — served RULES
+    exclusively (U:239, 292-297). Trajectory scores are write-time labels and
+    never move; an empty cache updates nothing (no bypass, round-12 #6)."""
+    org = GMemoryOrganizer()
+    mem = make_mem(org, StubLLM({}))
+    try:
+        mem.doc_store.put_item(
+            "traj1",
+            "strategies",
+            "t",
+            {"id": "traj1", "kind": "trajectory", "task": "task x", "content": "c", "score": 1.0},
+        )
+        mem.doc_store.put_item(
+            "ins1",
+            "strategies",
+            "t",
+            {"id": "ins1", "kind": "insight", "content": "rule", "score": 2.0},
+        )
+        # nothing served yet: nothing updates
+        assert mem.report_feedback(["traj1", "ins1"], helpful=True) == 0
+
+        org.on_retrieval([("ins1", "strategies", 1.0), ("traj1", "strategies", 0.9)], mem._ctx)
+        assert org._served == {"ins1"}  # the cache holds insight ids only
+        # -2 drops the insight to 0 -> UPDATE + prune DELETE; trajectory untouched
+        assert mem.report_feedback(["traj1", "ins1"], helpful=False) == 2
+        assert mem.doc_store.get_items(["traj1"], "strategies")[0]["score"] == 1.0
+        assert mem.doc_store.get_items(["ins1"], "strategies")[0].get("deleted")
+        assert org._served == set()
+    finally:
+        mem.close()
+
+
+def test_gmemory_read_recipe_constant():
+    """The published operating point is the shipped harness's argparse
+    defaults (tasks/run.py:128-131), not ``retrieve_memory``'s signature
+    defaults (2/1/10/0.3) — and all three MAS workflows discard the failed
+    list at read time. The Eq.(6) insight cap defaults to the signature's 10
+    and is config-reachable; a harness-faithful run sets 3."""
+    from agmem.config import AgmemConfig
+    from agmem.organizers.gmemory.organizer import GMEMORY_READ_RECIPE
+    from agmem.retrieval.steps import TaskGraphExpansion, default_read_steps
+
+    assert GMEMORY_READ_RECIPE == {
+        "successful_topk": 1,
+        "failed_topk": 0,
+        "insights_topk": 3,
+        "threshold": 0.0,
+    }
+    assert AgmemConfig().task_graph_insight_cap == 10
+    step = default_read_steps(task_graph_insight_cap=3)["strategies"]
+    assert isinstance(step, TaskGraphExpansion)
+    assert step.insight_cap == 3
+    assert step.threshold == 0.0  # the recipe's threshold, not the 0.3 signature default
 
 
 def test_gmemory_task_graph_edges_and_hop_expansion():
     """Paper Eq.(9)/(5)/(6) — the query graph and its read side.
 
-    Two similar tasks (shared-token cosine >= 0.7 under FakeEmbedder) get
-    linked at on_task_end: the new trajectory's ADD carries ``task_edges`` and
-    the earlier one gains the back-edge via UPDATE (upstream
-    ``TaskLayer.add_task_node``, similarity_threshold 0.7). At read time
+    Two similar tasks (shared-token cosine >= 0.85 under FakeEmbedder — the
+    effective gate, see the organizer) get linked at on_task_end: the new
+    trajectory's ADD carries ``task_edges`` and the earlier one gains the
+    back-edge via UPDATE (upstream ``TaskLayer.add_task_node``). At read time
     ``TaskGraphExpansion`` serves the 1-hop neighbour of a trajectory hit
-    (Eq.(5)) and any insight whose ``positive_correlation_tasks`` intersect
-    the served task titles (Eq.(6), upstream ``_find_related_insights``)."""
+    (Eq.(5)) — re-scored by true cosine to the query when the context carries
+    the query embedding and vector store (upstream
+    ``sort_and_filter_by_similarity``, U:122-169), parent*0.9 stand-in when
+    it does not — and any insight whose ``positive_correlation_tasks``
+    intersect the served FULL task texts (Eq.(6), upstream
+    ``_find_related_insights``)."""
     from agmem.core.types import ScoredItem
     from agmem.retrieval.steps import ReadContext, TaskGraphExpansion, _DictItem
 
     llm = StubLLM(
         {
             "distill": [
-                {"key_steps": ["x"], "mistakes": []},
-                {"key_steps": ["x"], "mistakes": []},
+                {"key_steps": ["x"]},
+                {"key_steps": ["x"]},
             ],
         }
     )
     org = GMemoryOrganizer(finetune_every=100)  # keep finetune out of this test
     mem = make_mem(org, llm)
+    task_a = "go buy fresh red apples at the market"
+    task_b = "go buy fresh red apples at the store"  # 7/8 shared tokens: cos 0.875
     try:
-        mem.add_task_result([{"s": 1}], "success", "buy red apples at market")
-        mem.add_task_result([{"s": 2}], "success", "buy red apples at store")
+        mem.add_task_result([{"s": 1}], "success", task_a)
+        mem.add_task_result([{"s": 2}], "success", task_b)
         strategies = ops_of(mem, "strategies")
         adds = [o for o in strategies if o.op is OpType.ADD]
         updates = [o for o in strategies if o.op is OpType.UPDATE]
@@ -697,14 +836,40 @@ def test_gmemory_task_graph_edges_and_hop_expansion():
         back_edge = next(u for u in updates if u.target_id == first_id)
         assert back_edge.payload["task_edges"] == [second_id]
 
-        # read side: a hit on the FIRST trajectory pulls its 1-hop neighbour
+        # read side, bare context: the 1-hop neighbour joins at parent*0.9
         first_item = mem.doc_store.get_items([first_id], "strategies")[0]
         hits = [ScoredItem(item=_DictItem(first_item), memory_type="strategies", score=1.0)]
         ctx = ReadContext(doc_store=mem.doc_store, namespace="t")
-        served = {s.item.data["id"] for s in TaskGraphExpansion().run(hits, ctx)}
-        assert second_id in served
+        by_id = {s.item.data["id"]: s.score for s in TaskGraphExpansion().run(hits, ctx)}
+        assert by_id[second_id] == pytest.approx(0.9)
 
-        # an insight supported by the served task title joins too (Eq.(6));
+        # Eq.(5) re-scoring: with query embedding + vector store the neighbour
+        # scores its true cosine to the query (task-only vectors make this
+        # task-vs-task), and the threshold knob cuts it
+        query_vec = mem.embedder.embed([task_b])[0]
+        rich_ctx = ReadContext(
+            doc_store=mem.doc_store,
+            namespace="t",
+            query_embedding=query_vec,
+            vector_store=mem.vector_store,
+        )
+        by_id = {s.item.data["id"]: s.score for s in TaskGraphExpansion().run(hits, rich_ctx)}
+        assert by_id[second_id] == pytest.approx(1.0)  # the query IS the neighbour's task
+        served = {
+            s.item.data["id"]
+            for s in TaskGraphExpansion(threshold=0.99).run(
+                hits,
+                ReadContext(
+                    doc_store=mem.doc_store,
+                    namespace="t",
+                    query_embedding=mem.embedder.embed(["completely unrelated words"])[0],
+                    vector_store=mem.vector_store,
+                ),
+            )
+        }
+        assert second_id not in served
+
+        # an insight supported by a served FULL task text joins too (Eq.(6));
         # one correlated with a different task does not
         mem.doc_store.put_item(
             "ins1",
@@ -715,7 +880,7 @@ def test_gmemory_task_graph_edges_and_hop_expansion():
                 "kind": "insight",
                 "content": "prefer the sidebar",
                 "score": 2.0,
-                "positive_correlation_tasks": ["buy red apples at market"],
+                "positive_correlation_tasks": [task_a],
             },
         )
         mem.doc_store.put_item(

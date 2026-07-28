@@ -94,6 +94,11 @@ class AgmemConfig:
     # the step; inert for stores whose `strategies` items lack the fields
     # (ReasoningBank).
     task_graph_expansion_cap: int = 5
+    # Eq.(6) insight serving cap. 10 is `retrieve_memory`'s SIGNATURE default
+    # (GMemory.py:194); the shipped harness ran insights_topk=3
+    # (tasks/run.py:130) — the published operating point, recorded as
+    # `GMEMORY_READ_RECIPE` in the organizer module.
+    task_graph_insight_cap: int = 10
     # MemoryOS second-stage page recall: upstream `retrieval_queue_capacity`
     # and `page_similarity_threshold`. 0 disables it, which serves segment
     # summaries — a channel upstream has no counterpart for.
@@ -211,6 +216,9 @@ def load_config(path: str | Path) -> AgmemConfig:
         graph_expansion_hops=retrieval.get("graph_expansion_hops", defaults.graph_expansion_hops),
         task_graph_expansion_cap=retrieval.get(
             "task_graph_expansion_cap", defaults.task_graph_expansion_cap
+        ),
+        task_graph_insight_cap=retrieval.get(
+            "task_graph_insight_cap", defaults.task_graph_insight_cap
         ),
         page_recall_cap=retrieval.get("page_recall_cap", defaults.page_recall_cap),
         page_recall_threshold=retrieval.get(

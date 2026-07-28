@@ -487,19 +487,36 @@ def test_feedback_is_owned_by_the_producing_organizer():
     finally:
         mem.close()
 
-    # G-Memory: reward applies, but only to insights it actually served
-    # (upstream insights_cache — round-5 W-4, which used to live in an
-    # uncallable `backward()` while the live path ignored the gate).
+    # G-Memory: reward applies only to INSIGHTS it actually served (upstream
+    # insights_cache holds rules exclusively, U:239 — round-5 W-4 + round-12
+    # #6/#18: a kind-less foreign item never moves even if its id leaks into
+    # the cache, and an empty cache updates nothing instead of bypassing the
+    # gate).
     org = GMemoryOrganizer()
     mem = AgenticMemory(namespace="t", organizers=[org], embedder=FakeEmbedder(dim=64))
     try:
         mem._apply_ops([add], actor="gmemory")
-        org._served = {"some-other-id"}
-        assert mem.report_feedback([item.id], helpful=True) == 0  # never served -> untouched
+        assert mem.report_feedback([item.id], helpful=True) == 0  # nothing served
+        org._served = {item.id}
+        assert mem.report_feedback([item.id], helpful=True) == 0  # no kind -> not an insight
+        assert mem.doc_store.get_items([item.id], "strategies")[0]["score"] == 1.0
         assert org._served == set()  # ...and the cache is cleared, not leaked
 
-        org._served = {item.id}
-        assert mem.report_feedback([item.id], helpful=True) == 1
-        assert mem.doc_store.get_items([item.id], "strategies")[0]["score"] == 2.0
+        rule = MemoryOp(
+            op=OpType.ADD,
+            target_type="strategies",
+            target_id="rule-1",
+            payload={
+                "id": "rule-1",
+                "content": "r, because r",
+                "kind": "insight",
+                "score": 1.0,
+                "embedding_text": None,  # insights never enter the vector store
+            },
+        )
+        mem._apply_ops([rule], actor="gmemory")
+        org._served = {"rule-1"}
+        assert mem.report_feedback(["rule-1"], helpful=True) == 1
+        assert mem.doc_store.get_items(["rule-1"], "strategies")[0]["score"] == 2.0
     finally:
         mem.close()

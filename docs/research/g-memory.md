@@ -23,7 +23,7 @@
 - 260 stars, 33 forks, 이슈 11개 open. **LICENSE 파일 없음** (재사용 시 법적 모호성).
 - 논문 용어와 코드 실명이 다름:
   - `GMemory` (mas/memory/mas_memory/GMemory.py) — 최상위 클래스, `MASMemoryBase` 상속.
-  - `TaskLayer` = Query Graph: `networkx.Graph`, pickle 저장(`{namespace}_graph.pkl`). cosine sim ≥ 0.7이면 edge 추가. `retrieve_related_task()`가 `nx.single_source_shortest_path_length(cutoff=hop)`, 기본 hop=1.
+  - `TaskLayer` = Query Graph: `networkx.Graph`, pickle 저장(`{namespace}_graph.pkl`). edge 게이트는 `1 - distance ≥ 0.7`인데 (GMemory.py:390-392) distance는 `collection_metadata` 없이 만든 Chroma의 기본 l2 **제곱거리**이고 임베더(all-MiniLM-L6-v2, run.py:74)는 정규화 출력이므로 distance = 2−2cos — 즉 **실효 cosine ≥ 0.85**다 (0.7은 cosine이 아님; round-12 #1). `retrieve_related_task()`가 `nx.single_source_shortest_path_length(cutoff=hop)`, 기본 hop=1.
   - `InsightsManager` = Insight Graph: flat JSON 규칙 리스트(`insights.json`). `merge_insights`(FINCH clustering), `finetune_insights`(LLM critique), `_parse_rules`(정규식 `REMOVE|EDIT|ADD|AGREE`), `backward(insight, reward)` — 성공 +1 / 실패 -2 reward shaping.
   - Interaction Graph = `StateChain`/`MASMessage` (mas/memory/common.py): `networkx.DiGraph` 리스트, 노드는 `AgentMessage`, edge_type='spatial'. `node_link_data`로 직렬화.
   - 궤적/task 메타데이터는 **Chroma** vector store(`langchain_chroma`)에 저장. 즉 retrieval = Chroma 벡터 검색 + pickled networkx 그래프 순회의 결합.
@@ -59,7 +59,9 @@ GMemory/
 
 ### 주요 하이퍼파라미터
 
-hop=1, start_insights_threshold=5, rounds_per_insights=5, insights_point_num=5, query-graph edge threshold=0.7 (하드코딩), successful_topk=2, failed_topk=1, insight_topk=10, retrieval threshold=0.3, MAX_RULE_THRESHOLD=10/cluster.
+hop=1, start_insights_threshold=5, rounds_per_insights=5, insights_point_num=5, query-graph edge threshold=0.7 (하드코딩; 제곱 l2 기준 — 실효 cosine 0.85, 위 참조), MAX_RULE_THRESHOLD=10/cluster.
+
+읽기 경로 operating point 주의 (round-12 #12): `retrieve_memory`의 **시그니처 기본값**은 successful_topk=2, failed_topk=1, insight_topk=10, threshold=0.3이지만, 쉬핑된 하네스(tasks/run.py:128-131)는 **successful_topk=1, failed_topk=0, insights_topk=3, threshold=0.0**으로 실행하며 세 MAS 워크플로 모두 read 시 failed 리스트를 버린다(autogen.py:108 등) — 실패 궤적은 finetune에만 공급된다. 이 값들은 우리 포트에 `GMEMORY_READ_RECIPE`로 기록되어 있다.
 
 ### 의존성
 

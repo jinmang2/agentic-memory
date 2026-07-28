@@ -636,20 +636,29 @@ class TaskGraphExpansion(ReadStep):
 
     Trajectory hits carry ``task_edges`` — adjacency built at ``on_task_end``
     the way upstream ``TaskLayer.add_task_node`` links tasks (top-10
-    candidates, similarity >= 0.7) — and their 1-hop neighbours join the
-    bundle just below their parent, capped globally like ``LinkExpansion``.
+    candidates, effective cosine >= 0.85: upstream's 0.7 is on
+    ``1 - squared_l2`` of normalized vectors — see the organizer's gate) —
+    and their 1-hop neighbours join the bundle, capped globally like
+    ``LinkExpansion``. Neighbours are RE-SCORED by true cosine of their
+    stored (task-only) vector to the query and cut at ``threshold``,
+    upstream's ``sort_and_filter_by_similarity`` re-rank of the
+    graph-expanded set (U:122-169); the shipped harness ran threshold 0.0
+    (``GMEMORY_READ_RECIPE``; the 0.3 in ``retrieve_memory``'s signature is
+    not the operating point). When the context carries no query embedding or
+    vector store (bare test contexts), parent*0.9 stands in, disclosed here.
     Insights then join by task association, not rule-text embedding: upstream
     ``_find_related_insights`` serves an insight when its
-    ``positive_correlation_tasks`` overlap the task set (count-sorted,
-    threshold 1), and the linear scan over stored insights here mirrors its
-    scan of the in-memory insights list.
+    ``positive_correlation_tasks`` overlap the served FULL task texts
+    (count-sorted, threshold 1 — exact task-string matching, U:637), and the
+    linear scan over stored insights mirrors its scan of the in-memory list.
 
     ReasoningBank items share the ``strategies`` type but carry neither
     field, so the step is inert on a ReasoningBank store."""
 
-    def __init__(self, cap: int = 5, insight_cap: int = 10) -> None:
+    def __init__(self, cap: int = 5, insight_cap: int = 10, threshold: float = 0.0) -> None:
         self.cap = cap
         self.insight_cap = insight_cap
+        self.threshold = threshold
 
     def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
         seen = {s.item.data["id"] for s in hits} | ctx.bundle_ids
@@ -664,6 +673,18 @@ class TaskGraphExpansion(ReadStep):
         out = list(hits)
         if wanted:
             by_id = dict(wanted)
+            if ctx.query_embedding and ctx.vector_store is not None:
+                # Eq.(5) re-scoring: true cosine of each neighbour's stored
+                # task vector against the query, thresholded — direct hits keep
+                # their fusion scores (the pipeline already ranked them).
+                query = np.asarray(ctx.query_embedding, dtype=np.float32)
+                query_norm = float(np.linalg.norm(query)) or 1.0
+                vectors = ctx.vector_store.get(list(by_id))
+                by_id = {
+                    nid: sim
+                    for nid in by_id
+                    if (sim := _cosine(vectors.get(nid), query, query_norm)) >= self.threshold
+                }
             for data in ctx.doc_store.get_items(list(by_id), "strategies"):
                 if not is_servable(data, "strategies") or data.get("kind") != "trajectory":
                     continue
@@ -678,10 +699,12 @@ class TaskGraphExpansion(ReadStep):
 
         if not self.insight_cap:
             return out
+        # correlation keys are FULL task texts (upstream matches exact
+        # ``task_main`` strings, U:637); ``title`` is an 80-char display field
         titles = {
-            s.item.data.get("title")
+            s.item.data.get("task")
             for s in out
-            if s.item.data.get("kind") == "trajectory" and s.item.data.get("title")
+            if s.item.data.get("kind") == "trajectory" and s.item.data.get("task")
         }
         if not titles:
             return out
@@ -720,7 +743,9 @@ def default_read_steps(
     page_recall_keyword_similarity: str = "containment_mean",
     memmachine_expand_context: int = 0,
     memmachine_context_limit: int = 20,
+    memmachine_backend: str = "declarative",
     task_graph_expansion_cap: int = 5,
+    task_graph_insight_cap: int = 10,
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 
@@ -741,7 +766,7 @@ def default_read_steps(
     if graph_expansion_cap:
         steps["entities"] = GraphRecall(graph_expansion_cap, graph_expansion_hops)
     if task_graph_expansion_cap:
-        steps["strategies"] = TaskGraphExpansion(task_graph_expansion_cap)
+        steps["strategies"] = TaskGraphExpansion(task_graph_expansion_cap, task_graph_insight_cap)
     if page_recall_cap:
         steps["pages"] = MemoryOSPageRecall(
             page_recall_cap,
