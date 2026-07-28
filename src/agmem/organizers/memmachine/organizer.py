@@ -53,10 +53,14 @@ rolling summary with ONE LLM call (``short_term_memory.py::_do_evict`` ->
 ``ShortTermMemoryConsolidator._create_summary``). That call is the only
 language model in MemMachine's entire write path.
 
-Read-path counterpart: ``MemMachineContextualize`` in ``retrieval/steps.py``,
-registered on the ``derivatives`` type, which does the episode mapping, the
-asymmetric context expansion and the context-level rerank. The eval operating
-point (``evaluation/episodic_memory/locomo_search.py``: ``limit=30``,
+Read-path counterpart: one step per backend on the ``derivatives`` type, and
+the facade picks by THIS organizer's ``backend`` — ``MemMachineContextualize``
+(declarative: episode mapping, asymmetric context expansion, context-level
+rerank, weighted-proximity unification) or ``MemMachineEventContextualize``
+(event: segment-level expansion, embedding-score fallback, first-seen episode
+dedup, no unification). That dispatch is what makes the "provenance never
+mixed inside one preset" rule above hold on the read side too. The eval
+operating point (``evaluation/episodic_memory/locomo_search.py``: ``limit=30``,
 ``expand_context=3``) is a search recipe, not a property of this organizer —
 it lives in ``AgmemConfig.memmachine_*``, the same way Zep's search recipes do.
 """
@@ -317,12 +321,22 @@ class MemMachineOrganizer(Organizer):
         docs/04 §2), which is exactly the Episode node upstream writes beside
         its derivatives."""
         anchors = self._anchors(episode)
-        ops = [self._add_op(episode, text, offset) for offset, text in enumerate(anchors)]
+        ops = [
+            self._add_op(episode, text, offset, segment)
+            for offset, (segment, text) in enumerate(anchors)
+        ]
         ops.extend(self._short_term(episode, ctx))
         return ops
 
-    def _anchors(self, episode: Episode) -> list[str]:
-        """The embedding anchors for one episode, in emission order."""
+    def _anchors(self, episode: Episode) -> list[tuple[int | None, str]]:
+        """``(segment index, anchor text)`` pairs, in emission order.
+
+        The segment index is upstream's derivative -> segment link (each event
+        derivative row carries ``_SEGMENT_UUID_FIELD_NAME``), which the event
+        read path needs for its segment-level context expansion. Declarative
+        derivatives carry ``None`` — that backend has no segment stage, and
+        inventing an index for it would blur exactly the line the presets
+        exist to keep."""
         source = _speaker(episode)
         if self.backend == "declarative":
             # `declarative_memory.py::_derive_derivatives`, ContentType.MESSAGE
@@ -335,19 +349,20 @@ class MemMachineOrganizer(Organizer):
             # read path needed for its equal-scored facts.
             if self.deriver == "sentence_text":
                 sentences = sorted(extract_sentences(episode.content))
-                return [f"{source}: {sentence}" for sentence in sentences]
-            return [f"{source}: {episode.content}"]
+                return [(None, f"{source}: {sentence}") for sentence in sentences]
+            return [(None, f"{source}: {episode.content}")]
 
         # Event backend: segmenter first, then deriver, then the timestamped
         # anchor format (`_format_for_embedding`).
         stamp = format_full_date(episode.timestamp)
-        anchors: list[str] = []
-        for segment in self._segments(episode.content):
+        anchors: list[tuple[int | None, str]] = []
+        for segment_index, segment in enumerate(self._segments(episode.content)):
             texts = (
                 sorted(extract_sentences(segment)) if self.deriver == "sentence_text" else [segment]
             )
             anchors.extend(
-                f"[{stamp}] {source}: {json.dumps(text, ensure_ascii=False)}" for text in texts
+                (segment_index, f"[{stamp}] {source}: {json.dumps(text, ensure_ascii=False)}")
+                for text in texts
             )
         return anchors
 
@@ -374,22 +389,30 @@ class MemMachineOrganizer(Organizer):
         )
         return splitter.split_text(text)
 
-    def _add_op(self, episode: Episode, anchor: str, offset: int) -> MemoryOp:
+    def _add_op(
+        self, episode: Episode, anchor: str, offset: int, segment: int | None = None
+    ) -> MemoryOp:
         """One derivative. ``timestamp``/``source_episode_ids`` are the read
         path's whole index: ``MemMachineContextualize`` orders episodes by
         ``(timestamp, episode id)``, which is upstream's
-        ``search_directional_nodes(by_properties=("timestamp", "uid"))``."""
+        ``search_directional_nodes(by_properties=("timestamp", "uid"))``.
+        Event derivatives additionally carry their ``segment`` index —
+        upstream's per-derivative segment UUID — which is the unit
+        ``MemMachineEventContextualize`` expands around."""
+        payload = {
+            "content": anchor,
+            "embedding_text": anchor,
+            "source_episode_ids": [episode.id],
+            "timestamp": episode.timestamp.isoformat(),
+            "offset": offset,
+        }
+        if segment is not None:
+            payload["segment"] = segment
         return MemoryOp(
             op=OpType.ADD,
             target_type="derivatives",
             target_id=new_id(),
-            payload={
-                "content": anchor,
-                "embedding_text": anchor,
-                "source_episode_ids": [episode.id],
-                "timestamp": episode.timestamp.isoformat(),
-                "offset": offset,
-            },
+            payload=payload,
         )
 
     # ---- short-term memory (off in both presets) ----------------------------
@@ -503,7 +526,15 @@ class MemMachineOrganizer(Organizer):
         renders the summary under ``<WORKING MEMORY SUMMARY>`` and merges the
         recent turns into the retrieved-episode list — but that harness builds
         ``short_term_memory=None``, so the divergence is unreachable in the
-        measured lineage. This follows the library."""
+        measured lineage.
+
+        This follows the library's ENVELOPE, not its full content: upstream's
+        ``formalize_query_with_context`` merges STM episodes AND long-term
+        search results under ``<Episodes>``, while this method injects only
+        the STM buffer — long-term results are served by the search pipeline
+        here (the seam mapping), so the merged view never exists in one place.
+        Unreachable in both presets while STM is off, but the split should be
+        named, not papered over."""
         if not self.stm_capacity or (not self._summary and not self._buffer):
             return ""
         parts: list[str] = []

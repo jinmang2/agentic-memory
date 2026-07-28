@@ -133,13 +133,28 @@ def test_a_single_sub_query_reranks_against_the_original_only():
 
 
 def test_a_dropped_split_call_falls_back_to_the_original_query():
-    """`if len(sub_queries) == 0: sub_queries = [query]` — including when the
-    call fails, which for us is a structured-output drop."""
+    """`if len(sub_queries) == 0: sub_queries = [query]` — upstream's ONLY
+    fallback (an LLM exception there propagates uncaught); our structured
+    caller reports a failed call as a drop, which lands in that same
+    empty-output branch."""
     llm = StubLLM({})  # no queued response -> drop
     search = FakeSearch({"orig?": [item("a")]})
     result = SplitQuery().run("orig?", QueryContext(search=search, llm=llm))
     assert search.queries == ["orig?"]
     assert result.metrics["queries"] == ["orig?"]
+
+
+def test_the_split_has_no_code_cap_on_sub_queries():
+    """Round-12 finding 5: the 1-6 range is the PROMPT's contract only —
+    upstream takes every non-blank line of the response
+    (`split_query_agent.py` L176-182) and caps nothing, so eight sub-queries
+    mean eight searches."""
+    queries = [f"q{i}?" for i in range(8)]
+    llm = StubLLM({"judge": [{"queries": queries}]})
+    search = FakeSearch({}, default=[item("a")])
+    result = SplitQuery().run("many?", QueryContext(search=search, llm=llm))
+    assert search.queries == queries
+    assert result.metrics["memory_search_called"] == 8
 
 
 # ---- chain of query --------------------------------------------------------
@@ -224,6 +239,46 @@ def test_only_promoted_evidence_survives_an_earlier_round():
     result = ChainOfQuery().run("orig?", QueryContext(search=search, llm=llm))
     ids = {s.item.data["id"] for s in result.bundle.items}
     assert ids == {"keep", "fresh"}
+
+
+def test_the_sufficiency_pool_is_presented_chronologically():
+    """Round-12 finding 6: upstream sorts union(retrieved, evidence) by
+    `(created_at is None, created_at)` before assigning `[idx]` labels
+    (`coq_agent.py` L206-211) — the sufficiency model reads documents in time
+    order, unstamped ones last. Ties keep our deterministic merge order
+    (upstream's set iteration leaves them unpinned)."""
+
+    def stamped(item_id, content, created_at=None):
+        data = {"id": item_id, "content": content}
+        if created_at:
+            data["created_at"] = created_at
+        return ScoredItem(
+            item=_DictItem(data), memory_type="episodic", score=1.0, provenance=[item_id]
+        )
+
+    llm = StubLLM(
+        {
+            "judge": [
+                {"is_sufficient": True, "new_query": "orig?", "confidence_score": 0.9},
+            ]
+        }
+    )
+    search = FakeSearch(
+        {
+            "orig?": [
+                stamped("late", "late-doc", "2023-06-01T10:00:00"),
+                stamped("early", "early-doc", "2022-01-01T10:00:00"),
+                stamped("unstamped", "unstamped-doc"),
+            ]
+        }
+    )
+    ChainOfQuery().run("orig?", QueryContext(search=search, llm=llm))
+    prompt = llm.calls[0][1]
+    assert (
+        prompt.index("[0] early-doc")
+        < prompt.index("[1] late-doc")
+        < prompt.index("[2] unstamped-doc")
+    )
 
 
 def test_max_attempts_bounds_the_loop():

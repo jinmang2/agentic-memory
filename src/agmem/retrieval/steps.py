@@ -533,6 +533,11 @@ class MemMachineContextualize(ReadStep):
                     break
                 selected.setdefault(episode_id, score)
 
+        # `created_at` (upstream's Episode field name) lets read policies sort
+        # served episodes chronologically (ChainOfQuery's sufficiency pool).
+        # Deliberately NOT `timestamp`: `_DictItem.render` prints that as a
+        # trailing " (...)" stamp the upstream QA prompt does not have — the
+        # date already lives inside the rendered line.
         return [
             ScoredItem(
                 item=_DictItem(
@@ -540,6 +545,7 @@ class MemMachineContextualize(ReadStep):
                         "id": episode_id,
                         "content": _memmachine_line(episodes[episode_id]).rstrip("\n"),
                         "source_episode_ids": [episode_id],
+                        "created_at": episodes[episode_id].timestamp.isoformat(),
                     }
                 ),
                 memory_type="episodic",
@@ -590,6 +596,186 @@ class MemMachineContextualize(ReadStep):
                 query=ctx.query,
             )
         )
+
+
+class MemMachineEventContextualize(ReadStep):
+    """MemMachine's EVENT-backend read path — the other lineage, kept apart.
+
+    Upstream ``EventMemory.query`` (``event_memory.py`` L450-480) +
+    ``LongTermMemory._search_scored_event`` (``long_term_memory.py`` L307-378),
+    which reads NOTHING like the declarative port above:
+
+    1. derivative matches are deduped to their SEED SEGMENTS, first occurrence
+       keeping the score (matches arrive best-to-worst);
+    2. each seed widens into a SEGMENT-level context — ``expand_context // 3``
+       segments backward, the rest forward: the same asymmetric split as the
+       declarative backend, but over segments, never episodes;
+    3. contexts are scored by the reranker when one can score text; when it
+       cannot, the seed's EMBEDDING score stands (``event_memory.py``
+       L474-478) — a fallback the declarative backend does not have, because
+       there the reranker is required;
+    4. contexts sort by score and their seed segments' episodes are deduped
+       first-seen in that order, stopping at ``limit``
+       (``_scored_context_episode_uid``). ONE episode is served per context —
+       the expansion feeds the scorer only — and there is NO
+       ``_weighted_index_proximity`` unification.
+
+    The 4x dedup over-fetch (``_EVENT_BACKEND_DEDUP_OVERFETCH``,
+    ``long_term_memory.py`` L106) is the vector-search k, which here is the
+    caller's search ``k`` — an operating-point number, exactly like the
+    declarative backend's ``min(5*limit, 200)`` (encoded in the experiment
+    scripts, not in the step).
+
+    Deviations, disclosed:
+
+    - Segment identity is the derivative's ``(episode id, segment index)``
+      pair, recorded at write time (``MemMachineOrganizer._add_op``) where
+      upstream keeps a SQL segment store. Under ``deriver="sentence_text"``
+      several anchors share one segment and are joined in anchor order for
+      scoring; upstream renders the segment's own text, which no single anchor
+      preserves verbatim. Both event-preset defaults (passthrough +
+      whole_text) make segment == episode and the join a no-op.
+    - The context string fed to the reranker reuses the stored anchors
+      (``[{full date}] {producer}: "{text}"``); upstream re-renders segments
+      with ``FormatOptions(time_style="short")``, i.e. WITH a time the ingest
+      format dropped. The segment text exists only inside the anchor here, so
+      that re-render cannot be reproduced without a second store.
+    - Segment order comes from ``(timestamp, episode id, segment index)`` over
+      the derivative rows — the same derived index the declarative port uses,
+      for the same DocStore reason.
+    """
+
+    def __init__(self, expand_context: int = 0, limit: int = 20) -> None:
+        """Upstream's ``query_memory`` arguments again — the event backend
+        reads the same two knobs, so the config seam is shared with the
+        declarative step and only the mechanism behind it changes."""
+        self.expand_context = expand_context
+        self.limit = limit
+
+    def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
+        # 1. seeds: first occurrence keeps the best score — hits arrive from
+        # the ranking channels best-first, upstream's vector-store order.
+        seeds: dict[tuple[str, int], float] = {}
+        for scored in hits:
+            data = scored.item.data
+            segment = int(data.get("segment", data.get("offset", 0)) or 0)
+            for episode_id in data.get("source_episode_ids", []):
+                seeds.setdefault((episode_id, segment), scored.score)
+        if not seeds:
+            return []
+
+        segments = self._segment_index(ctx)
+        order = sorted(segments, key=lambda key: (segments[key]["timestamp"], key))
+        position = {key: index for index, key in enumerate(order)}
+
+        # 2. segment-level context expansion. No limit clamp here: upstream's
+        # event path takes `expand_context // 3` as-is (the declarative
+        # backend's `min(..., max_num_episodes - 1)` clamp has no counterpart).
+        expand = max(0, self.expand_context)
+        backward = expand // 3
+        forward = expand - backward
+        contexts: dict[tuple[str, int], list[tuple[str, int]]] = {}
+        for seed in seeds:
+            index = position.get(seed)
+            if index is None:  # derivative whose segment left the index
+                continue
+            start = max(0, index - backward)
+            contexts[seed] = order[start:index] + order[index : index + forward + 1]
+        if not contexts:
+            return []
+
+        ranked = self._rank(contexts, seeds, segments, ctx)
+
+        # 4. first-seen `_episode_uid` dedup in score order, stop at the limit.
+        ordered_ids: list[str] = []
+        scores_by_id: dict[str, float] = {}
+        for (episode_id, _segment), score in ranked:
+            if episode_id in scores_by_id:
+                continue
+            scores_by_id[episode_id] = score
+            ordered_ids.append(episode_id)
+            if len(ordered_ids) >= self.limit:
+                break
+
+        episodes = {e.id: e for e in ctx.doc_store.get_episodes(ordered_ids)}
+        # Served exactly like the declarative port: `episodic` items in the
+        # upstream line format, plus `created_at` for chronological read
+        # policies (see MemMachineContextualize for why not `timestamp`).
+        return [
+            ScoredItem(
+                item=_DictItem(
+                    {
+                        "id": episode_id,
+                        "content": _memmachine_line(episodes[episode_id]).rstrip("\n"),
+                        "source_episode_ids": [episode_id],
+                        "created_at": episodes[episode_id].timestamp.isoformat(),
+                    }
+                ),
+                memory_type="episodic",
+                score=scores_by_id[episode_id],
+                provenance=[episode_id],
+            )
+            for episode_id in ordered_ids
+            if episode_id in episodes
+        ]
+
+    def _segment_index(self, ctx: ReadContext) -> dict[tuple[str, int], dict]:
+        """Every live segment: ``(episode id, segment index)`` -> its timestamp
+        and its anchors in offset order (several under ``sentence_text``)."""
+        segments: dict[tuple[str, int], dict] = {}
+        for data in ctx.doc_store.list_items("derivatives", ctx.namespace):
+            if not is_servable(data, "derivatives"):
+                continue
+            segment = int(data.get("segment", data.get("offset", 0)) or 0)
+            for episode_id in data.get("source_episode_ids", []):
+                entry = segments.setdefault(
+                    (episode_id, segment),
+                    {"timestamp": str(data.get("timestamp") or ""), "anchors": []},
+                )
+                entry["anchors"].append(
+                    (int(data.get("offset", 0) or 0), str(data.get("content", "")))
+                )
+        for entry in segments.values():
+            entry["anchors"].sort()
+        return segments
+
+    def _rank(
+        self,
+        contexts: dict[tuple[str, int], list[tuple[str, int]]],
+        seeds: dict[tuple[str, int], float],
+        segments: dict[tuple[str, int], dict],
+        ctx: ReadContext,
+    ) -> list[tuple[tuple[str, int], float]]:
+        """Context scores in descending order.
+
+        With a text-capable reranker: one score per rendered segment context
+        (``_score_segment_contexts``). Without one: the seeds' embedding
+        scores stand (upstream's reranker-None branch), and cosine is
+        higher-is-better in every store here, so descending is the right
+        direction (``higher_is_better``, ``event_memory.py`` L493-497)."""
+        candidates = [(seed, seeds[seed]) for seed in contexts]
+        if ctx.reranker is None or not getattr(ctx.reranker, "needs_text", False):
+            return sorted(candidates, key=lambda pair: pair[1], reverse=True)
+        keys = {
+            f"{episode_id}:{segment}": (episode_id, segment) for episode_id, segment in contexts
+        }
+        texts = {
+            f"{episode_id}:{segment}": "\n".join(
+                anchor
+                for key in contexts[(episode_id, segment)]
+                for _offset, anchor in segments[key]["anchors"]
+            )
+            for episode_id, segment in contexts
+        }
+        ranked = ctx.reranker.rerank(
+            ctx.query_embedding or [],
+            [(f"{episode_id}:{segment}", score) for (episode_id, segment), score in candidates],
+            {},
+            len(candidates),
+            texts=texts,
+            query=ctx.query,
+        )
+        return [(keys[key], score) for key, score in ranked]
 
 
 def _weighted_index_proximity(index: int, nuclear_index: int) -> float:
@@ -755,9 +941,21 @@ def default_read_steps(
     # MemMachine's step has no disabling cap: mapping derivatives back to their
     # episodes IS the read path, and `expand_context=0` (upstream's own default)
     # only means "no context widening", not "serve the anchors".
+    #
+    # WHICH port fills the `derivatives` slot is `memmachine_backend`, fed by
+    # the facade from the wired organizer's preset: upstream's two long-term
+    # backends write the same anchors but read them through different
+    # mechanisms, and `MEMMACHINE_PRESETS` promises provenance is never mixed
+    # inside one preset — so the type still gets exactly ONE step, chosen by
+    # lineage rather than hardcoded to the declarative one.
+    memmachine_step: ReadStep = (
+        MemMachineEventContextualize(memmachine_expand_context, memmachine_context_limit)
+        if memmachine_backend == "event"
+        else MemMachineContextualize(memmachine_expand_context, memmachine_context_limit)
+    )
     steps: dict[str, ReadStep] = {
         "experiences": ExpandExperiences(),
-        "derivatives": MemMachineContextualize(memmachine_expand_context, memmachine_context_limit),
+        "derivatives": memmachine_step,
     }
     if link_expansion_cap:
         steps["notes"] = LinkExpansion(link_expansion_cap)

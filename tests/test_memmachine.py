@@ -16,6 +16,7 @@ from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.memmachine import MEMMACHINE_PRESETS, MemMachineOrganizer
 from agmem.retrieval.steps import (
     MemMachineContextualize,
+    MemMachineEventContextualize,
     ReadContext,
     _weighted_index_proximity,
 )
@@ -375,6 +376,109 @@ def test_chained_organizers_still_register_one_step_per_type():
         mem.close()
 
 
+# ---- event-backend read path ------------------------------------------------
+
+
+def test_the_read_step_dispatches_on_the_organizers_backend():
+    """`fidelity="event"` must read through the EVENT port, not the declarative
+    one — "provenance never mixed inside one preset" (`MEMMACHINE_PRESETS`)
+    holds on the read side only because the facade picks the step from the
+    wired organizer's ``backend``. The declarative preset (and no MemMachine
+    organizer at all) keeps the declarative step, upstream's own "missing
+    discriminator means declarative" rule."""
+    mem = make_mem(MemMachineOrganizer("event"))
+    try:
+        assert isinstance(mem.pipeline.read_steps["derivatives"], MemMachineEventContextualize)
+    finally:
+        mem.close()
+    mem = make_mem()  # declarative preset unchanged
+    try:
+        step = mem.pipeline.read_steps["derivatives"]
+        assert isinstance(step, MemMachineContextualize)
+        assert not isinstance(step, MemMachineEventContextualize)
+    finally:
+        mem.close()
+
+
+def _run_event(mem, hits, **kwargs):
+    step = MemMachineEventContextualize(**kwargs)
+    return step.run(hits, ReadContext(doc_store=_FakeDocStore(mem), namespace="t"))
+
+
+def test_event_read_serves_one_episode_per_seed_and_never_its_neighbours():
+    """`_search_scored_event`: the context expansion feeds the SCORER only —
+    the served unit is the seed segment's episode (`_scored_context_episode_uid`),
+    first-seen deduped in score order, with no `_weighted_index_proximity`
+    unification. The declarative port would serve turns 4-7 for a turn-5 seed
+    at expand_context=3; the event port serves turn 5 alone."""
+    mem = make_mem(MemMachineOrganizer("event"))
+    try:
+        ingest(mem)
+        out = _run_event(mem, _hits(mem, 5, 1), expand_context=3, limit=30)
+        assert [s.item.data["content"].split(": ", 1)[1] for s in out] == [
+            f'"{TURNS[index][1]}"'
+            for index in (5, 1)  # embedding-score order
+        ]
+        assert all(s.memory_type == "episodic" for s in out)
+        # two hits into the same episode collapse to one served row, best score
+        deduped = _run_event(mem, _hits(mem, 5, 5), expand_context=3, limit=30)
+        assert len(deduped) == 1
+        assert deduped[0].score == 1.0
+    finally:
+        mem.close()
+
+
+def test_event_read_falls_back_to_embedding_scores_without_a_reranker():
+    """`if self._reranker is None: scores = seed_embedding_scores` — the event
+    backend's reranker is OPTIONAL and its absence is a scoring fallback, not a
+    hard requirement as in the declarative backend. With a reranker, contexts
+    are scored (segment-level expansion reaches turn 7's "camera") and the
+    served episodes are still only the seeds, reordered."""
+
+    class ContextReranker:
+        needs_text = True
+
+        def rerank(self, query_emb, candidates, vectors, k, texts=None, query="", **kwargs):
+            scored = [(cid, float("camera" in (texts or {}).get(cid, ""))) for cid, _ in candidates]
+            return sorted(scored, key=lambda pair: pair[1], reverse=True)[:k]
+
+    mem = make_mem(MemMachineOrganizer("event"))
+    try:
+        ingest(mem)
+        hits = _hits(mem, 1, 6)  # turn 6's context reaches turn 7 at expand=3
+        step = MemMachineEventContextualize(expand_context=3, limit=30)
+        ctx = ReadContext(
+            doc_store=_FakeDocStore(mem),
+            namespace="t",
+            query="camera",
+            reranker=ContextReranker(),
+        )
+        served = [s.item.data["content"].split(": ", 1)[1] for s in step.run(hits, ctx)]
+        assert served == [f'"{TURNS[index][1]}"' for index in (6, 1)]  # reranked, seeds only
+        # without the reranker the hit (embedding) order stands
+        fallback = [
+            s.item.data["content"].split(": ", 1)[1]
+            for s in _run_event(mem, hits, expand_context=3, limit=30)
+        ]
+        assert fallback == [f'"{TURNS[index][1]}"' for index in (1, 6)]
+    finally:
+        mem.close()
+
+
+def test_event_read_limit_caps_distinct_episodes_in_score_order():
+    """`if len(ordered_uids) >= num_episodes_limit: break` — the limit is over
+    distinct episodes, walked best-first."""
+    mem = make_mem(MemMachineOrganizer("event"))
+    try:
+        ingest(mem)
+        out = _run_event(mem, _hits(mem, 2, 5, 7), expand_context=0, limit=2)
+        assert [s.item.data["content"].split(": ", 1)[1] for s in out] == [
+            f'"{TURNS[index][1]}"' for index in (2, 5)
+        ]
+    finally:
+        mem.close()
+
+
 def test_episode_type_is_declared():
     """``produces`` drives ``default_memory_types``; ``derivatives`` must be in
     the shared vocabulary or nobody can find it by reading ``MEMORY_TYPES``."""
@@ -515,6 +619,138 @@ def test_one_malformed_command_drops_the_whole_message():
         ingest(mem, TURNS[:1])
         assert profile_features(mem) == []  # the well-formed command dies with the batch
         assert organizer.dropped_commands == 2
+    finally:
+        mem.close()
+
+
+def test_the_extraction_guideline_line_matches_upstream_byte_for_byte():
+    """Round-12 finding 2: our 'verbatim' update prompt had dropped one word —
+    "preferences," — from upstream's guideline sentence. The expected string is
+    VENDORED (semantic_prompt_template.py at 18f1211), not read from the
+    upstream checkout, so the test still fails loudly if the prompt drifts and
+    the checkout is absent."""
+    from agmem.organizers.memmachine.profile import (
+        PROFILE_DESCRIPTION,
+        PROFILE_TAGS,
+        build_update_prompt,
+    )
+
+    expected = (
+        "- Only return the empty list [] if the query contains absolutely no personal "
+        "information about the user (e.g., asking about the weather, requesting code without "
+        "personal context, etc.). Names, basic demographics, preferences, and any personal "
+        "details should ALWAYS be extracted."
+    )
+    prompt = build_update_prompt(PROFILE_TAGS, PROFILE_DESCRIPTION)
+    lines = [line.strip() for line in prompt.splitlines() if "Only return the empty list" in line]
+    assert lines == [expected]
+
+
+def test_delete_is_storage_wide_not_bounded_by_the_llm_page():
+    """Round-12 finding 3: upstream's DELETE is a storage-level filter over
+    (category, tag, feature) (`semantic_ingestion.py` L306-323), independent of
+    the 50-feature page shown to the LLM — so a category past
+    `max_features_per_update` still has EVERY matching row removed, not just
+    the visible first page."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {"commands": [{"command": "delete", "tag": "T", "feature": "dup", "value": "x"}]}
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)  # page cap 50
+    mem = make_mem(organizer, llm=llm)
+    try:
+        for index in range(60):
+            mem.doc_store.put_item(
+                f"f{index}",
+                "semantic",
+                "t",
+                {
+                    "id": f"f{index}",
+                    "kind": "profile_feature",
+                    "category": "profile",
+                    "tag": "T",
+                    "feature": "dup",
+                    "value": f"v{index}",
+                },
+            )
+        ingest(mem, TURNS[:1])
+        assert profile_features(mem) == []  # all 60, not the first 50
+    finally:
+        mem.close()
+
+
+def test_an_unknown_command_verb_drops_the_whole_batch_not_deletes():
+    """Round-12 finding 4: `SemanticCommand.command` is an enum — a verb like
+    "update" fails pydantic validation inside `llm_feature_update`, the
+    exception escapes, and the WHOLE message's commands are lost (upstream's
+    granularity). It must never be read as a delete."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "commands": [
+                        {"command": "add", "tag": "T", "feature": "good", "value": "kept?"},
+                        {"command": "update", "tag": "T", "feature": "good", "value": "changed"},
+                    ]
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        mem.doc_store.put_item(
+            "pre",
+            "semantic",
+            "t",
+            {
+                "id": "pre",
+                "kind": "profile_feature",
+                "category": "profile",
+                "tag": "T",
+                "feature": "good",
+                "value": "preexisting",
+            },
+        )
+        ingest(mem, TURNS[:1])
+        # batch dropped whole: no add landed, and the unknown verb deleted nothing
+        assert [row["value"] for row in profile_features(mem)] == ["preexisting"]
+        assert organizer.dropped_commands == 2
+    finally:
+        mem.close()
+
+
+def test_an_empty_value_is_valid_and_does_not_drop_the_batch():
+    """Round-12 finding 4, second edge: upstream's `value: str` accepts the
+    empty string — the malformed-batch test is key PRESENCE, not truthiness, so
+    an empty value must flow through instead of killing the message."""
+    from agmem.organizers.memmachine import MemMachineProfileOrganizer
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "commands": [
+                        {"command": "add", "tag": "T", "feature": "kept", "value": "v"},
+                        {"command": "delete", "tag": "T", "feature": "gone", "value": ""},
+                    ]
+                }
+            ]
+        }
+    )
+    organizer = MemMachineProfileOrganizer(consolidate_every=0)
+    mem = make_mem(organizer, llm=llm)
+    try:
+        ingest(mem, TURNS[:1])
+        assert [row["value"] for row in profile_features(mem)] == ["v"]
+        assert organizer.dropped_commands == 0
     finally:
         mem.close()
 

@@ -301,7 +301,7 @@ def build_update_prompt(tags: Mapping[str, str], description: str = "") -> str:
         - Do not create new tags which you don't see in the example profile. However, you can and should create new features.
         - If a user asks for a summary of a report, code, or other content, that content may not necessarily be written by the user, and might not be relevant to the user's profile.
         - Do not delete anything unless a user asks you to
-        - Only return the empty list [] if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, and any personal details should ALWAYS be extracted.
+        - Only return the empty list [] if the query contains absolutely no personal information about the user (e.g., asking about the weather, requesting code without personal context, etc.). Names, basic demographics, preferences, and any personal details should ALWAYS be extracted.
         - Listen to any additional instructions specific to the execution context provided underneath 'EXTRA EXTERNAL INSTRUCTIONS'
         - First, think about what should go in the profile inside <think> </think> tags. Then output only a valid JSON.
         - REMEMBER: Always use the command format with "command", "tag", "feature", and "value" keys. Never use nested objects or any other format.
@@ -474,10 +474,17 @@ class MemMachineProfileOrganizer(Organizer):
         consolidate_every: int = 5,
     ) -> None:
         """Defaults are upstream's: the shipped ``profile`` category,
-        ``consolidated_threshold=20``, ``max_features_per_update=50``, and a
-        consolidation check every 5 messages — the size of the un-ingested batch
-        ``_process_single_set`` pulls (``get_history_messages(limit=5)``), which
-        is what actually sets how often the check runs.
+        ``consolidated_threshold=20``, ``max_features_per_update=50``.
+
+        ``consolidate_every=5`` is an APPROXIMATION, not upstream's rule:
+        upstream runs the consolidation check once per ingestion pass over a
+        batch of UP TO 5 un-ingested messages (``get_history_messages(limit=5)``
+        is a page size, ``semantic_ingestion.py`` L127-129/274-277) — so a
+        deployment that ingests per message effectively checks per message,
+        not every 5th. Our per-message hook has no batch to couple to, so the
+        fixed ``% 5`` stands in for that batch-coupled trigger; the
+        ``consolidation_threshold`` gate is what actually controls cost either
+        way.
 
         ``consolidate_every=0`` leaves consolidation to the explicit
         ``consolidate()`` pass only."""
@@ -521,7 +528,14 @@ class MemMachineProfileOrganizer(Organizer):
     def _update_category(
         self, category: SemanticCategory, episode: Episode, ctx: OrganizerContext
     ) -> list[MemoryOp]:
-        existing = self._features(category.name, ctx)[: self.max_features_per_update]
+        live = self._features(category.name, ctx)
+        # The page cap bounds only what the LLM is SHOWN. Deletes below run over
+        # `live`: upstream's DELETE is a storage-level filter on
+        # (set_id, category, tag, feature) (`_apply_commands`,
+        # `semantic_ingestion.py` L306-323), independent of the
+        # `max_features_per_update` page — a category past 50 features still has
+        # every matching row removed.
+        existing = live[: self.max_features_per_update]
         profile: dict[str, dict[str, str]] = {}
         for row in existing:
             profile.setdefault(str(row.get("tag", "")), {})[str(row.get("feature", ""))] = str(
@@ -546,14 +560,23 @@ class MemMachineProfileOrganizer(Organizer):
         if verdict is None:
             return []
         commands = verdict.get("commands") or []
-        # Upstream's failure granularity is the whole message: a single command
-        # that misses a required field raises inside `llm_feature_update`, the
-        # caller logs and `continue`s, and every command for this message is
-        # lost — including the well-formed ones. Its own delete example is one
-        # of those malformed commands (defect 2), so this is reachable.
+        # Upstream's failure granularity is the whole message: `SemanticCommand`
+        # is pydantic-validated inside `llm_feature_update`, so one command that
+        # misses a required field OR carries a verb outside the
+        # `SemanticCommandType` enum ("update", "Add", ...) raises, the caller
+        # logs and `continue`s, and every command for this message is lost —
+        # including the well-formed ones. Its own delete example is one of those
+        # malformed commands (defect 2), so this is reachable. The test is key
+        # PRESENCE, not truthiness: upstream's `value: str` accepts the empty
+        # string, so an empty value must not drop the batch (a JSON null would).
         if any(
             not isinstance(command, dict)
-            or not all(command.get(key) for key in ("command", "tag", "feature", "value"))
+            or any(command.get(key) is None for key in ("command", "tag", "feature", "value"))
+            # Enum validation is by exact value ("add"/"delete") — an unknown
+            # verb ("update") is a validation failure, i.e. a whole-batch drop,
+            # NOT a delete. `_apply_commands`'s own unknown-action `case _` is
+            # dead upstream: nothing that fails enum validation reaches it.
+            or command.get("command") not in ("add", "delete")
             for command in commands
         ):
             self.dropped_commands += len(commands)
@@ -568,20 +591,21 @@ class MemMachineProfileOrganizer(Organizer):
         pending: dict[tuple[str, str], MemoryOp] = {}
         for command in commands:
             tag, feature = str(command["tag"]), str(command["feature"])
-            if str(command["command"]).lower() == "add":
+            if command["command"] == "add":
                 op = self._add_op(category.name, tag, feature, str(command["value"]), episode)
                 pending[(tag, feature)] = op
                 ops.append(op)
                 continue
-            # delete: every value under (category, tag, feature). Commands run
-            # in sequence against storage upstream, so a delete after an add of
-            # the same feature in the same batch removes it — here that means
-            # retracting the op we just queued rather than deleting a row that
-            # does not exist yet.
+            # delete: every value under (category, tag, feature), STORAGE-WIDE
+            # (`live`, not the 50-feature `existing` page — the page is the
+            # LLM's view only). Commands run in sequence against storage
+            # upstream, so a delete after an add of the same feature in the
+            # same batch removes it — here that means retracting the op we just
+            # queued rather than deleting a row that does not exist yet.
             queued = pending.pop((tag, feature), None)
             if queued is not None:
                 ops.remove(queued)
-            for row in existing:
+            for row in live:
                 if row.get("tag") == tag and row.get("feature") == feature:
                     ops.append(
                         MemoryOp(

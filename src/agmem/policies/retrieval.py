@@ -21,8 +21,11 @@ read at commit ``18f1211``): an ``AgentToolBase`` tree, built by
                      └─ MemMachineAgent
 
 - ``MemMachineAgent`` — one search, no LLM, no rerank (its parent reranks).
-- ``SplitQueryAgent`` — 1 LLM call splits into 1-6 single-hop sub-queries, each
-  searched, results CONCATENATED, then reranked against the concatenation.
+- ``SplitQueryAgent`` — 1 LLM call splits into single-hop sub-queries, each
+  searched, results CONCATENATED, then reranked against the concatenation. The
+  1-6 range is the PROMPT's contract only: the code takes every non-blank line
+  of the response and caps nothing (``split_query_agent.py`` L176-182), so
+  neither do we.
 - ``ChainOfQueryAgent`` — up to ``max_attempts`` rounds of
   search -> "is this sufficient? if not, what is the next query?" in ONE call,
   stopping when the model says sufficient AND its confidence clears a floor.
@@ -66,9 +69,12 @@ Our two adaptations, both forced by the seam rather than chosen:
   same deviation ``MemMachineContextualize`` already documents.
 - **The LLM calls go through the structured caller**, so upstream's free-text
   contracts (a tool name on one line; one sub-query per line) become small JSON
-  schemas. The task prompts are verbatim; only the envelope changes. The
-  chain-of-query prompt already demanded strict JSON, so that one is unchanged
-  in substance.
+  schemas. The task prompts are CONDENSED, not verbatim: beyond the envelope,
+  each drops upstream content — the tool-select prompt's five calibration
+  examples, the split prompt's six worked examples and pronoun template, and
+  the sufficiency prompt's input-normalization steps, edge cases and "EXACTLY
+  these keys" constraint (see the per-prompt notes). The decision criteria and
+  hard rules are kept verbatim; the examples are the cut.
 """
 
 from __future__ import annotations
@@ -166,9 +172,12 @@ Each sub-query must be a full question ending with "?".
 
 Return JSON: {{"queries": ["...", "..."]}}"""
 
-# `coq_agent.py::COMBINED_SUFFICIENCY_AND_REWRITE_PROMPT`. This one already
-# specified a strict JSON object with exactly these four keys, so the schema
-# below is upstream's contract rather than our envelope.
+# `coq_agent.py::COMBINED_SUFFICIENCY_AND_REWRITE_PROMPT`, condensed: the
+# decision procedure and hard constraints are kept, but upstream's
+# input-normalization steps, its enumerated edge cases and its "EXACTLY these
+# keys" restatement are cut. The four keys themselves ARE upstream's contract —
+# its prompt already demanded a strict JSON object — so the schema below is its
+# contract rather than our envelope.
 SUFFICIENCY_PROMPT = """You are a meticulous expert in retrieval-augmented question answering evaluation and query rewriting.
 
 Task: Given (1) an original user query, (2) rewritten queries already tried, and (3) retrieved documents, decide whether the documents are sufficient to answer the original query directly, completely, and explicitly. If insufficient, generate the NEXT BEST rewritten subquery to retrieve the missing evidence. If sufficient, set the rewritten query to the original query.
@@ -356,7 +365,12 @@ class DirectRetrieval(QueryStrategy):
 
 
 class SplitQuery(QueryStrategy):
-    """``SplitQueryAgent``: 1 LLM call -> up to 6 independent sub-queries.
+    """``SplitQueryAgent``: 1 LLM call -> independent sub-queries.
+
+    No cap on how many: the 1-6 range lives in the prompt only, and upstream's
+    code takes every non-blank line of the response (``split_query_agent.py``
+    L176-182) — a slice here would silently harden that contract, the same
+    "fix vs reproduce" line ``dedupe=False`` refuses to cross.
 
     ``dedupe=False`` is upstream (finding 2): an episode matched by two
     sub-queries is served twice. ``True`` is the debugged variant, kept
@@ -364,9 +378,8 @@ class SplitQuery(QueryStrategy):
 
     name = "SplitQueryAgent"
 
-    def __init__(self, dedupe: bool = False, max_queries: int = 6) -> None:
+    def __init__(self, dedupe: bool = False) -> None:
         self.dedupe = dedupe
-        self.max_queries = max_queries
 
     def run(self, query: str, ctx: QueryContext) -> QueryResult:
         if not self._usable_llm(ctx):
@@ -378,9 +391,12 @@ class SplitQuery(QueryStrategy):
             required_keys=("queries",),
         )
         sub_queries = [str(q).strip() for q in (verdict or {}).get("queries", []) if str(q).strip()]
-        # Upstream falls back to the original query when the split yields
-        # nothing (`if len(sub_queries) == 0`), including when the call fails.
-        sub_queries = sub_queries[: self.max_queries] or [query]
+        # Upstream falls back to the original query ONLY when the split yields
+        # an empty list (`if len(sub_queries) == 0`); an LLM exception there
+        # propagates uncaught — it has no failure fallback. Ours is one branch
+        # wider by construction: the structured caller reports a failed call as
+        # a drop (None), which lands in this same empty-output branch.
+        sub_queries = sub_queries or [query]
 
         items: list[ScoredItem] = []
         seen: set[tuple[str, str | None]] = set()
@@ -460,7 +476,19 @@ class ChainOfQuery(QueryStrategy):
             for scored in ctx.search(next_query).items:
                 round_hits.setdefault((scored.memory_type, _item_id(scored)), scored)
 
-            pool = list({**round_hits, **evidence}.values())
+            # Upstream presents the pool CHRONOLOGICALLY: it sorts
+            # `set(retrieved).union(evidence)` by `(created_at is None,
+            # created_at)` before assigning `[idx]` labels (`coq_agent.py`
+            # L206-211), so the sufficiency model reads documents in time order
+            # with unstamped ones last. Tie-break: upstream iterates a set
+            # union, so its equal-timestamp order varies with hashing; our
+            # stable sort pins it to the merge order (this round's hits, then
+            # previously promoted evidence). `evidence_indices` below index
+            # THIS sorted pool, as upstream's index its sorted list.
+            pool = sorted(
+                {**round_hits, **evidence}.values(),
+                key=lambda s: (_item_timestamp(s) is None, _item_timestamp(s) or ""),
+            )
             context = "".join(f"[{index}] {_item_text(s)}\n" for index, s in enumerate(pool))
             verdict = ctx.llm.call(
                 ctx.role,
@@ -474,10 +502,14 @@ class ChainOfQuery(QueryStrategy):
             )
             metrics["llm_calls"] += 1
             if verdict is None:
-                # Upstream logs the parse failure, retries once, then proceeds
-                # with an empty response — which means is_sufficient False and
-                # new_query defaulting to the ORIGINAL query, so the next round
-                # repeats a used query and the loop breaks.
+                # Upstream's parse-failure "retry" performs ZERO retries of any
+                # kind: on the first exception its loop sets `retry = False;
+                # continue`, the `while retry` condition is re-checked and is
+                # now False, so the loop exits before any re-parse — and it
+                # never re-calls the LLM either. It proceeds with an empty
+                # response: is_sufficient False, new_query defaulting to the
+                # ORIGINAL query, so the next round repeats a used query and
+                # the loop breaks. Same here.
                 verdict = {}
             for index in verdict.get("evidence_indices") or []:
                 if isinstance(index, int) and 0 <= index < len(pool):
@@ -554,6 +586,26 @@ def _item_id(scored: ScoredItem) -> str | None:
     """Id of a scored item, whichever shape it has (same accessor the retrieval
     pipeline uses for its own ``(memory_type, id)`` dedup)."""
     return getattr(scored.item, "id", None) or getattr(scored.item, "data", {}).get("id")
+
+
+def _item_timestamp(scored: ScoredItem) -> str | None:
+    """When a scored item happened — upstream's ``Episode.created_at``, used by
+    ChainOfQuery's chronological pool sort.
+
+    Read from the item attribute (raw ``Episode``) or the served payload's
+    ``timestamp``/``created_at`` (stored items carry ISO strings; the
+    MemMachine read steps stamp ``created_at`` because ``timestamp`` would
+    change what ``_DictItem.render`` prints). Normalized to ISO text so
+    datetimes and stored strings sort together; ``None`` (no stamp anywhere)
+    sorts last, upstream's ``created_at is None`` key."""
+    item = scored.item
+    stamp = getattr(item, "timestamp", None)
+    if stamp is None:
+        data = getattr(item, "data", None) or {}
+        stamp = data.get("timestamp") or data.get("created_at")
+    if stamp is None:
+        return None
+    return stamp.isoformat() if hasattr(stamp, "isoformat") else str(stamp)
 
 
 STRATEGIES: dict[str, type[QueryStrategy]] = {

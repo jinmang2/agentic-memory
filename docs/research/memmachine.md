@@ -83,9 +83,10 @@ cluster_splitter, cluster_store, config_store).
 
 ### 1.4 부수 소득 — 공식 LoCoMo·LongMemEval 하네스가 동봉돼 있다
 
-> **정정(§4.3):** 하네스는 **두 벌**이다. `evaluation/episodic_memory/`는 README가
-> 스스로 "legacy"라 적었고 **`18f1211`에서 실행 자체가 불가능**하며(5-튜플을 3개로
-> 언팩), 권장 경로는 `evaluation/retrieval_agent/`다. 두 벌의 operating point가 다르다.
+> **정정(§4.3, 라운드12 재정정):** 하네스는 **두 벌**이고, `18f1211`에서는 **둘 다
+> 실행되지 않는다** — `init_memmachine_params`가 공유 병목이라 legacy(3-of-5 언팩)만이
+> 아니라 `evaluation/retrieval_agent/`도 구성 단계에서 죽는다(§4.3). 두 벌의 operating
+> point가 다르다는 사실은 그대로 유효하다.
 
 ```
 evaluation/episodic_memory/{locomo,longmemeval}_{ingest,search,evaluate}.py
@@ -202,19 +203,31 @@ max_forward_episodes = expand_context - max_backward_episodes
 - **벡터 검색은 derivative에 대해 `min(5 * limit, 200)`으로 과인출**하고, 그 뒤에
   episode 단위로 dedup한다. 즉 "derivative k"와 "episode limit"은 다른 숫자다.
 
-### 4.3 하네스가 두 벌이고, 논문 수치 쪽은 지금 실행되지 않는다
+### 4.3 하네스가 두 벌이고, `18f1211`에서는 **어느 쪽도 실행되지 않는다**
+
+> **라운드12 정정:** 아래 첫 판(2026-07-27)은 "legacy만 깨져 있고 `retrieval_agent/`는
+> 권장 경로로서 언팩이 맞다(=돈다)"고 적었다. 앞 절반만 맞았다. `18f1211`에서
+> `LongTermMemoryParams`는 `Annotated[DeclarativeBackendParams | EventBackendParams,
+> Field(discriminator="backend")]`(`long_term_memory.py` L162-165)인데,
+> `init_memmachine_params`(`agent_utils.py` L452-459)는 그것을 **클래스처럼 호출**한다.
+> Annotated union 호출은 `TypeError: 'types.UnionType' object is not callable` —
+> pydantic 버전과 무관하게 재현된다(라운드12 검증에서 동일 구조로 재현). 즉
+> `init_memmachine_params`를 지나는 **모든** eval 진입점이 구성 단계에서 죽고, legacy의
+> 3-of-5 언팩 `ValueError`에는 도달조차 못 한다. **공개 수치는 이 union 리팩토링 이전
+> 코드가 낸 것**이다. claim 1의 실질 — kwargs가 `DeclarativeBackendParams`에만 맞고
+> `EpisodicMemoryParams(..., short_term_memory=None)` — 은 그대로 유효하다.
 
 - `evaluation/episodic_memory/` — `README`가 스스로 **legacy**라 적었다. operating point는
   `locomo_search.py`의 `query_memory(query=question, limit=30, expand_context=3)`.
-  그런데 `locomo_{ingest,search,delete}.py` 셋 다 `init_memmachine_params`의 **5-튜플을
-  3개로 언팩**한다 → `18f1211`에서 `ValueError`. 즉 **논문 수치를 낸 코드가 현재 HEAD에서
-  깨져 있다.**
-- `evaluation/retrieval_agent/` — 권장 경로. 5개로 정확히 언팩하고, 질의는 query agent를
-  거치며 `QueryParam`의 기본값은 `limit=20, expand_context=0`이다.
+  `locomo_{ingest,search,delete}.py` 셋 다 `init_memmachine_params`의 **5-튜플을
+  3개로 언팩**하지만, 위의 union `TypeError`가 그보다 먼저 터진다.
+- `evaluation/retrieval_agent/` — README가 가리키는 경로. 5개로 정확히 언팩하고, 질의는
+  query agent를 거치며 `QueryParam`의 기본값은 `limit=20, expand_context=0`이다.
+  언팩은 맞지만 **이 경로도 HEAD에서는 돌지 않는다**(같은 병목).
 
-⇒ **"MemMachine의 LoCoMo operating point"라고 쓸 때는 어느 하네스인지 반드시 박을 것.**
-우리 쪽은 두 점을 둘 다 config로 등록했다(`memmachine` = legacy 30/3,
-`memmachine_library` = 라이브러리 기본 20/0).
+⇒ **"MemMachine의 LoCoMo operating point"라고 쓸 때는 어느 하네스인지 반드시 박고,
+"HEAD에서 실행 가능"이라는 함의는 붙이지 말 것.** 우리 쪽은 두 점을 둘 다 config로
+등록했다(`memmachine` = legacy 30/3, `memmachine_library` = 라이브러리 기본 20/0).
 
 ### 4.4 기타 확정 사실
 
