@@ -62,7 +62,10 @@ def _fmt(episode: Episode) -> str:
 
 
 class PerMessageBoundary:
-    """Online per-message boundary detector (paper v1 f_theta formalism).
+    """Online per-message boundary detector (paper v1 f_theta formalism;
+    the CURRENT arXiv text has no per-message mode — its §3.2.1 "Local
+    Message Partitioning" is the batch form, ``BatchPartitioner``. This class
+    preserves the v1 paper's formalism; docs/16 session 2, finding 1).
 
     ``push`` decides, for the current buffer, whether to cut one or more
     segments off the front and what remains buffered. The LLM is not injected
@@ -285,7 +288,8 @@ Return JSON: {{"title": "...", "narrative": "...", "timestamp": "ISO"}}"""
 
 
 class EpisodeMerger:
-    """v4 §3.2.3 Episode-level merging / upstream merger.py.
+    """v4 §3.2.3 "Associative Memory Integration" (paper's own name) /
+    upstream merger.py episode-level merging.
 
     Called right after episode narration (v4 Alg.1 order — narrate, then
     merge-or-new, then predict-calibrate). Looks up nearby episodes in the
@@ -500,7 +504,12 @@ Return JSON: {{"decision": "new"|"merge"|"conflict",
 
 
 class ThreeWayIntegrator:
-    """Nemori v4 §3.3.3 P_con semantic consolidation — paper-faithful.
+    """Nemori v4 §3.3.3 "Agnostic Knowledge Consolidation" — paper-faithful.
+
+    The upstream deployed code has NO counterpart: its SemanticGenerator saves
+    every statement as a new memory (id-keyed upsert, effectively append-only;
+    docs/16 session 2, finding 2), so this class is currently the paper text's
+    only implementation.
 
     tau-filter the vector neighborhood, then ask the LLM to decide
     new/merge/conflict over the top-K survivors (paper: K_m=5, tau=0.70). Any

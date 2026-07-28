@@ -40,6 +40,15 @@ mutation (2026-07-27 audit B3). Reads still go straight to the store; the
 one thing that changes for this code is that edges decided within a single
 ``on_message`` are not yet visible to ``edges_between``, which the local
 ``pending`` map covers.
+
+Upstream snapshot provenance (docs/16 session 4): current graphiti main has
+moved past the paper — ``SagaNode`` (``_get_or_create_saga``/``summarize_saga``),
+single-call node+edge extraction (``combined_extraction.extract_nodes_and_
+edges``), and ``temporal_operations.py`` dissolved into ``extract_edges``.
+Sagas and combined extraction are NOT ported; entity resolution follows
+current main (three-stage, above), everything else the paper's shape. This
+port is therefore a dated mixed snapshot, deliberately: each piece's lineage
+is named where it is used.
 """
 
 from __future__ import annotations

@@ -126,6 +126,7 @@ CALIBRATE_SCHEMA = {
     "required": ["facts"],
 }
 
+# Paper §3.2.2 "Narrative Episode Generation".
 # Condensed from EPISODE_GENERATION_PROMPT; temporal anchoring is mandatory,
 # including upstream's parenthetical conversion style and its example.
 EPISODE_PROMPT = """You are an episodic memory generation expert. Convert this
@@ -149,6 +150,7 @@ Segment:
 
 Return JSON: {{"title": "...", "narrative": "...", "timestamp": "..."}}"""
 
+# Paper §3.3.1 "Anticipatory Schema Synthesis".
 # Condensed from PREDICTION_PROMPT: predict knowledge, not style.
 PREDICT_PROMPT = """Given only an episode title and previously known knowledge,
 predict what the episode's content says. Focus on: the core facts likely
@@ -171,6 +173,7 @@ _FOUR_TESTS = """Each statement must pass all four tests:
 - Utility: helps predict future user needs or preferences
 - Independence: understandable without the conversation context"""
 
+# Paper §3.3.2 "Prediction Error Distillation".
 # Condensed from EXTRACT_KNOWLEDGE_FROM_COMPARISON_PROMPT: seven high-value
 # categories, the time/date ban, present-tense atomic style.
 CALIBRATE_PROMPT = (
