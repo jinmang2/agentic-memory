@@ -266,11 +266,19 @@ class MemoryOSPageRecall(ReadStep):
 
     Two deviations, both forced by where the data lives:
 
-    - Upstream embeds the page as one string (``f"User: {u} Assiant: {a}"``,
-      typo theirs) and dots it with the query. Pages are not items here, so
-      there is no page vector; the score is the best of the page's member
-      messages' own vectors, which is the same text scored in halves. That also
-      keeps the step free of an embedder call per page per query.
+    - Page scoring vectors. The stored-page-vector scheme is PYPI'S ONLY: pypi
+      embeds the page once at write time (``f"User: {u} Assistant: {a}"``) and
+      dots the STORED vector with the query (``mid_term.py:335-338``). The
+      eval lineage NEVER reads stored page embeddings — its search re-embeds
+      ``f"{user_input}{timestamp}{agent_response}"`` fresh per page per query
+      (``mid_term_memory.py:227-230``), which is also why its write-side E3
+      inconsistency (two different embedding texts, "Assiant" typo included —
+      the typo is eval's ``:88``, not pypi's) is retrieval-inert there: those
+      vectors are storage-only. Pages are not items here, so there is no page
+      vector either way; the score is the best of the page's member messages'
+      own vectors — the same text scored in halves — standing in for pypi's
+      stored dot and for eval's fresh re-embed alike, without an embedder call
+      per page per query.
     - The heat feedback (``N_visit``/LFU, which upstream bumps inside
       ``search_sessions`` for every session with a matched page) still works
       because the emitted page keeps its first message's id, and MemoryOS's
@@ -280,7 +288,18 @@ class MemoryOSPageRecall(ReadStep):
     ``page_similarity_threshold``. A segment with no page over the threshold
     contributes nothing — as upstream's ``if matched_pages_in_session`` does.
 
-    ``segment_threshold`` is the FIRST stage's gate, which both lineages apply
+    ``top_sessions`` is the FIRST-stage cut BOTH lineages apply before any
+    thresholding: stage one is a FAISS top-k search over session summary
+    embeddings with k=5 (pypi ``search_sessions`` default ``top_k_sessions=5``,
+    passed through by ``Retriever``; eval ``search_sessions_by_summary``
+    ``top_k=5``, its driver does not override), so at most 5 sessions are ever
+    expanded per query no matter how many clear the relevance gate. The cut
+    ranks by COSINE ALONE — the keyword term joins only in the threshold that
+    follows. This knob was ABSENT until round-12 finding 11: every segment hit
+    that cleared ``segment_threshold`` was expanded, and the configs search
+    k=10 segments.
+
+    ``segment_threshold`` is the first stage's gate, which both lineages apply
     and this step used to skip: a segment whose relevance misses it is not
     expanded at all (``if session_relevance_score >= segment_similarity_
     threshold``). Relevance is scored the way upstream scores it, not by reusing
@@ -321,12 +340,16 @@ class MemoryOSPageRecall(ReadStep):
         segment_threshold: float = 0.1,
         keyword_alpha: float = 1.0,
         keyword_similarity: str = "containment_mean",
+        top_sessions: int = 5,
     ) -> None:
         self.cap = cap
         self.threshold = threshold
         self.segment_threshold = segment_threshold
         self.keyword_alpha = keyword_alpha
         self.keyword_similarity = keyword_similarity
+        # both lineages' stage-one FAISS k — 5 (see class docstring); 0 disables
+        # the cut (the pre-round-12 behavior, kept reachable for comparison)
+        self.top_sessions = top_sessions
 
     def _relevance(self, data: dict, cosine: float, query_keywords: frozenset[str]) -> float:
         """Upstream's ``session_relevance_score``: cosine plus the keyword
@@ -360,24 +383,30 @@ class MemoryOSPageRecall(ReadStep):
         segment_vectors = ctx.vector_store.get(
             [sid for s in hits if (sid := s.item.data.get("id")) and s.item.data.get("page_units")]
         )
+        # Stage one, part 1: the top-k cut. Both lineages run a FAISS top-5
+        # search over session summary embeddings BEFORE any threshold, ranked
+        # by cosine alone (see class docstring) — a session outside the cosine
+        # top-`top_sessions` is never expanded, keywords notwithstanding.
+        candidates = []
         for segment in hits:
+            if not segment.item.data.get("page_units"):
+                continue
+            cosine = _cosine(segment_vectors.get(segment.item.data.get("id")), query, query_norm)
+            candidates.append((cosine, segment))
+        if self.top_sessions:
+            candidates.sort(key=lambda row: -row[0])
+            candidates = candidates[: self.top_sessions]
+        for cosine, segment in candidates:
             data = segment.item.data
             page_units = [
                 [str(unit) for unit in page] for page in data.get("page_units", []) if page
             ]
             if not page_units:
                 continue
-            # Stage one: does this segment clear the relevance gate at all?
+            # Stage one, part 2: does this segment clear the relevance gate?
             # Scored from the segment's own summary vector, because that is what
             # upstream matches on and what the fused rank is NOT.
-            if (
-                self._relevance(
-                    data,
-                    _cosine(segment_vectors.get(data.get("id")), query, query_norm),
-                    ctx.query_keywords,
-                )
-                < self.segment_threshold
-            ):
+            if self._relevance(data, cosine, ctx.query_keywords) < self.segment_threshold:
                 continue
             vectors = ctx.vector_store.get([unit for page in page_units for unit in page])
             for page in page_units:

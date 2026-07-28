@@ -587,6 +587,12 @@ def answer(
     # document would just have been a truncation with no upstream counterpart.
     # Several documents can only appear if two profile-producing organizers are
     # active at once, which no config does — they are joined rather than dropped.
+    #
+    # This unconditional injection is the profile's ONLY channel now (round-12
+    # finding 14): the organizer writes the document with an empty
+    # `embedding_text`, keeping it out of the vector index, so it can no longer
+    # also win slots in the k of the `semantic` retrieval above and appear
+    # twice in one prompt — upstream has the single channel too.
     if "semantic" in memory_types:
         semantic_items = mem.doc_store.list_items("semantic", namespace=mem.namespace)
         profile = [d.get("content", "") for d in semantic_items if d.get("kind") == "profile"]

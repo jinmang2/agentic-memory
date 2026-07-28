@@ -523,18 +523,23 @@ def test_memoryos_consumes_nemori_episodes():
             "distill": [
                 {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},  # episode
                 {"facts": []},  # cold-start direct extract
-                {
-                    "groups": [{"topic": "g", "summary": "s", "page_indexes": [0]}]
-                },  # MemoryOS segment
+                {"groups": [{"topic": "g", "summary": "s"}]},  # MemoryOS segment
             ],
         }
     )
     from agmem.organizers.experimental import ChainedConsumer
 
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=1), "episodes")
+    # chained units all share one page key (role="episode"), so no page ever
+    # gains a response half — keep_incomplete_pages is the documented extension
+    # for this composition, and the flush drains the single buffered unit
+    mos = ChainedConsumer(
+        MemoryOSOrganizer(stm_capacity=1, keep_incomplete_pages=True, flush_stm_on_drain=True),
+        "episodes",
+    )
     mem = make_mem_multi([NemoriOrganizer(fidelity="v1", buffer_min=1), mos], llm)
     mem.add_message("hello", meta={"date": "2026-01-01"})
     mem.add_message("new topic", meta={"date": "2026-01-01"})  # boundary -> episode flush
+    mem.flush()
     pages = [o for o in mem.log.tail(30) if o.target_type == "pages" and o.actor == "memoryos"]
     assert pages  # Nemori 에피소드가 MemoryOS page로 흘러들어감
     # 에피소드 원문이 아니라 Nemori 서사가 STM에 들어갔는지: page의 source가 episode id
@@ -548,7 +553,12 @@ def test_memoryos_retires_superseded_units():
     from agmem.organizers.experimental import ChainedConsumer
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=1), "episodes")
+    # single-key chained stream: keep_incomplete_pages + an explicit drain get
+    # the lone unit to MTM (the lineage-faithful drop would discard it)
+    mos = ChainedConsumer(
+        MemoryOSOrganizer(stm_capacity=1, keep_incomplete_pages=True, flush_stm_on_drain=True),
+        "episodes",
+    )
     mem = _mk(organizers=[mos])
     # page화 유도: LLM 없음 → mechanical segment (explicit degradation 경로)
     mem._propagate_events(
@@ -562,6 +572,7 @@ def test_memoryos_retires_superseded_units():
         ],
         actor="src",
     )
+    mem.flush()
     pages = [o for o in mem.log.tail(10) if o.target_type == "pages"]
     assert len(pages) == 1
     # e1을 흡수한 MERGE 도착 → page의 유일 소스가 superseded → page INVALIDATE
@@ -591,47 +602,34 @@ def test_memoryos_heat_eviction_drops_reverse_index():
     llm = StubLLM(
         {
             "distill": [
-                {
-                    "groups": [
-                        {"topic": "g1", "summary": "alpha", "keywords": [], "page_indexes": [0]}
-                    ]
-                },
-                {
-                    "groups": [
-                        {"topic": "g2", "summary": "beta", "keywords": [], "page_indexes": [0]}
-                    ]
-                },
+                {"groups": [{"topic": "g1", "summary": "alpha", "keywords": []}]},
+                {"groups": [{"topic": "g2", "summary": "beta", "keywords": []}]},
             ]
         }
     )
     from agmem.organizers.experimental import ChainedConsumer
 
-    inner = MemoryOSOrganizer(stm_capacity=1, mtm_capacity=1)
+    # single-key chained stream (keep_incomplete_pages) with the after-add
+    # flush override so each unit's page evicts as soon as the next unit
+    # closes it — e3 exists only to close e2's page
+    inner = MemoryOSOrganizer(
+        stm_capacity=1, mtm_capacity=1, stm_flush="after_add", keep_incomplete_pages=True
+    )
     mos = ChainedConsumer(inner, "episodes")
     mem = make_mem_multi([mos], llm)
 
-    mem._propagate_events(
-        [
-            MemoryOp(
-                op=OpType.ADD,
-                target_type="episodes",
-                target_id="e1",
-                payload={"id": "e1", "content": "ep one"},
-            )
-        ],
-        actor="src",
-    )
-    mem._propagate_events(
-        [
-            MemoryOp(
-                op=OpType.ADD,
-                target_type="episodes",
-                target_id="e2",
-                payload={"id": "e2", "content": "ep two"},
-            )
-        ],
-        actor="src",
-    )
+    for eid, text in (("e1", "ep one"), ("e2", "ep two"), ("e3", "ep three")):
+        mem._propagate_events(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="episodes",
+                    target_id=eid,
+                    payload={"id": eid, "content": text},
+                )
+            ],
+            actor="src",
+        )
 
     pages_add = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.ADD]
     deletes = [o for o in mem.log.tail(20) if o.target_type == "pages" and o.op == OpType.DELETE]
@@ -718,7 +716,10 @@ def test_memoryos_partial_supersede_keeps_page_until_all_sources_gone():
     # role="episode", so every unit shares the page key), and the rolling
     # eviction hands MTM one page at a time — so a 2-source segment comes from
     # the drain path, which batches whatever is still buffered.
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True), "episodes")
+    mos = ChainedConsumer(
+        MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True, keep_incomplete_pages=True),
+        "episodes",
+    )
     mem = _mk(organizers=[mos])  # no LLM -> one mechanical segment over the batch
     mem._propagate_events(
         [_ev(OpType.ADD, "e1", content="one"), _ev(OpType.ADD, "e2", content="two")],
@@ -749,19 +750,21 @@ def test_memoryos_update_replaces_stm_unit_then_ignores_when_paged():
     from agmem.organizers.experimental import ChainedConsumer
     from agmem.organizers.memoryos import MemoryOSOrganizer
 
-    inner = MemoryOSOrganizer(stm_capacity=2)
+    # single-key chained stream: the after-add flush + keep_incomplete_pages
+    # make each unit's page evict as soon as the next unit closes it
+    inner = MemoryOSOrganizer(stm_capacity=1, stm_flush="after_add", keep_incomplete_pages=True)
     mos = ChainedConsumer(inner, "episodes")
     mem = _mk(organizers=[mos])
     mem._propagate_events([_ev(OpType.ADD, "e1", content="v1")], actor="src")
-    assert [e.content for e in inner._stm] == ["v1"]
+    assert [e.content for e in inner._open] == ["v1"]  # buffered, not yet paged
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v2")], actor="src")
-    assert [e.content for e in inner._stm] == ["v2"]  # replaced in place
+    assert [e.content for e in inner._open] == ["v2"]  # replaced in place
 
-    # reach capacity -> the OLDEST page (e1) rolls into MTM and e2 stays
-    # resident, which is upstream's FIFO window rather than a full drain
+    # the next unit closes e1's page -> it rolls into MTM and e2 stays buffered
     mem._propagate_events([_ev(OpType.ADD, "e2", content="w1")], actor="src")
-    assert [e.id for e in inner._stm] == ["e2"]
+    assert [e.id for e in inner._open] == ["e2"]
     pages_before = [o for o in mem.log.tail(30) if o.target_type == "pages"]
+    assert pages_before  # e1 was paged
     # UPDATE for the now-paged e1 must be ignored -> no new page op
     mem._propagate_events([_ev(OpType.UPDATE, "e1", content="v3")], actor="src")
     pages_after = [o for o in mem.log.tail(30) if o.target_type == "pages"]
@@ -885,8 +888,12 @@ def test_chained_flush_drains_the_wrapped_organizers_buffer():
 
     # flush_stm_on_drain: the STM tail stays resident by default (upstream never
     # drains it — `recent_context` serves it instead), so the drain this test is
-    # about has to be asked for.
-    mos = ChainedConsumer(MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True), "episodes")
+    # about has to be asked for. keep_incomplete_pages: chained units are all
+    # one-sided, and the drop default would discard the drained tail.
+    mos = ChainedConsumer(
+        MemoryOSOrganizer(stm_capacity=3, flush_stm_on_drain=True, keep_incomplete_pages=True),
+        "episodes",
+    )
     mem = _mk(organizers=[mos])
     try:
         mem._apply_ops(
@@ -900,14 +907,14 @@ def test_chained_flush_drains_the_wrapped_organizers_buffer():
             ],
             actor="nemori",
         )
-        assert mos.wrapped._stm, "unit is buffered below capacity — nothing emitted yet"
+        assert mos.wrapped._open, "unit is buffered below capacity — nothing emitted yet"
         assert [o for o in mem.log.tail(30) if o.target_type == "pages"] == []
 
         mem.flush()
 
         pages = [o for o in mem.log.tail(30) if o.target_type == "pages"]
         assert pages, "flush must reach the wrapped organizer's buffer"
-        assert not mos.wrapped._stm
+        assert not mos.wrapped._stm_pages and not mos.wrapped._open
     finally:
         mem.close()
 

@@ -414,7 +414,12 @@ def main() -> None:
         "nemori_memoryos": (
             [
                 lambda: NemoriOrganizer(fidelity="v1"),
-                lambda: ChainedConsumer(MemoryOSOrganizer(), "episodes"),
+                # keep_incomplete_pages: chained units all share one page key
+                # (role="episode"), so no page ever gains a response half — the
+                # lineage-faithful incomplete-page drop (round-12 finding 2)
+                # would discard the entire stream. The knob is the documented
+                # extension for exactly this experimental composition.
+                lambda: ChainedConsumer(MemoryOSOrganizer(keep_incomplete_pages=True), "episodes"),
             ],
             ("episodes", "semantic", "pages"),
             {"episodes": 10, "semantic": 20, "pages": 10},

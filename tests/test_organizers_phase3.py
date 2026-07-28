@@ -96,16 +96,8 @@ def test_memoryos_eviction_creates_segment_and_promotes():
     llm = StubLLM(
         {
             "distill": [
-                {
-                    "groups": [
-                        {
-                            "topic": "travel",
-                            "summary": "User plans a Paris trip.",
-                            "page_indexes": [0, 1, 2],
-                        }
-                    ]
-                },
-                # LPM update = profile document + the two knowledge FIFOs
+                {"groups": [{"topic": "travel", "summary": "User plans a Paris trip."}]},
+                # LPM update = profile document + the two knowledge stores
                 {"profile": "The user is planning a Paris trip and prefers art museums."},
                 {
                     "private": ["Trip budget: 3,000,000 KRW (Paris, 2026)"],
@@ -116,13 +108,23 @@ def test_memoryos_eviction_creates_segment_and_promotes():
     )
     # dialogue_chain off: this test drives the MTM/LPM path, and the chain's two
     # per-page calls share the `distill` queue with the topic/profile ones.
-    org = MemoryOSOrganizer(stm_capacity=3, heat_threshold=1.0, dialogue_chain=False)
+    # capacity 1 pypi: the first exchange evicts when the second one closes
+    # (pypi flushes BEFORE the overflowing add — round-12 finding 13).
+    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=1.0, dialogue_chain=False)
     mem = make_mem(org, llm)
     try:
-        for text in ("파리 가자", "예산 300", "미술관 위주"):
-            mem.add_message(text)
+        for text, speaker in (
+            ("파리 가자", "A"),
+            ("좋아, 예산은?", "B"),
+            ("예산 300", "A"),
+            ("미술관 위주", "B"),
+        ):
+            mem.add_message(text, meta={"speaker": speaker})
         pages = ops_of(mem, "pages")
         assert len(pages) == 1 and pages[0].payload["topic"] == "travel"
+        # the page is the FULL first exchange — both halves, one page unit
+        assert len(pages[0].payload["page_units"]) == 1
+        assert len(pages[0].payload["page_units"][0]) == 2
         by_kind = {o.payload.get("kind"): o for o in ops_of(mem, "semantic")}
         assert set(by_kind) == {"profile", "user_knowledge", "assistant_knowledge"}
         # the profile is ONE document under a stable id, replaced rather than appended
@@ -140,15 +142,17 @@ def test_memoryos_profile_is_replaced_and_knowledge_fifo_evicts():
 
     Upstream feeds the previous profile back into the analysis prompt and stores
     the result with ``update_user_profile(merge=False)`` — a full replace — while
-    knowledge goes into ``deque(maxlen=100)``. Appending facts instead could only
-    accumulate and contradict, and never evicted."""
+    pypi's knowledge goes into ``deque(maxlen=100)``. Appending facts instead
+    could only accumulate and contradict, and never evicted. The "None" filter
+    here is pypi's lowercase one (``memoryos.py:196-204``) — the eval lineage's
+    exact-match filter would store it (see the eval knowledge test)."""
     llm = StubLLM(
         {
             "distill": [
-                {"groups": [{"topic": "a", "summary": "s1", "page_indexes": [0]}]},
+                {"groups": [{"topic": "a", "summary": "s1"}]},
                 {"profile": "First profile: the user is planning a trip to Paris."},
                 {"private": ["k1: ctx", "None", "k2: ctx"], "assistant_knowledge": []},
-                {"groups": [{"topic": "b", "summary": "s2", "page_indexes": [0]}]},
+                {"groups": [{"topic": "b", "summary": "s2"}]},
                 {"profile": "Second profile: the user also enjoys art museums a lot."},
                 {"private": ["k3: ctx"], "assistant_knowledge": []},
             ]
@@ -160,8 +164,17 @@ def test_memoryos_profile_is_replaced_and_knowledge_fifo_evicts():
     )
     mem = make_mem(org, llm)
     try:
-        mem.add_message("first")
-        mem.add_message("second")
+        # three full exchanges; pypi's before-add flush evicts one exchange per
+        # close from the second close on -> two evictions, two promotions
+        for text, speaker in (
+            ("first q", "A"),
+            ("first a", "B"),
+            ("second q", "A"),
+            ("second a", "B"),
+            ("third q", "A"),
+            ("third a", "B"),
+        ):
+            mem.add_message(text, meta={"speaker": speaker})
         semantic = ops_of(mem, "semantic")
         profiles = [o for o in semantic if o.target_id == PROFILE_ITEM_ID]
         # two writes, same id -> the store holds one document, the newest
@@ -204,6 +217,24 @@ def test_memoryos_fidelity_presets_separate_the_two_upstream_lineages():
     assert (pypi.similarity_threshold, pypi.heat_threshold, pypi.mtm_capacity) == (0.6, 5.0, 2000)
     assert (ev.similarity_threshold, ev.heat_threshold, ev.mtm_capacity) == (0.6, 5.0, 2000)
 
+    # round-12 lineage splits: STM flush order (pypi evicts BEFORE the
+    # overflowing add, memoryos.py:242-246; eval AFTER, main_loco_parse.py:
+    # 241-243), merge-candidate scheme (pypi scans ALL sessions for the
+    # combined-score argmax, mid_term.py:206-226; eval takes the cosine top-1
+    # and thresholds only it, mid_term_memory.py:133-154), and the LPM
+    # knowledge-store shape (pypi: capacity FIFO + profile guard + lowercase
+    # line filter + per-line assistant entries; eval: unbounded lists +
+    # unconditional profile write + exact-string filter + one assistant blob).
+    assert (pypi.stm_flush, ev.stm_flush) == ("before_add", "after_add")
+    assert (pypi.merge_candidates, ev.merge_candidates) == ("scan_all", "cosine_top1")
+    assert (pypi.knowledge_fifo, ev.knowledge_fifo) == (True, False)
+    assert (pypi.profile_guard, ev.profile_guard) == (True, False)
+    assert (pypi.knowledge_line_filter, ev.knowledge_line_filter) == ("pypi", "eval")
+    assert (pypi.assistant_blob, ev.assistant_blob) == (False, True)
+    # the incomplete-page drop is NOT a lineage knob — both lineages drop, so
+    # both presets default to the drop; the keep is this project's extension
+    assert not pypi.keep_incomplete_pages and not ev.keep_incomplete_pages
+
     # keyword term: containment-mean is strictly larger than Jaccard whenever
     # the sets differ, so the same theta merges more readily under `eval`
     a, b = {"trip", "paris"}, {"trip", "paris", "museum", "budget"}
@@ -232,47 +263,94 @@ def test_memoryos_eval_lineage_recency_cannot_change_a_comparison():
     assert gap < 0.8 / 1000
 
 
-def test_memoryos_counts_pages_not_messages():
-    """MemoryOS's unit is the PAGE — one ``add_qa_pair`` exchange — and both
-    ``stm_capacity`` (upstream ``ShortTermMemory`` is a deque of pairs) and
-    ``L_interaction`` (``len(processed_details)``) are page counts.
+def test_memoryos_counts_pages_not_messages_and_never_splits_an_exchange():
+    """MemoryOS's unit is the PAGE — one FULL ``{user_input, agent_response}``
+    exchange — and both ``stm_capacity`` (upstream ``ShortTermMemory`` is a
+    deque of formed pairs) and ``L_interaction`` (``len(processed_details)``)
+    are page counts.
 
-    Counting messages instead put both in the wrong unit: the STM flushed at
-    half the upstream batch size and heat ran ~2x high, so the
-    ``heat_threshold`` promotion to LPM fired at about half the content
-    (2026-07-27 audit B1). The ``i == 1`` assertion is the discriminating one —
-    under message counting, ``stm_capacity=2`` would already have flushed
-    there."""
-    llm = StubLLM(
-        {"distill": [{"groups": [{"topic": "t", "summary": "s", "page_indexes": [0, 1]}]}]}
-    )
-    org = MemoryOSOrganizer(stm_capacity=2, heat_threshold=99.0)  # promotion out of scope
+    Round-12 finding 1 pinned: at ``stm_capacity=1`` an exchange is NEVER
+    split across pages. Upstream forms the pair before any memory call
+    (``main_loco_parse.process_conversation``), so its capacity-1 STM only
+    ever evicts full exchanges; the pre-fix code paged each half separately,
+    which doubled heat (~1.6 per exchange vs upstream's 0.8) and fired the
+    tau=5 promotion at half the content. The step-by-step op counts are the
+    discriminators: under half-paging (or message counting) the flush would
+    already have fired at i=0/i=1."""
+    llm = StubLLM({"distill": [{"groups": [{"topic": "t", "summary": "s"}]}]})
+    org = MemoryOSOrganizer(
+        stm_capacity=1, heat_threshold=99.0, dialogue_chain=False
+    )  # promotion out of scope
     mem = make_mem(org, llm)
     try:
         for i, speaker in enumerate(["A", "B", "A", "B"]):
             mem.add_message(f"m{i}", meta={"speaker": speaker})
-            # A then B is ONE page, so no flush; the second A opens page 2 and
-            # trips `>= stm_capacity`. The trailing B lands in the next buffer —
-            # the documented split-exchange deviation from receiving the two
-            # halves as separate calls.
-            assert len(ops_of(mem, "pages")) == (1 if i >= 2 else 0), i
+            # i=0: exchange OPEN, not a page yet — no flush even at capacity 1.
+            # i=1: exchange closes; pypi's before-add flush admits it (resident
+            #      = capacity). i=3: the second exchange closes and evicts the
+            #      first — a full pair, never a half.
+            assert len(ops_of(mem, "pages")) == (1 if i >= 3 else 0), i
+        (page,) = ops_of(mem, "pages")
+        # the evicted page is exchange m0+m1, both halves in ONE page unit
+        assert page.payload["page_units"] == [[e for e in page.payload["source_episode_ids"]]]
+        assert len(page.payload["source_episode_ids"]) == 2
+        assert "m0" in page.payload["content"] or page.payload["topic"] == "t"
         (heat,) = org._heat.values()
-        # ONE page reaches MTM (upstream's rolling eviction pops a single page),
-        # and that page holds TWO messages — so `length == 1` is the
-        # discriminator against message counting, which would say 2.
+        # ONE page reached MTM holding TWO messages — `length == 1` is the
+        # discriminator against message/half counting, which would say 2.
         assert heat["length"] == 1, heat
     finally:
         mem.close()
 
 
 def test_memoryos_no_llm_mechanical_segment():
-    org = MemoryOSOrganizer(stm_capacity=2, dialogue_chain=False)
+    org = MemoryOSOrganizer(stm_capacity=1, dialogue_chain=False)
     mem = AgenticMemory(namespace="t", organizers=[org], embedder=FakeEmbedder(dim=128))
     try:
-        mem.add_message("a")
-        mem.add_message("b")
+        # two full exchanges: the first evicts (mechanically — no LLM) when the
+        # second closes under pypi's before-add flush
+        for text, speaker in (("a", "A"), ("b", "B"), ("c", "A"), ("d", "B")):
+            mem.add_message(text, meta={"speaker": speaker})
         pages = ops_of(mem, "pages")
-        assert len(pages) == 1 and "a" in pages[0].payload["content"]
+        assert len(pages) == 1
+        assert "a" in pages[0].payload["content"] and "b" in pages[0].payload["content"]
+    finally:
+        mem.close()
+
+
+def test_memoryos_incomplete_pages_drop_by_default_with_a_keep_knob():
+    """Round-12 finding 2: BOTH lineages drop pages missing either half before
+    MTM insertion (pypi ``updater.py:104``, eval ``dynamic_update.py:126`` —
+    ``if qa.get("user_input") and qa.get("agent_response")``), and an
+    all-incomplete batch makes NO LLM calls at all (the filter runs before
+    page formation, so no continuity/meta/topic call happens). LoCoMo produces
+    such pages routinely: consecutive same-speaker turns leave the response
+    empty. ``keep_incomplete_pages=True`` is this project's no-content-loss
+    extension — the lineage-faithful default is the drop."""
+    # three consecutive opener turns -> every closed page is user-only
+    llm = StubLLM({"distill": [{"groups": [{"topic": "t", "summary": "s"}]}]})
+    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=99.0, dialogue_chain=False)
+    mem = make_mem(org, llm)
+    try:
+        for text in ("a1", "a2", "a3"):
+            mem.add_message(text, meta={"speaker": "A"})
+        assert ops_of(mem, "pages") == []  # dropped before MTM
+        assert llm.calls == []  # and no LLM call was spent on the dropped batch
+    finally:
+        mem.close()
+
+    # the extension knob keeps them: same stream now reaches MTM
+    llm = StubLLM({"distill": [{"groups": [{"topic": "t", "summary": "s"}]}]})
+    org = MemoryOSOrganizer(
+        stm_capacity=1, heat_threshold=99.0, dialogue_chain=False, keep_incomplete_pages=True
+    )
+    mem = make_mem(org, llm)
+    try:
+        for text in ("a1", "a2", "a3"):
+            mem.add_message(text, meta={"speaker": "A"})
+        pages = ops_of(mem, "pages")
+        assert len(pages) == 1  # the first user-only page, evicted and KEPT
+        assert len(pages[0].payload["source_episode_ids"]) == 1
     finally:
         mem.close()
 
@@ -297,6 +375,7 @@ def test_zep_graph_entities_facts_and_invalidation():
                             "predicate": "lives_in",
                             "object": "Seoul",
                             "statement": "Caroline lives in Seoul.",
+                            "valid_at": "2023-01-01T00:00:00",
                         }
                     ]
                 },
@@ -420,7 +499,6 @@ def test_zep_graph_is_rebuildable_from_the_evolution_log():
                             "predicate": "lives_in",
                             "object": "Seoul",
                             "statement": "Caroline lives in Seoul.",
-                            "valid_at": "2023-01-01T00:00:00",
                         }
                     ]
                 },
@@ -1014,19 +1092,23 @@ def test_memoryos_dialogue_chain_summarizes_and_renders():
                 # (upstream matches sessions on `summary_embedding`), so a
                 # summary sharing no terms with the query means the pages inside
                 # are never scored at all.
-                {"groups": [{"topic": "travel", "summary": "파리 여행 요약", "page_indexes": [0]}]},
+                {"groups": [{"topic": "travel", "summary": "파리 여행 요약"}]},
                 {"meta_info": "The user is planning a Paris trip on a 3M KRW budget."},
-                {"groups": [{"topic": "travel", "summary": "예산 요약", "page_indexes": [0]}]},
+                {"groups": [{"topic": "travel", "summary": "예산 요약"}]},
             ],
         }
     )
-    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=99.0)
+    # after-add flush (a non-lineage override on the pypi preset): each full
+    # exchange evicts as soon as it closes, so the chain runs page by page
+    org = MemoryOSOrganizer(stm_capacity=1, stm_flush="after_add", heat_threshold=99.0)
     mem = make_mem(org, llm)
     try:
-        mem.add_message("파리 여행")
+        mem.add_message("파리 여행", meta={"speaker": "A"})
+        mem.add_message("좋은 생각이야", meta={"speaker": "B"})
         # first page has no predecessor -> no continuity call yet
         assert "judge" not in [role for role, _ in llm.calls]
-        mem.add_message("예산은 300만원")
+        mem.add_message("예산은 300만원", meta={"speaker": "A"})
+        mem.add_message("그 정도면 충분해", meta={"speaker": "B"})
         assert [role for role, _ in llm.calls].count("judge") == 1
 
         adds = [o for o in ops_of(mem, "pages") if o.op is OpType.ADD]
@@ -1039,58 +1121,109 @@ def test_memoryos_dialogue_chain_summarizes_and_renders():
         # than falling back to the segment summary.
         rendered = mem.search("파리 여행", memory_types=("pages",)).render()
         assert "Conversation chain overview:" in rendered
-        assert "user: 파리 여행" in rendered  # verbatim page text, not the summary
+        assert "A: 파리 여행" in rendered  # verbatim page text, not the summary
     finally:
         mem.close()
 
 
-def test_memoryos_eval_lineage_merges_the_profile_in_a_second_call():
-    """The eval driver analyses WITHOUT the old profile
-    (``gpt_personality_analysis``) and merges in a separate ``gpt_update_profile``
-    call; pypi folds the old profile into the analysis and does one call. So the
-    first promotion costs one call in both lineages (nothing to merge against)
-    and the second costs two only under ``fidelity="eval"``."""
+def test_memoryos_eval_lineage_promotion_shape_and_merge_prompt():
+    """Round-12 findings 8+9: the eval promotion is ONE
+    ``gpt_personality_analysis`` call returning profile AND private data
+    (section markers, ``eval/utils.py:238-299``), a SEPARATE
+    ``analyze_assistant_knowledge`` call, and — from the second promotion on —
+    a merge call using eval's inline "Profile Merge Task" prompt
+    (``eval/utils.py:301-350``), NOT pypi's dead UPDATE_PROFILE text
+    (``gpt_update_profile`` is defined in pypi but never called on any pypi
+    live path). pypi keeps its own shape: one analysis call that folds the old
+    profile in, plus one combined private+assistant knowledge call. Same call
+    totals, different routing — the routing is what this pins."""
 
-    def make_llm():
+    def eval_llm():
         return StubLLM(
             {
                 "distill": [
-                    {"groups": [{"topic": "a", "summary": "s1", "page_indexes": [0]}]},
-                    {"profile": "Analysis one: the user is planning a trip to Paris."},
-                    {"private": [], "assistant_knowledge": []},
-                    {"groups": [{"topic": "b", "summary": "s2", "page_indexes": [0]}]},
-                    {"profile": "Analysis two: the user also enjoys art museums."},
+                    {"groups": [{"topic": "a", "summary": "s1"}]},
+                    {
+                        "profile": "Analysis one: the user is planning a trip to Paris.",
+                        "private": ["Paris trip planned: 2026"],
+                    },
+                    {"assistant_knowledge": "None"},
+                    {"groups": [{"topic": "b", "summary": "s2"}]},
+                    {
+                        "profile": "Analysis two: the user also enjoys art museums.",
+                        "private": [],
+                    },
+                    {"assistant_knowledge": "None"},
                     {"profile": "MERGED: trip to Paris and a taste for art museums."},
-                    {"private": [], "assistant_knowledge": []},
                 ]
             }
         )
 
-    llm = make_llm()
-    # the eval lineage weights length at 0.8, so one page is heat ~0.8
+    llm = eval_llm()
+    # the eval lineage weights length at 0.8, so one full exchange is heat ~0.8;
+    # its after-add flush evicts every exchange the moment it closes
     org = MemoryOSOrganizer(fidelity="eval", heat_threshold=0.5, dialogue_chain=False)
     mem = make_mem(org, llm)
     try:
-        mem.add_message("first")
-        mem.add_message("second")
+        for text, speaker in (
+            ("first q", "A"),
+            ("first a", "B"),
+            ("second q", "A"),
+            ("second a", "B"),
+        ):
+            mem.add_message(text, meta={"speaker": speaker})
         stored = mem.doc_store.get_items([PROFILE_ITEM_ID], "semantic")[0]
         assert stored["content"].startswith("MERGED:")
-        # the merge prompt must have seen the FIRST profile as the old one
-        merge_prompts = [p for role, p in llm.calls if "Old User Profile:" in p]
+        # the merge prompt is eval's "Profile Merge Task", and it saw the FIRST
+        # analysis as the current profile
+        merge_prompts = [p for role, p in llm.calls if "# Profile Merge Task" in p]
         assert len(merge_prompts) == 1 and "Analysis one" in merge_prompts[0]
+        # the analysis prompt is eval's one-call profile+private extraction and
+        # never carries the old profile (revision happens only in the merge)
+        analysis_prompts = [
+            p for role, p in llm.calls if "Personality and User Data Analysis Task" in p
+        ]
+        assert len(analysis_prompts) == 2
+        assert not [p for role, p in llm.calls if "Existing User Profile:" in p]
+        # private data came from the analysis call, not a pypi knowledge call
+        knowledge = [
+            o for o in ops_of(mem, "semantic") if o.payload.get("kind") == "user_knowledge"
+        ]
+        assert [o.payload["content"] for o in knowledge] == ["Paris trip planned: 2026"]
     finally:
         mem.close()
 
-    # pypi lineage: no merge call at all, the analysis prompt carries the old profile
-    llm = make_llm()
+    # pypi lineage: no merge call at all, the analysis prompt carries the old
+    # profile, knowledge comes from the combined private+assistant call
+    llm = StubLLM(
+        {
+            "distill": [
+                {"groups": [{"topic": "a", "summary": "s1"}]},
+                {"profile": "Analysis one: the user is planning a trip to Paris."},
+                {"private": [], "assistant_knowledge": []},
+                {"groups": [{"topic": "b", "summary": "s2"}]},
+                {"profile": "Analysis two: the user also enjoys art museums."},
+                {"private": [], "assistant_knowledge": []},
+            ]
+        }
+    )
     org = MemoryOSOrganizer(
         fidelity="pypi", stm_capacity=1, heat_threshold=1.0, dialogue_chain=False
     )
     mem = make_mem(org, llm)
     try:
-        mem.add_message("first")
-        mem.add_message("second")
-        assert not [p for role, p in llm.calls if "Old User Profile:" in p]
+        for text, speaker in (
+            ("first q", "A"),
+            ("first a", "B"),
+            ("second q", "A"),
+            ("second a", "B"),
+            ("third q", "A"),
+            ("third a", "B"),
+        ):
+            mem.add_message(text, meta={"speaker": speaker})
+        assert not [p for role, p in llm.calls if "# Profile Merge Task" in p]
+        analysis_two = [p for role, p in llm.calls if "Existing User Profile:" in p][-1]
+        assert "Analysis one" in analysis_two  # old profile folded into the analysis
         stored = mem.doc_store.get_items([PROFILE_ITEM_ID], "semantic")[0]
         assert stored["content"].startswith("Analysis two")
     finally:
@@ -1194,22 +1327,24 @@ def test_the_segment_keyword_term_is_dead_in_pypi_and_live_in_the_eval_lineage()
                             "topic": "budget",
                             "summary": "예산 요약",
                             "keywords": ["파리"],
-                            "page_indexes": [0],
                         }
                     ]
                 }
             ]
         }
     )
-    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=99.0, dialogue_chain=False)
+    org = MemoryOSOrganizer(
+        stm_capacity=1, stm_flush="after_add", heat_threshold=99.0, dialogue_chain=False
+    )
     mem = make_mem(org, llm)
     try:
-        mem.add_message("파리 여행")
+        mem.add_message("파리 여행", meta={"speaker": "A"})
+        mem.add_message("응 좋아", meta={"speaker": "B"})
         assert mem.search("파리 여행", memory_types=("pages",)).items == []  # pypi
         rendered = mem.search(
             "파리 여행", memory_types=("pages",), query_keywords={"파리"}
         ).render()
-        assert "user: 파리 여행" in rendered  # eval lineage
+        assert "A: 파리 여행" in rendered  # eval lineage
     finally:
         mem.close()
 
@@ -1250,21 +1385,14 @@ def test_memoryos_page_recall_serves_pages_not_segment_summaries():
     The heat feedback has to survive the substitution: upstream bumps the
     SESSION's N_visit for every session with a matched page, so a served page id
     is resolved back through the unit -> segment index."""
-    llm = StubLLM(
-        {
-            "distill": [
-                {
-                    "groups": [
-                        {"topic": "travel", "summary": "SUMMARY-ONLY-TEXT", "page_indexes": [0]}
-                    ]
-                }
-            ]
-        }
+    llm = StubLLM({"distill": [{"groups": [{"topic": "travel", "summary": "SUMMARY-ONLY-TEXT"}]}]})
+    org = MemoryOSOrganizer(
+        stm_capacity=1, stm_flush="after_add", heat_threshold=99.0, dialogue_chain=False
     )
-    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=99.0, dialogue_chain=False)
     mem = make_mem(org, llm)
     try:
-        mem.add_message("파리 여행 계획")
+        mem.add_message("파리 여행 계획", meta={"speaker": "A"})
+        mem.add_message("좋아", meta={"speaker": "B"})
         (segment_id,) = org._heat
         assert org._heat[segment_id]["n_visit"] == 0
 
@@ -1275,5 +1403,257 @@ def test_memoryos_page_recall_serves_pages_not_segment_summaries():
         # heat bumped on the SEGMENT even though a page id was served
         assert org._heat[segment_id]["n_visit"] == 1
         assert org._access[segment_id] == 1
+    finally:
+        mem.close()
+
+
+def test_memoryos_merge_candidate_schemes_are_lineage_split():
+    """Round-12 finding 3: the previous top-3-by-cosine hybrid belonged to
+    neither lineage. pypi computes cos+Jaccard for EVERY session and takes the
+    combined argmax (`mid_term.py:206-226`); eval takes the top-1 by COSINE
+    ALONE and only then adds the containment term for that single candidate
+    (`mid_term_memory.py:133-154`) — a session outside the cosine top-1 can
+    never merge under eval, no matter its keywords. X wins on cosine, Y wins
+    on the combined score; the two presets must pick differently."""
+    from types import SimpleNamespace
+
+    vectors = {"X": [0.9, 0.4359], "Y": [0.5, 0.8660]}  # cos vs e: 0.9 / 0.5
+    items = {
+        "X": {"id": "X", "keywords": []},
+        "Y": {"id": "Y", "keywords": ["k1", "k2"]},
+    }
+    ctx = SimpleNamespace(
+        vector_store=SimpleNamespace(get=lambda ids: {i: vectors[i] for i in ids}),
+        doc_store=SimpleNamespace(
+            get_items=lambda ids, ttype: [items[i] for i in ids if i in items]
+        ),
+    )
+    embedding = [1.0, 0.0]
+    keywords = {"k1", "k2"}
+
+    pypi = MemoryOSOrganizer()  # scan_all + jaccard
+    pypi._heat = {"X": {}, "Y": {}}
+    best, f = pypi._merge_candidate(embedding, keywords, ctx)
+    assert best == "Y" and f == pytest.approx(0.5 + 1.0, abs=1e-3)  # combined argmax
+
+    ev = MemoryOSOrganizer(fidelity="eval")  # cosine_top1 + containment mean
+    ev._heat = {"X": {}, "Y": {}}
+    best, f = ev._merge_candidate(embedding, keywords, ctx)
+    assert best == "X" and f == pytest.approx(0.9, abs=1e-3)  # cosine argmax, keywords 0
+
+
+def test_memoryos_merge_freezes_the_segment_matching_key():
+    """Round-12 finding 4: BOTH lineages leave the segment's summary,
+    summary_embedding and summary_keywords untouched on merge — only
+    details/L change — so the matching identity is frozen at creation and
+    future merge comparisons and the read path's stage-1 gate see the
+    original key. The pre-fix code appended the new summary to content,
+    re-embedded `content[-2000:]` and unioned keywords, drifting all three."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"groups": [{"topic": "t", "summary": "same summary text", "keywords": ["alpha"]}]},
+                # identical summary -> cosine 1.0 >= theta -> MERGE, but with
+                # different keywords that must NOT be unioned in
+                {"groups": [{"topic": "t", "summary": "same summary text", "keywords": ["beta"]}]},
+            ]
+        }
+    )
+    org = MemoryOSOrganizer(
+        stm_capacity=1, stm_flush="after_add", heat_threshold=99.0, dialogue_chain=False
+    )
+    mem = make_mem(org, llm)
+    try:
+        for text, speaker in (("q1", "A"), ("a1", "B"), ("q2", "A"), ("a2", "B")):
+            mem.add_message(text, meta={"speaker": speaker})
+        adds = [o for o in ops_of(mem, "pages") if o.op is OpType.ADD]
+        updates = [o for o in ops_of(mem, "pages") if o.op is OpType.UPDATE]
+        assert len(adds) == 1 and len(updates) == 1
+        # the UPDATE touches ONLY the details: sources and page structure
+        assert set(updates[0].payload) == {"source_episode_ids", "page_units"}
+        (segment_id,) = org._heat
+        stored = mem.doc_store.get_items([segment_id], "pages")[0]
+        assert stored["content"] == "same summary text"  # no append
+        assert stored["keywords"] == ["alpha"]  # no union with "beta"
+        assert len(stored["page_units"]) == 2  # both exchanges' details landed
+        assert org._heat[segment_id]["length"] == 2  # L += len(pages) per insert
+    finally:
+        mem.close()
+
+
+def test_memoryos_theme_insertion_duplicates_the_whole_batch_per_theme():
+    """Round-12 finding 5: both lineages call `insert_pages_into_session` once
+    PER theme with the ENTIRE batch (`updater.py:180-185`,
+    `dynamic_update.py:170-180`) — a multi-theme batch duplicates every page
+    into each theme's session, and each target session gets
+    `L += len(all pages)`. The previous TOPIC_SCHEMA asked the model to
+    partition the pages into groups, a scheme neither lineage has; the prompt
+    also now carries upstream's own "maximum of two themes" cap (pypi
+    `prompts.py:73-74`, eval `utils.py:128-133` — identical wording)."""
+    from agmem.organizers.memoryos.organizer import TOPIC_PROMPT
+
+    assert "maximum of two themes" in TOPIC_PROMPT
+    assert "page_indexes" not in TOPIC_PROMPT
+
+    llm = StubLLM(
+        {
+            "distill": [
+                {
+                    "groups": [
+                        {"topic": "cats", "summary": "고양이 이야기", "keywords": ["cats"]},
+                        {"topic": "weather", "summary": "날씨 예보", "keywords": ["weather"]},
+                    ]
+                }
+            ]
+        }
+    )
+    org = MemoryOSOrganizer(
+        stm_capacity=99, dialogue_chain=False, heat_threshold=99.0, flush_stm_on_drain=True
+    )
+    mem = make_mem(org, llm)
+    try:
+        # two full exchanges buffered, then one batch flush -> ONE topic call,
+        # TWO themes, and EVERY page lands in BOTH theme segments
+        for text, speaker in (("q1", "A"), ("a1", "B"), ("q2", "A"), ("a2", "B")):
+            mem.add_message(text, meta={"speaker": speaker})
+        ops = org.flush_buffer(mem._ctx)
+        adds = [o for o in ops if o.op is OpType.ADD and o.target_type == "pages"]
+        assert len(adds) == 2
+        for op in adds:
+            assert len(op.payload["page_units"]) == 2  # the WHOLE batch, duplicated
+            assert len(op.payload["source_episode_ids"]) == 4
+            assert org._heat[op.target_id]["length"] == 2  # L += len(all pages)
+    finally:
+        mem.close()
+
+
+def test_memoryos_eval_knowledge_is_unbounded_unsplit_and_unguarded():
+    """Round-12 findings 6+7: the eval lineage has NO knowledge capacity
+    anywhere (plain lists, `eval/long_term_memory.py:9-10`) — `knowledge_
+    capacity` must not evict; the profile is written UNCONDITIONALLY
+    (`main_loco_parse.py:53-57` — pypi's >=30/"none" guard is pypi-only);
+    assistant knowledge is stored as ONE un-split blob (`:67`); and the
+    per-entry filter is `add_knowledge`'s EXACT-string rejection of
+    ""/"- None"/"- None." (`long_term_memory.py:68-71`) — the verifier's
+    correction to the original finding — so a bare "None" line IS stored."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"groups": [{"topic": "a", "summary": "s1"}]},
+                {
+                    "profile": "short",  # < 30 chars: pypi would skip, eval writes
+                    "private": ["fact one: a", "None", "fact two: b", "- None"],
+                },
+                {"assistant_knowledge": "- I helped with X on 2023\n- I helped with Y"},
+            ]
+        }
+    )
+    # knowledge_capacity=1 would evict under pypi's FIFO; eval must ignore it
+    org = MemoryOSOrganizer(
+        fidelity="eval", heat_threshold=0.5, knowledge_capacity=1, dialogue_chain=False
+    )
+    mem = make_mem(org, llm)
+    try:
+        for text, speaker in (("q1", "A"), ("a1", "B")):
+            mem.add_message(text, meta={"speaker": speaker})
+        semantic = ops_of(mem, "semantic")
+        # unconditional profile write, guard-free
+        profile = [o for o in semantic if o.target_id == PROFILE_ITEM_ID]
+        assert len(profile) == 1 and profile[0].payload["content"] == "short"
+        # exact-string filter: "- None" dropped, bare "None" KEPT (upstream's
+        # case-sensitive comparison stores it)
+        user_knowledge = [
+            o.payload["content"] for o in semantic if o.payload.get("kind") == "user_knowledge"
+        ]
+        assert user_knowledge == ["fact one: a", "None", "fact two: b"]
+        # unbounded: three entries live despite knowledge_capacity=1, no DELETE
+        assert not [o for o in semantic if o.op is OpType.DELETE]
+        # assistant knowledge: ONE entry carrying the whole blob
+        assistant = [
+            o.payload["content"] for o in semantic if o.payload.get("kind") == "assistant_knowledge"
+        ]
+        assert assistant == ["- I helped with X on 2023\n- I helped with Y"]
+    finally:
+        mem.close()
+
+
+def test_memoryos_profile_is_served_by_one_channel_not_the_semantic_k():
+    """Round-12 finding 14: upstream serves the profile through exactly ONE
+    channel — the unconditional injection into every QA prompt — and never
+    through embedded retrieval. Our profile document was also an indexed
+    `semantic` item competing in the k, so it could appear twice in one
+    prompt. The organizer now writes it with an empty `embedding_text`
+    (doc-store only): present for the harness channel, absent from the
+    vector index."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"groups": [{"topic": "a", "summary": "s1"}]},
+                {"profile": "The user is planning a Paris trip and prefers art museums."},
+                {"private": ["budget: 3M KRW"], "assistant_knowledge": []},
+            ]
+        }
+    )
+    org = MemoryOSOrganizer(stm_capacity=1, heat_threshold=1.0, dialogue_chain=False)
+    mem = make_mem(org, llm)
+    try:
+        for text, speaker in (("q1", "A"), ("a1", "B"), ("q2", "A"), ("a2", "B")):
+            mem.add_message(text, meta={"speaker": speaker})
+        # the document exists for the unconditional harness channel...
+        stored = mem.doc_store.get_items([PROFILE_ITEM_ID], "semantic")
+        assert stored and "Paris" in stored[0]["content"]
+        # ...but has NO vector row, so it cannot win semantic-k slots
+        assert mem.vector_store.get([PROFILE_ITEM_ID]) == {}
+        # ordinary knowledge entries stay indexed
+        knowledge_id = next(
+            o.target_id
+            for o in ops_of(mem, "semantic")
+            if o.payload.get("kind") == "user_knowledge"
+        )
+        assert mem.vector_store.get([knowledge_id])
+    finally:
+        mem.close()
+
+
+def test_memoryos_page_recall_caps_stage_one_at_top_sessions():
+    """Round-12 finding 11: both lineages run stage one as a FAISS top-5
+    search over session summaries BY COSINE before any threshold (pypi
+    `search_sessions` `top_k_sessions=5`; eval `search_sessions_by_summary`
+    `top_k=5`) — a session outside the cosine top-k is never expanded,
+    keywords notwithstanding. The knob was previously absent: every segment
+    over `segment_threshold` was expanded."""
+    from agmem.retrieval.steps import MemoryOSPageRecall
+
+    assert MemoryOSPageRecall().top_sessions == 5  # both lineages' k
+
+    llm = StubLLM(
+        {
+            "distill": [
+                # segment A: summary IS the query (cosine 1.0) but its page is
+                # irrelevant; segment B: weaker summary match, page is the query
+                {"groups": [{"topic": "a", "summary": "파리 여행 계획"}]},
+                {"groups": [{"topic": "b", "summary": "파리 소식"}]},
+            ]
+        }
+    )
+    org = MemoryOSOrganizer(
+        stm_capacity=1, stm_flush="after_add", heat_threshold=99.0, dialogue_chain=False
+    )
+    mem = make_mem(org, llm)
+    try:
+        for text, speaker in (
+            ("완전 다른 얘기", "A"),
+            ("그래", "B"),
+            ("파리 여행 계획", "A"),
+            ("좋아", "B"),
+        ):
+            mem.add_message(text, meta={"speaker": speaker})
+        # default k=5: both segments expand, B's page (the query verbatim) serves
+        assert "파리 여행 계획" in mem.search("파리 여행 계획", memory_types=("pages",)).render()
+
+        # k=1: only A (higher summary cosine) is expanded; its page misses the
+        # page threshold, so nothing serves — B was cut before the gate
+        mem.pipeline.read_steps["pages"] = MemoryOSPageRecall(top_sessions=1)
+        assert mem.search("파리 여행 계획", memory_types=("pages",)).items == []
     finally:
         mem.close()
