@@ -188,13 +188,15 @@ def test_memoryos_fidelity_presets_separate_the_two_upstream_lineages():
 
     Each assertion below is a divergence verified against upstream, not a
     preference: heat weights (1/1/1 vs 0.8/0.8/1e-4), live vs stored recency,
-    Jaccard vs the mean of containment ratios, STM capacity in pages, and
-    lowest-heat vs access-count LFU eviction."""
+    Jaccard vs the mean of containment ratios, and STM capacity in pages.
+    Eviction is deliberately NOT in that list: both lineages call `evict_lfu`,
+    so both presets say "lfu" — the earlier pypi="lowest_heat" label encoded
+    the paper's sentence, not pypi code (docs/16 session 3)."""
     pypi, ev = MemoryOSOrganizer(), MemoryOSOrganizer(fidelity="eval")
     assert (pypi.heat_weights, pypi.recency, pypi.eviction) == (
         (1.0, 1.0, 1.0),
         "live",
-        "lowest_heat",
+        "lfu",
     )
     assert (ev.heat_weights, ev.recency, ev.eviction) == ((0.8, 0.8, 0.0001), "stored", "lfu")
     assert (pypi.stm_capacity, ev.stm_capacity) == (10, 1)

@@ -8,10 +8,15 @@ theta trigger profile/knowledge extraction and reset (paper §MTM).
 ``fidelity`` picks which upstream lineage the divergent constants come
 from — ``"pypi"`` (default, the maintained library) or ``"eval"`` (the
 harness that produced the paper's LoCoMo numbers). They differ in the heat
-weights, whether recency is live or stored, the keyword-overlap formula,
-the STM capacity and the eviction policy; theta=0.6, tau=5.0 and MTM
-capacity 2000 are shared. See ``MEMORYOS_PRESETS``, which also lists the
-five defects found in the eval lineage and says which are reproduced.
+weights, whether recency is live or stored, the keyword-overlap formula and
+the STM capacity; theta=0.6, tau=5.0, MTM capacity 2000 AND the eviction
+policy are shared — both upstream lineages evict by LFU (``evict_lfu`` over
+an access counter: pypi ``mid_term.py:177``, eval ``mid_term_memory.py:120``).
+The paper's "segments with the lowest heat are evicted" (§3.3) matches
+neither codebase; ``eviction="lowest_heat"`` keeps that reading reachable as
+an explicit non-lineage option (docs/16 session 3). See ``MEMORYOS_PRESETS``,
+which also lists the five defects found in the eval lineage and says which
+are reproduced.
 
 The unit everything is counted in is the PAGE, not the message, because
 that is upstream's unit and both constants depend on it: ``short_term.py``
@@ -149,7 +154,11 @@ MEMORYOS_PRESETS: dict[str, dict] = {
         heat_weights=(1.0, 1.0, 1.0),
         recency="live",
         keyword_similarity="jaccard",
-        eviction="lowest_heat",
+        # Both lineages call evict_lfu at capacity; "lowest_heat" exists only
+        # as the paper's sentence (§3.3) and belongs to no code lineage — pass
+        # eviction="lowest_heat" explicitly to measure the paper's reading
+        # (docs/16 session 3 fixed the earlier mislabel here).
+        eviction="lfu",
         # one analysis call that already sees the previous profile
         profile_update="single",
     ),
@@ -891,9 +900,11 @@ class MemoryOSOrganizer(Organizer):
 
         # Eviction when MTM is over capacity. Two policies, and the paper and
         # the code disagree about which one MemoryOS has:
-        #   "lowest_heat" — the paper's description, and our pypi-lineage default.
+        #   "lowest_heat" — the paper's description (§3.3); no code lineage
+        #                   implements it, so only an explicit kwarg selects it.
         #   "lfu"         — what both upstream codebases actually do
-        #                   (`evict_lfu`, min over an access counter).
+        #                   (`evict_lfu`, min over an access counter); both
+        #                   presets use this since the docs/16 label fix.
         # Worth knowing before reading an LFU run: the counter only moves on a
         # retrieval hit, so on an ingest-then-eval benchmark every segment sits
         # at 0 during ingest and `min` returns whichever key came first —
@@ -911,7 +922,7 @@ class MemoryOSOrganizer(Organizer):
                     op=OpType.DELETE,
                     target_type="pages",
                     target_id=coldest,
-                    payload={"reason": "lowest_heat_eviction"},
+                    payload={"reason": f"{self.eviction}_eviction"},
                 )
             )
         return ops
