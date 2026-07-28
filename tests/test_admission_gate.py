@@ -579,6 +579,32 @@ def test_wrapper_forwards_the_consolidate_cursor_scope():
     assert inner.cursor_key == "consolidate:recording#1"
 
 
+def test_unset_novelty_types_default_from_the_wrapped_organizers_produces():
+    """A gate left at novelty_types=None must compare N against the host's own
+    output types; otherwise wrapping any non-A-Mem organizer searches "notes",
+    finds nothing, and reintroduces upstream defect (a)'s N == 1.0."""
+
+    class _Facts(_Recording):
+        produces = ("facts",)
+
+    ctx = _ctx()
+    text = "Caroline went to the LGBTQ support group"
+    ctx.vector_store.add("f1", ctx.embedder.embed([text])[0], "facts", "t")
+
+    org = AdmissionGated(_Facts(), AdmissionGate())
+    assert org.gate.novelty_types == ("facts",)
+    assert org.gate.novelty(text, ctx) == pytest.approx(0.0, abs=1e-6)
+
+    # an explicit novelty_types from the caller — even ("notes",) — is honored
+    explicit = AdmissionGated(_Facts(), AdmissionGate(novelty_types=("notes",)))
+    assert explicit.gate.novelty_types == ("notes",)
+    assert explicit.gate.novelty(text, ctx) == 1.0
+
+    # standalone (unwrapped) use keeps the A-Mem fallback at decide time
+    assert AdmissionGate().novelty_types is None
+    assert AdmissionGate().novelty(text, ctx) == 1.0  # nothing under "notes"
+
+
 def test_warm_start_is_filtered_because_hosts_override_it():
     """A gate living only in on_message would be bypassed by Nemori/MemoryOS,
     which replace warm_start with their own replay."""

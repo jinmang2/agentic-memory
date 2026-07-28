@@ -482,7 +482,12 @@ def main() -> None:
         # Same gate with the release's substring keyword matching restored, which
         # is what its published recall 0.972 was produced under. Pairing it with
         # `amem_amac` tests on our own data whether that recall is an artifact of
-        # the matching defect (audit §2 defect 2).
+        # the matching defect (audit §2 defect 2). Substring matching is
+        # necessary but not sufficient for that 0.972: the number also ran under
+        # N≡1.0, R≈0, and the U=0.5 fallback, while this config runs N live,
+        # R≡1.0, and U absent (=0) — no config reproduces the full release
+        # operating conditions. Fact-turn arithmetic: release 0.57+0.1C vs this
+        # config 0.52+0.1N+0.1C.
         "amem_amac_upstream": (
             [lambda: AdmissionGated(AMemOrganizer(), AdmissionGate(type_matching="substring"))],
             ("notes",),

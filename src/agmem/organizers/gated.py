@@ -70,6 +70,14 @@ class AdmissionGated(Organizer):
         self.name = wrapped.name
         self.produces = wrapped.produces
         self.consumes = wrapped.consumes
+        # A gate left at novelty_types=None (unset) compares N against the
+        # host's own output types. Without this defaulting, wrapping any
+        # non-A-Mem organizer would fall back to A-Mem's ("notes",), search a
+        # type the host never writes, and silently reintroduce upstream defect
+        # (a)'s shape — N pinned at 1.0. An explicit novelty_types from the
+        # caller (even ("notes",)) is honored untouched.
+        if gate.novelty_types is None:
+            gate.novelty_types = wrapped.produces
         # Every decision, for artifact capture: the admit rate and feature
         # distribution are the measurement this wiring exists to produce, and
         # `gate.stats` alone cannot say *which* turns were dropped.
@@ -92,7 +100,15 @@ class AdmissionGated(Organizer):
         Filtering up front rather than relying on the gated ``on_message`` is
         required, not stylistic: ``NemoriOrganizer`` and ``MemoryOSOrganizer``
         both override ``warm_start`` with their own replay, so a gate that only
-        sat in ``on_message`` would be bypassed for exactly those two."""
+        sat in ``on_message`` would be bypassed for exactly those two.
+
+        Known divergence between the two ingest paths: every decision here runs
+        before ``wrapped.warm_start`` writes anything, so on a fresh store no
+        host memories exist during any decision and N is pinned at 1.0 for the
+        whole corpus, whereas ``on_message`` scores N live turn-by-turn — the
+        two paths implement different gates. Latent, not a corrupted
+        measurement: the LoCoMo bench ingests via ``add_message`` (the
+        on_message path), so measured runs are unaffected."""
         admitted = []
         for episode in corpus:
             decision = self.gate.decide(episode, ctx)

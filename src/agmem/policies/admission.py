@@ -276,7 +276,9 @@ class TypePriorClassifier:
     def classify(self, content: str, declared_type: str | None = None) -> str:
         """Content category. ``declared_type`` short-circuits the rules, mirroring
         the release's ``memory.metadata['type']`` branch (dead in its own
-        pipeline, which always passes ``metadata={}``)."""
+        pipeline, which always passes ``metadata={}``). Ours is symmetric:
+        nothing in production sets ``meta['content_type']``, so the
+        short-circuit is exercised by tests but unconsumed in production."""
         if declared_type:
             return declared_type
         haystack = str(content).lower() if self.matching == "substring" else _padded(content)
@@ -319,9 +321,13 @@ UTILITY_SCHEMA: dict[str, Any] = {
     "required": ["score"],
 }
 
-# Paper's cross-validated operating point (features/README + optimize_weights_cv
-# candidate class 3), ordered (U, C, N, R, T). See the module docstring on why
-# this pair does not transfer to the debugged features.
+# Release's cross-validated operating point (upstream repo-root README.md:79-80;
+# exactly reachable as optimize_weights_cv candidate class 3), ordered
+# (U, C, N, R, T). The release never wires it into runnable code: scorer.py's
+# own defaults are [0.2]*5 / threshold 0.5 and the README quick-start does not
+# run against the release's classes — the pair reaches code only through
+# results/optimized_weights_cv.json, consumed by run_all_baselines.py:382-385.
+# See the module docstring on why it does not transfer to the debugged features.
 PAPER_WEIGHTS = (0.1, 0.1, 0.1, 0.1, 0.6)
 PAPER_THRESHOLD = 0.55
 
@@ -340,7 +346,10 @@ class AdmissionFeatures:
     type_prior: float
 
     def to_tuple(self, utility_default: float = 0.0) -> tuple[float, ...]:
-        """(U, C, N, R, T), substituting ``utility_default`` for an unevaluated U."""
+        """(U, C, N, R, T), substituting ``utility_default`` for an unevaluated U.
+
+        Exercised by tests but unconsumed in production — kept as the
+        audit-facing view of the feature vector."""
         u = self.utility if self.utility is not None else utility_default
         return (u, self.confidence, self.novelty, self.recency, self.type_prior)
 
@@ -454,6 +463,11 @@ class AdmissionGate:
     organizers through 0-arg factories per run for exactly this kind of
     per-conversation state.
 
+    A bare ``AdmissionGate()`` pairs the release-fitted weights/theta with the
+    debugged features (word matching, live N, streaming R = 1, unavailable
+    U treated as 0) — a hybrid that is neither the release nor a tuned gate.
+    Re-tuning the pair on the debugged features needs a labeled pass.
+
     Cost arithmetic, which decides whether ``use_utility`` is ever worth it:
     A-Mem spends 2 LLM calls per admitted turn and the gate's U costs 1 more, so
     with U enabled and a rejection rate ``r`` the call count goes from ``2`` to
@@ -477,7 +491,7 @@ class AdmissionGate:
         utility_role: str = "admit",
         utility_context_turns: int = 5,
         type_matching: str = "word",
-        novelty_types: tuple[str, ...] = ("notes",),
+        novelty_types: tuple[str, ...] | None = None,
         history_window: int | None = None,
     ) -> None:
         """``weights`` is (w_U, w_C, w_N, w_R, w_T) and must be non-negative and
@@ -485,9 +499,14 @@ class AdmissionGate:
 
         ``decay_rate`` is lambda per hour (paper: 0.01, a ~69h half-life).
         ``novelty_types`` are the memory types N compares against — the host
-        organizer's ``produces``. ``history_window`` caps the transcript the
-        Confidence feature scans; ``None`` keeps the release's behaviour of
-        scanning every prior turn."""
+        organizer's ``produces``. ``None`` means "unset": a standalone
+        ``decide`` falls back to A-Mem's ``("notes",)``, and ``AdmissionGated``
+        fills an unset gate from ``wrapped.produces``. Without that defaulting,
+        wrapping any non-A-Mem organizer would search a type the host never
+        writes and silently reintroduce upstream defect (a)'s shape — N pinned
+        at 1.0. ``history_window`` caps the transcript the Confidence feature
+        scans; ``None`` keeps the release's behaviour of scanning every prior
+        turn."""
         if len(weights) != 5:
             raise ValueError(f"weights must have 5 entries (U, C, N, R, T), got {len(weights)}")
         if any(w < 0 for w in weights):
@@ -551,7 +570,10 @@ class AdmissionGate:
         embedding = ctx.embedder.embed([content])[0]
         best_similarity = 0.0
         found = False
-        for memory_type in self.novelty_types:
+        # None = "unset" (see __init__): standalone use falls back to A-Mem's
+        # note type; AdmissionGated has already filled it from the host.
+        types = self.novelty_types if self.novelty_types is not None else ("notes",)
+        for memory_type in types:
             hits = ctx.vector_store.search(
                 embedding, k=1, memory_type=memory_type, namespace=ctx.namespace
             )
@@ -658,6 +680,9 @@ class AdmissionGate:
         else:
             # No U value: admit on the lower bound, else report the upper bound
             # that ruled it out. Identical to treating an unavailable U as 0.
+            # Deliberate deviation: upstream substitutes 0.5 on unavailability
+            # or failure (utility.py:57-58, optimize_weights_cv.py:73-75), so
+            # this lower bound is 0.05 stricter at the release weights.
             admit = base >= self.threshold
             score = base if admit else base + w_u
 
