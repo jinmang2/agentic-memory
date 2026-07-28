@@ -10,7 +10,9 @@ v1-equivalent with the logic previously inlined in ``NemoriOrganizer.on_message`
 out the remaining stages so the organizer becomes a thin composition of
 independently testable stages. ``ThreeWayIntegrator`` is the v4 §3.3.3 P_con
 consolidation (new/merge/conflict) — a paper mechanism, so it belongs in the
-faithful core even though the upstream *code* ships only append + PR#19 dedup.
+faithful core even though the upstream *code* ships only append (an id-reuse
+dedup was proposed in GitHub PR#19; the archived deployed snapshot has no
+dedup path, so the PR is not verifiable locally — round-12 finding 6).
 The one genuinely non-paper stage (``SemanticOfflineConsolidator`` — a deferred
 cursor-resumed pass with no paper or upstream counterpart) lives in
 ``organizers.experimental.nemori_mixing`` so the fidelity boundary stays explicit.
@@ -18,9 +20,26 @@ cursor-resumed pass with no paper or upstream counterpart) lives in
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import OrganizerContext
+
+
+@dataclass
+class Segment:
+    """One segmenter output group: its messages plus the segmenter's stated
+    topic for the group. Upstream threads the per-group ``topic`` into the
+    episode prompt as ``boundary_reason`` (memory_system.py:121-123 →
+    prompts.py:17-18); "conversation" is upstream's own filler for the paths
+    that produce no topic (the single-group below-gate path,
+    ``group.get("topic", "conversation")``) and is reused here for the
+    per-message boundary and the leftover-retention segment."""
+
+    episodes: list[Episode] = field(default_factory=list)
+    topic: str = "conversation"
+
 
 BOUNDARY_SCHEMA = {
     "type": "object",
@@ -88,12 +107,14 @@ class PerMessageBoundary:
 
     def push(
         self, buffer: list[Episode], ctx: OrganizerContext
-    ) -> tuple[list[list[Episode]], list[Episode]]:
-        """Return (segments to flush, remaining buffer) for the given buffer."""
+    ) -> tuple[list[Segment], list[Episode]]:
+        """Return (segments to flush, remaining buffer) for the given buffer.
+        Segments carry the filler topic "conversation" — the v1 formalism has
+        no per-group topic (see ``Segment``)."""
         if len(buffer) < self.buffer_min:
             return [], buffer
         if len(buffer) >= self.buffer_max:
-            return [buffer], []
+            return [Segment(buffer)], []
 
         verdict = ctx.llm.call(
             "extract",
@@ -109,12 +130,12 @@ class PerMessageBoundary:
             return [], buffer  # drop counted upstream; treat as no boundary
         if verdict.get("boundary") and float(verdict.get("confidence", 0.0)) >= self.confidence:
             # The newest message opened the next topic: it stays buffered.
-            return [buffer[:-1]], [buffer[-1]]
+            return [Segment(buffer[:-1])], [buffer[-1]]
         return [], buffer
 
-    def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
+    def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[Segment]:
         """Flush whatever remains in the buffer as the final segment(s)."""
-        return [buffer] if buffer else []
+        return [Segment(buffer)] if buffer else []
 
 
 BATCH_SEGMENT_SCHEMA = {
@@ -155,46 +176,60 @@ Return JSON: {{"episodes": [{{"indices": [0, 1, ...], "topic": "..."}}]}}"""
 class BatchPartitioner:
     """v4 §3.2.1 Local Message Partitioning / upstream batch segmentation.
 
-    Buffers until ``window`` then LLM-partitions the whole buffer. flush()
-    on a tail shorter than the window stores it as one segment without an
-    LLM call — upstream's single-'conversation'-group path below
-    batch_threshold."""
+    BACKLOG-GRAB semantics (upstream memory_system.py:76-113): ``window`` is
+    a MINIMUM GATE on the accumulated backlog — upstream's ``batch_threshold``
+    — not a fixed window size. When ``push`` fires it grabs the ENTIRE buffer,
+    which can exceed ``window`` when messages were batch-added
+    (``NemoriOrganizer.warm_start``), and `_partition` segments it in chunks
+    of ``chunk_max`` (=80, upstream ``_SEGMENT_CHUNK_SIZE``). Upstream's
+    published runs rode async racing — fire-and-forget ``_process`` tasks
+    behind a per-user lock (evaluation/locomo/add.py) let adds run ahead of
+    the first LLM call, so later grabs saw large backlogs; our synchronous
+    ingest reaches the same code shape only via bulk adds, and per-message
+    feeding always fires at exactly ``window``. The "~80-message contexts in
+    published runs" is timing-dependent, not guaranteed (round-12 finding 2,
+    verifier's caveat). flush() on a tail shorter than the gate stores it as
+    one segment without an LLM call — upstream's single-'conversation'-group
+    path below batch_threshold."""
 
     def __init__(self, window: int = 20, buffer_min: int = 2, chunk_max: int = 80) -> None:
-        """``window`` messages accumulate before ``push`` triggers a
-        partition call; ``chunk_max`` caps how many messages go into one LLM
-        partitioning call, splitting larger buffers into sequential chunks.
-        ``buffer_min`` is accepted for interface parity with
-        `PerMessageBoundary` but unused here (batch mode has no per-message
-        minimum)."""
+        """``window`` is the minimum backlog size at which ``push`` triggers
+        partitioning of the whole buffer (upstream ``batch_threshold=20``);
+        ``chunk_max`` caps how many messages go into one LLM partitioning
+        call, splitting larger backlogs into sequential chunks (upstream
+        ``_SEGMENT_CHUNK_SIZE=80``, segmenter.py:15). ``buffer_min`` is
+        accepted for interface parity with `PerMessageBoundary` but unused
+        here (batch mode has no per-message minimum)."""
         self.window = window
         self.buffer_min = buffer_min
-        self.chunk_max = chunk_max  # upstream: >80msg batches are chunked
+        self.chunk_max = chunk_max  # upstream: >80msg backlogs are chunked
 
     def push(
         self, buffer: list[Episode], ctx: OrganizerContext
-    ) -> tuple[list[list[Episode]], list[Episode]]:
-        """Returns ``([], buffer)`` unchanged until ``window`` is reached;
-        once reached, partitions the WHOLE buffer via `_partition` and
-        always returns an empty remaining buffer (unlike
-        `PerMessageBoundary`, which may keep a tail message buffered)."""
+    ) -> tuple[list[Segment], list[Episode]]:
+        """Returns ``([], buffer)`` unchanged while the backlog is below the
+        ``window`` gate; once at/above it, grabs and partitions the WHOLE
+        buffer via `_partition` — however large it has grown — and always
+        returns an empty remaining buffer (unlike `PerMessageBoundary`,
+        which may keep a tail message buffered). See the class docstring for
+        why the grab, not the gate, sets the segmentation context size."""
         if len(buffer) < self.window:
             return [], buffer
         return self._partition(buffer, ctx), []
 
-    def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
-        """Empty buffer -> ``[]``. Below ``window`` -> the whole buffer as
-        one segment, no LLM call (upstream's single-group short-batch path).
-        At or above ``window`` -> partitions via `_partition` same as
-        `push`."""
+    def flush(self, buffer: list[Episode], ctx: OrganizerContext) -> list[Segment]:
+        """Empty buffer -> ``[]``. Below the ``window`` gate -> the whole
+        buffer as one segment, no LLM call (upstream's single-group
+        short-batch path, topic "conversation"). At or above the gate ->
+        partitions via `_partition` same as `push`."""
         if not buffer:
             return []
         if len(buffer) < self.window:
-            return [buffer]
+            return [Segment(buffer)]
         return self._partition(buffer, ctx)
 
-    def _partition(self, buffer: list[Episode], ctx: OrganizerContext) -> list[list[Episode]]:
-        segments: list[list[Episode]] = []
+    def _partition(self, buffer: list[Episode], ctx: OrganizerContext) -> list[Segment]:
+        segments: list[Segment] = []
         for start in range(0, len(buffer), self.chunk_max):
             chunk = buffer[start : start + self.chunk_max]
             indexed = "\n".join(f"[{i}] {_fmt(e)}" for i, e in enumerate(chunk))
@@ -216,10 +251,19 @@ class BatchPartitioner:
                 if not indexes:
                     continue
                 covered.update(indexes)
-                segments.append([chunk[i] for i in indexes])
+                # The group's topic rides along so the episode generator can
+                # receive it as boundary_reason (upstream memory_system.py:
+                # 121-123 — round-12 finding 7); upstream's own filler when
+                # the LLM returns none is "conversation".
+                segments.append(
+                    Segment(
+                        [chunk[i] for i in indexes],
+                        topic=str(g.get("topic") or "").strip() or "conversation",
+                    )
+                )
             leftover = [chunk[i] for i in range(len(chunk)) if i not in covered]
             if leftover:  # LLM 실패/누락 인덱스 — 세그먼트를 잃지 않는다 (프로젝트 원칙)
-                segments.append(leftover)
+                segments.append(Segment(leftover))
         return segments
 
 
@@ -246,15 +290,22 @@ MERGE_CONTENT_SCHEMA = {
 # Condensed from upstream MERGE_DECISION; the >1h ban line is injected only
 # when time_gap_hours is set (upstream preset) — the v4 paper has no time
 # constraint (verified 2026-07-18, docs/research/write-path-lifecycle-survey.md §1.2).
+# Exposure mirrors upstream merger.py:87-94,173-183 (round-12 finding 8, with
+# the verifier's correction): the NEW episode is shown as time + content only
+# (NO title); each CANDIDATE carries Time (with message count), Title
+# (merger.py:180 — candidates DO include Title; the original audit had this
+# backwards) and content TRUNCATED to 200 chars (merger.py:181). Envelope
+# difference, deliberate: upstream prints a "Candidate ID:" line and the LLM
+# answers with the id string (merge_target_id); we index candidates and select
+# by target_index — same selection mechanism, different addressing.
 MERGE_DECISION_PROMPT = """A new episodic memory arrived. Decide whether it
 describes the SAME event as one of the candidate episodes and should be
 merged into it, or is a distinct episode.
 Merge only when they cover the same underlying event or activity thread.
 {time_gap_rule}
 New episode:
-title: {title}
-narrative: {narrative}
-timestamp: {timestamp}
+Time: {timestamp} ({n_messages} messages)
+Content: {narrative}
 
 Candidates (indexed):
 {candidates}
@@ -307,12 +358,19 @@ class EpisodeMerger:
         time_gap_hours: float | None = None,
     ) -> None:
         """``top_k`` bounds the candidate-episode neighborhood searched.
-        ``similarity=None`` means no cosine floor is applied before asking
-        the LLM (v4 paper has none); ``time_gap_hours=None`` means no
-        merge-ban-by-elapsed-time rule is injected into the merge-decision
-        prompt (see the field comments for each default's provenance)."""
+        ``similarity=None`` reproduces BOTH lineages' deployed behavior: the
+        v4 paper specifies no cosine floor, and upstream's
+        ``_similarity_threshold=0.85`` (merger.py:27,34) is config-plumbed
+        but NEVER read — ``_find_similar`` passes the top-5 hits to the LLM
+        unfiltered (merger.py:69-80; round-12 finding 1). A non-None value
+        is our documented extension, not an upstream behavior.
+        ``time_gap_hours=None`` means no merge-ban-by-elapsed-time rule is
+        injected into the merge-decision prompt (see the field comments for
+        each default's provenance)."""
         self.top_k = top_k
-        self.similarity = similarity  # upstream 0.85; v4 paper doesn't specify one (None)
+        # Our extension (dead knob upstream): config.py:86 plumbs
+        # merge_similarity_threshold=0.85 into a field no code path reads.
+        self.similarity = similarity
         self.time_gap_hours = time_gap_hours  # upstream 1.0; v4 paper has no gap ban (None)
 
     def merge_or_none(
@@ -347,18 +405,26 @@ class EpisodeMerger:
         if not candidates:
             return None
         gap_rule = TIME_GAP_RULE.format(hours=self.time_gap_hours) if self.time_gap_hours else ""
-        candidate_text = "\n".join(
-            f"[{i}] title: {c.get('title', '')} | timestamp: {c.get('timestamp', '')}\n"
-            f"    narrative: {c.get('content', '')}"
+        # Candidate exposure = upstream _format_candidates (merger.py:173-183):
+        # time + message count, Title, content[:200] + "...". Message counts
+        # come from source_episode_ids — the same provenance upstream's
+        # len(source_messages) reads. ``title`` is deliberately NOT shown for
+        # the new episode (upstream shows content only); it stays a parameter
+        # because the merge-content synthesis prompt and the fallbacks need it.
+        candidate_text = "\n\n".join(
+            f"[{i}] Time: {c.get('timestamp', '')}"
+            f" ({len(c.get('source_episode_ids') or [])} messages)\n"
+            f"    Title: {c.get('title', '')}\n"
+            f"    Content: {str(c.get('content', ''))[:200]}..."
             for i, c in enumerate(candidates)
         )
         verdict = ctx.llm.call(
             "distill",
             MERGE_DECISION_PROMPT.format(
                 time_gap_rule=gap_rule,
-                title=title,
-                narrative=narrative,
                 timestamp=episode_timestamp,
+                n_messages=len(source_ids),
+                narrative=narrative,
                 candidates=candidate_text,
             ),
             MERGE_DECISION_SCHEMA,
@@ -519,8 +585,9 @@ class ThreeWayIntegrator:
 
     This is the v4 preset's ``semantic_integration="llm3way"`` stage. It lives
     in the faithful core (not experimental/) because it implements a paper
-    mechanism: the upstream *code* ships append-only + PR#19 id-reuse dedup and
-    has no three-way path, but the v4 *paper* §3.3.3 defines exactly this
+    mechanism: the upstream *code* ships append-only (an id-reuse dedup was
+    proposed in GitHub PR#19, not in the deployed snapshot) and has no
+    three-way path, but the v4 *paper* §3.3.3 defines exactly this
     new/merge/conflict decision. The genuinely non-paper deferred variant
     (``SemanticOfflineConsolidator``) stays in experimental/nemori_mixing.py.
     """
@@ -630,12 +697,20 @@ class ThreeWayIntegrator:
 
 
 class DedupIdReuseIntegrator:
-    """PR#19 semantics: top-1 embedding match >= threshold reuses the id —
-    latest content wins, provenance re-pointed. No LLM call."""
+    """Semantics of upstream GitHub PR#19: top-1 embedding match >= threshold
+    reuses the id — latest content wins, provenance re-pointed. No LLM call.
+
+    Lineage caveat (round-12 finding 6): this dedup was *proposed in PR#19*,
+    which is NOT in the archived deployed snapshot — the snapshot has no dedup
+    path at all, and its only related artifact is the never-read config knob
+    ``semantic_similarity_threshold=0.85`` (config.py:82). The PR itself is
+    not retained locally, so the attribution rests on GitHub, not on code we
+    can re-audit; the 0.85 coincidence is suggestive, not evidence."""
 
     def __init__(self, threshold: float = 0.85) -> None:
         """``threshold`` is the min cosine similarity for the top-1 match to
-        be treated as the same fact and reused (PR#19 semantics)."""
+        be treated as the same fact and reused (PR#19 semantics — see the
+        class docstring's lineage caveat)."""
         self.threshold = threshold
 
     def integrate(

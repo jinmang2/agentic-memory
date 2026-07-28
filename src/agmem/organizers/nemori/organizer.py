@@ -27,7 +27,8 @@ Deviations from the reference system (github.com/nemori-ai/nemori):
   eval) is implemented as ``EpisodeMerger``; LoCoMo's multi-day session
   gaps mean upstream's >1h-gap merge ban would block most merges anyway
 - v4 semantic new/merge/conflict integration (§3.3.3) is implemented as
-  ``ThreeWayIntegrator`` (plus ``DedupIdReuseIntegrator`` for PR#19)
+  ``ThreeWayIntegrator`` (plus ``DedupIdReuseIntegrator`` for the id-reuse
+  dedup proposed in upstream PR#19 — not in the deployed snapshot)
 - storage is our MemoryOp pipeline instead of PostgreSQL + Qdrant
 - if episode generation fails we emit a mechanical episode instead of
   losing the segment (title = first words, narrative = raw messages);
@@ -55,6 +56,7 @@ from agmem.organizers.nemori.stages import (
     DedupIdReuseIntegrator,
     EpisodeMerger,
     PerMessageBoundary,
+    Segment,
     ThreeWayIntegrator,
     _fmt,
 )
@@ -65,8 +67,12 @@ logger = logging.getLogger("agmem.organizers.nemori")
 # (docs/research/write-path-lifecycle-survey.md §5):
 # - v1: paper v1 formalism (per-message boundary, no merge, plain append)
 # - v4: paper values (window=20, K_e=5, K_m=5, tau=0.70, no time-gap ban)
-# - upstream: github.com/nemori-ai/nemori code values (batch 20/2/25,
-#   chunk 80, similarity 0.85, top-5, >1h gap ban)
+# - upstream: github.com/nemori-ai/nemori DEPLOYED-BEHAVIOR values (batch
+#   gate 20, chunk 80, merge top-5 with NO similarity floor, >1h gap ban,
+#   episode_min 1, semantic top-20). "Deployed behavior", not "config
+#   values": upstream defines several knobs its code never reads, and this
+#   preset mirrors what the code DOES, not what the config file says
+#   (round-12 findings 1, 5, 9).
 NEMORI_PRESETS: dict[str, dict] = {
     "v1": dict(
         segmenter="per_message",
@@ -89,17 +95,36 @@ NEMORI_PRESETS: dict[str, dict] = {
         integrate_tau=0.70,
         consolidation="off",
     ),
+    # buffer_min/buffer_max were REMOVED from this preset: with
+    # segmenter="batch" nothing reads either (round-12 finding 9) — keeping
+    # them presented inert numbers as active "code values". They mirrored
+    # upstream's own four defined-never-read config knobs (buffer_size_max,
+    # episode_max_messages, semantic_similarity_threshold, and the merger's
+    # similarity_threshold — config.py:73,77,82,86, merger.py:34).
     "upstream": dict(
         segmenter="batch",
+        # window == upstream batch_threshold=20: a MINIMUM GATE on the
+        # accumulated backlog, not a fixed window (memory_system.py:105-113).
         window=20,
-        buffer_min=2,
-        buffer_max=25,
-        chunk_max=80,
+        chunk_max=80,  # _SEGMENT_CHUNK_SIZE (segmenter.py:15)
+        # Both eval configs set episode_min_messages=1 (the library default
+        # is 2, which silently DROPS singleton groups — messages lost).
+        episode_min_messages=1,
         episode_merge="llm",
         merge_top_k=5,
-        merge_similarity=0.85,
+        # None, NOT 0.85: upstream's merge_similarity_threshold=0.85
+        # (config.py:86) is config-plumbed into merger._similarity_threshold
+        # and NEVER read — _find_similar passes the top-5 hits to the merge
+        # LLM unfiltered (merger.py:69-80; round-12 finding 1). The knob
+        # itself stays available as our documented extension.
+        merge_similarity=None,
         merge_time_gap_hours=1.0,
         semantic_integration="append",
+        # Both eval configs run search_top_k_semantic=20, used by the
+        # predict-stage retrieval (memory_system.py:170-173) — the published
+        # path. The library signature default is 10 (config.py:91); v1/v4
+        # keep that default (round-12 finding 5).
+        semantic_top_k=20,
         consolidation="off",
     ),
 }
@@ -129,6 +154,11 @@ CALIBRATE_SCHEMA = {
 # Paper §3.2.2 "Narrative Episode Generation".
 # Condensed from EPISODE_GENERATION_PROMPT; temporal anchoring is mandatory,
 # including upstream's parenthetical conversion style and its example.
+# The "Boundary detection reason" slot carries the segmenter's per-group
+# topic, exactly as upstream threads it (memory_system.py:121-123 →
+# prompts.py:17-18); paths without a topic feed upstream's own filler
+# "conversation" (round-12 finding 7 — the schema's topic field used to be
+# a dead output here).
 EPISODE_PROMPT = """You are an episodic memory generation expert. Convert this
 conversation segment into one episodic memory.
 1. title: a specific title for the episode (10-20 words)
@@ -147,6 +177,9 @@ conversation segment into one episodic memory.
 
 Segment:
 {segment}
+
+Boundary detection reason:
+{boundary_reason}
 
 Return JSON: {{"title": "...", "narrative": "...", "timestamp": "..."}}"""
 
@@ -254,6 +287,7 @@ class NemoriOrganizer(Organizer):
         semantic_top_k: int | None = None,
         window: int | None = None,
         chunk_max: int | None = None,
+        episode_min_messages: int | None = None,
         merge_top_k: int | None = None,
         merge_similarity: float | None = None,
         merge_time_gap_hours: float | None = None,
@@ -281,6 +315,7 @@ class NemoriOrganizer(Organizer):
             semantic_top_k=semantic_top_k,
             window=window,
             chunk_max=chunk_max,
+            episode_min_messages=episode_min_messages,
             merge_top_k=merge_top_k,
             merge_similarity=merge_similarity,
             merge_time_gap_hours=merge_time_gap_hours,
@@ -341,7 +376,17 @@ class NemoriOrganizer(Organizer):
         self.buffer_min = params.get("buffer_min", 2)  # repo config buffer_size_min=2
         self.buffer_max = params.get("buffer_max", 25)  # paper beta_max=25
         self.boundary_confidence = params.get("boundary_confidence", 0.7)  # paper sigma=0.7
-        self.semantic_top_k = params.get("semantic_top_k", 10)  # repo search_top_k_semantic=10
+        # Signature default 10 == upstream config.py:91; BOTH eval configs ran
+        # 20 for the predict-stage retrieval (memory_system.py:170-173), which
+        # the "upstream" preset carries (round-12 finding 5).
+        self.semantic_top_k = params.get("semantic_top_k", 10)
+        # Upstream drops segment groups smaller than episode_min_messages
+        # (memory_system.py:118-119): with the LIBRARY default of 2
+        # (config.py:76) singleton groups are silently skipped and those
+        # messages LOST (they are still marked processed). Both eval configs
+        # set 1, so the published path keeps everything — our default is 1
+        # for the same reason (and our no-loss principle). Round-12 finding 3.
+        self.episode_min_messages = int(params.get("episode_min_messages", 1))
         self._warned_no_llm = False
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -364,26 +409,37 @@ class NemoriOrganizer(Organizer):
 
         self.buffer.append(episode)
         segments, self.buffer = self._segmenter.push(self.buffer, ctx)
-        ops: list[MemoryOp] = []
-        # Call-local supersession guard (review I1): the whole batch of ops is
-        # applied to doc_store/vector_store only after this method returns, so
-        # a fact/episode invalidated by an earlier segment still looks live to
-        # a later segment's candidate search. Threading one ``superseded`` set
-        # through every _flush_segment (into merger + ThreeWay exclude_ids)
-        # mirrors the consolidator's within-pass guard so the inline v4 path
-        # can't earn two merge heads for the same target within one
-        # on_message batch.
-        superseded: set[str] = set()
-        for segment in segments:
-            ops.extend(self._flush_segment(segment, ctx, superseded))
-        return ops
+        return self._flush_segments(segments, ctx)
 
     def warm_start(self, corpus: list[Episode], ctx: OrganizerContext) -> list[MemoryOp]:
-        """Replays `corpus` through `on_message`, then flushes the buffer — unlike a
-        stream of `add_message` calls, warm start has no later message to trigger a
-        boundary cut, so the tail segment would otherwise sit unflushed."""
-        ops = super().warm_start(corpus, ctx)
-        ops.extend(self.flush_buffer(ctx))  # don't strand the tail segment
+        """Bulk ingestion. With the batch segmenter this takes upstream's bulk
+        shape: ``add_messages`` accepts the whole LIST (memory_system.py:76-83),
+        so the entire corpus lands in the buffer before one ``_process``-style
+        grab — the backlog can exceed ``window`` and ``chunk_max=80`` becomes
+        genuinely reachable (round-12 finding 2; upstream's published runs got
+        their large backlogs from async racing instead, see `BatchPartitioner`).
+        The per-message boundary (v1 formalism) keeps the message-by-message
+        replay — it is inherently online. Either way the tail is flushed, since
+        warm start has no later message to trigger a boundary cut."""
+        if not isinstance(self._segmenter, BatchPartitioner):
+            ops = super().warm_start(corpus, ctx)
+            ops.extend(self.flush_buffer(ctx))  # don't strand the tail segment
+            return ops
+        if ctx.llm is None:
+            if not self._warned_no_llm:
+                logger.warning(
+                    "nemori: no LLM configured — boundary detection and "
+                    "distillation disabled, messages bypass the buffer "
+                    "(explicit degradation)"
+                )
+                self._warned_no_llm = True
+            return []
+        self.buffer.extend(corpus)
+        segments, self.buffer = self._segmenter.push(self.buffer, ctx)
+        ops = self._flush_segments(segments, ctx)
+        # Below-gate tail -> single group, no segmentation LLM call (upstream's
+        # flush()/short-batch path).
+        ops.extend(self.flush_buffer(ctx))
         return ops
 
     def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
@@ -391,11 +447,7 @@ class NemoriOrganizer(Organizer):
         if not self.buffer or ctx.llm is None:
             return []
         segments, self.buffer = self._segmenter.flush(self.buffer, ctx), []
-        ops: list[MemoryOp] = []
-        superseded: set[str] = set()  # same within-batch guard as on_message (I1)
-        for segment in segments:
-            ops.extend(self._flush_segment(segment, ctx, superseded))
-        return ops
+        return self._flush_segments(segments, ctx)
 
     def consolidate(self, ctx: OrganizerContext) -> list[MemoryOp]:
         """No-op unless `consolidation="semantic_offline"` was selected at
@@ -407,29 +459,55 @@ class NemoriOrganizer(Organizer):
 
     # ---- internals ----------------------------------------------------------
 
+    def _flush_segments(self, segments: list[Segment], ctx: OrganizerContext) -> list[MemoryOp]:
+        """Common drain behind on_message / flush_buffer / warm_start.
+
+        Call-local supersession guard (review I1): the whole batch of ops is
+        applied to doc_store/vector_store only after the calling hook returns,
+        so a fact/episode invalidated by an earlier segment still looks live to
+        a later segment's candidate search. Threading one ``superseded`` set
+        through every _flush_segment (into merger + ThreeWay exclude_ids)
+        mirrors the consolidator's within-pass guard so the inline v4 path
+        can't earn two merge heads for the same target within one batch.
+
+        Groups smaller than ``episode_min_messages`` are skipped BEFORE any
+        LLM call — upstream memory_system.py:118-119 (round-12 finding 3);
+        with the upstream library default of 2 those messages are silently
+        LOST, which is why both eval configs and our default use 1."""
+        ops: list[MemoryOp] = []
+        superseded: set[str] = set()
+        for segment in segments:
+            if len(segment.episodes) < self.episode_min_messages:
+                continue
+            ops.extend(self._flush_segment(segment, ctx, superseded))
+        return ops
+
     def _flush_segment(
         self,
-        segment: list[Episode],
+        segment: Segment,
         ctx: OrganizerContext,
         superseded: set[str] | None = None,
     ) -> list[MemoryOp]:
-        # ``superseded`` is the call-local guard threaded from on_message /
-        # flush_buffer (I1). None keeps _flush_segment independently callable
-        # (tests) — a fresh set then guards only within this single segment.
+        # ``superseded`` is the call-local guard threaded from _flush_segments
+        # (I1). None keeps _flush_segment independently callable (tests) — a
+        # fresh set then guards only within this single segment.
         if superseded is None:
             superseded = set()
-        segment_text = "\n".join(_fmt(e) for e in segment)
+        episodes = segment.episodes
+        segment_text = "\n".join(_fmt(e) for e in episodes)
 
-        # 1. representation alignment: title + temporally-anchored narrative
+        # 1. representation alignment: title + temporally-anchored narrative.
+        # The segmenter's per-group topic rides in as the boundary reason
+        # (upstream memory_system.py:121-123 — round-12 finding 7).
         generated = ctx.llm.call(
             "distill",
-            EPISODE_PROMPT.format(segment=segment_text),
+            EPISODE_PROMPT.format(segment=segment_text, boundary_reason=segment.topic),
             EPISODE_SCHEMA,
             required_keys=("title", "narrative"),
             phase="narrate",
         )
-        fallback_title = " ".join(segment[0].content.split()[:8])
-        fallback_ts = segment[0].meta.get("date") or segment[0].timestamp.isoformat()
+        fallback_title = " ".join(episodes[0].content.split()[:8])
+        fallback_ts = episodes[0].meta.get("date") or episodes[0].timestamp.isoformat()
         if generated is None:
             logger.warning("nemori: episode generation failed — mechanical fallback episode")
             title, narrative, episode_timestamp = fallback_title, segment_text, fallback_ts
@@ -438,7 +516,7 @@ class NemoriOrganizer(Organizer):
             narrative = str(generated.get("narrative", "")).strip() or segment_text
             episode_timestamp = str(generated.get("timestamp", "")).strip() or fallback_ts
 
-        source_ids = [e.id for e in segment]
+        source_ids = [e.id for e in episodes]
         episode_id = new_id()
 
         # 2. v4 §3.2.3 / upstream merger: is this the same event as a nearby
@@ -453,12 +531,29 @@ class NemoriOrganizer(Organizer):
             if self._merger
             else None
         )
+        calib_episodes = episodes
         if merged is not None:
             merge_ops, episode_id, title, narrative = merged
             ops = list(merge_ops)  # ADD 대신 MERGE+INVALIDATE
             # the merged-away episode must not be re-offered as a live merge
             # candidate to a later segment in this same batch (I1)
             superseded.update(o.target_id for o in merge_ops if o.op is OpType.INVALIDATE)
+            # Round-12 finding 4: after a MERGE, upstream regenerates
+            # semantics from the MERGED episode, whose source_messages are
+            # target + new combined (merger.py:133, memory_system.py:150-156)
+            # and which feed the calibrate prompt as original_messages
+            # (semantic.py:94-97) — so calibration must see BOTH episodes'
+            # raw messages, target's first. The MERGE head already carries
+            # the combined provenance (old's source_episode_ids + ours), and
+            # the raw episodes are durable before on_message runs
+            # (write-then-organize), so they hydrate from the doc store in
+            # payload order. If nothing hydrates (e.g. a target seeded
+            # without stored raws), fall back to the new segment alone.
+            merged_source_ids = list(merge_ops[0].payload.get("source_episode_ids") or source_ids)
+            hydrated = ctx.doc_store.get_episodes(merged_source_ids)
+            if hydrated:
+                calib_episodes = hydrated
+                source_ids = merged_source_ids  # semantic provenance covers both episodes
         else:
             ops = [
                 MemoryOp(
@@ -476,8 +571,10 @@ class NemoriOrganizer(Organizer):
                 )
             ]
         # upstream original_messages format for calibration: role: text,
-        # no timestamps (time/date is banned from semantic statements anyway)
-        plain_text = "\n".join(f"{e.role}: {e.content}" for e in segment)
+        # no timestamps (time/date is banned from semantic statements anyway).
+        # ``calib_episodes`` is the new segment, or after a merge the merged
+        # episode's combined raw material (round-12 finding 4).
+        plain_text = "\n".join(f"{e.role}: {e.content}" for e in calib_episodes)
         ops.extend(
             self._predict_calibrate(
                 title, narrative, plain_text, episode_id, source_ids, ctx, superseded

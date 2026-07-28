@@ -5,11 +5,13 @@ from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.embed.fake import FakeEmbedder
 from agmem.organizers.nemori import NemoriOrganizer
+from agmem.organizers.nemori.organizer import NEMORI_PRESETS
 from agmem.organizers.nemori.stages import (
     AppendIntegrator,
     BatchPartitioner,
     DedupIdReuseIntegrator,
     PerMessageBoundary,
+    Segment,
     ThreeWayIntegrator,
 )
 
@@ -34,8 +36,15 @@ def test_presets_resolve_to_stages():
 
     up = NemoriOrganizer(fidelity="upstream")
     assert isinstance(up._segmenter, BatchPartitioner)
-    assert up._merger.similarity == 0.85 and up._merger.time_gap_hours == 1.0
+    # Round-12 finding 1: upstream's merge_similarity_threshold=0.85 is a dead
+    # knob (never read) — the deployed merge path applies NO cosine floor.
+    assert up._merger.similarity is None and up._merger.time_gap_hours == 1.0
     assert isinstance(up._integrator, AppendIntegrator)
+    assert up.semantic_top_k == 20  # published predict-stage retrieval (finding 5)
+    assert up.episode_min_messages == 1  # eval configs; library default 2 drops groups
+    # Finding 9: knobs the batch path never reads were removed from the preset.
+    assert "buffer_min" not in NEMORI_PRESETS["upstream"]
+    assert "buffer_max" not in NEMORI_PRESETS["upstream"]
 
     # 명시 인자가 프리셋을 이긴다 (mixing)
     mix = NemoriOrganizer(
@@ -78,14 +87,17 @@ def test_batch_partitioner_waits_then_partitions():
     assert out == [] and len(rest) == 3  # window 미달 — LLM 콜 없음
     assert llm.calls == []
     out, rest = seg.push(_eps(4), ctx)
-    assert [len(s) for s in out] == [2, 2] and rest == []
+    assert [len(s.episodes) for s in out] == [2, 2] and rest == []
+    assert [s.topic for s in out] == ["a", "b"]  # topic rides along (round-12 finding 7)
 
 
 def test_batch_partitioner_flush_small_tail_single_group():
     seg = BatchPartitioner(window=20, buffer_min=2)
     llm = StubLLM({"extract": []})
     ctx = type("C", (), {"llm": llm})()
-    assert [len(s) for s in seg.flush(_eps(3), ctx)] == [3]  # <window: 단일 그룹, LLM 없음
+    out = seg.flush(_eps(3), ctx)
+    assert [len(s.episodes) for s in out] == [3]  # <window: 단일 그룹, LLM 없음
+    assert out[0].topic == "conversation"  # upstream's own filler topic
     assert llm.calls == []
 
 
@@ -93,7 +105,108 @@ def test_batch_partitioner_llm_failure_falls_back_to_one_segment():
     seg = BatchPartitioner(window=2)
     ctx = type("C", (), {"llm": StubLLM({"extract": []})})()  # 응답 소진 → None
     out, rest = seg.push(_eps(2), ctx)
-    assert [len(s) for s in out] == [2] and rest == []
+    assert [len(s.episodes) for s in out] == [2] and rest == []
+
+
+def test_batch_partitioner_backlog_grab_chunks_at_80():
+    """Round-12 finding 2: ``window`` is a MINIMUM GATE on the backlog, not a
+    fixed window — a buffer larger than window is grabbed whole and segmented
+    in chunks of chunk_max=80 (upstream _SEGMENT_CHUNK_SIZE), so chunk_max is
+    genuinely reachable under bulk ingestion."""
+    seg = BatchPartitioner(window=20, chunk_max=80)
+    llm = StubLLM(
+        {
+            "extract": [
+                {"episodes": [{"indices": list(range(80)), "topic": "bulk"}]},
+                {"episodes": [{"indices": list(range(20)), "topic": "tail"}]},
+            ]
+        }
+    )
+    ctx = type("C", (), {"llm": llm})()
+    out, rest = seg.push(_eps(100), ctx)
+    assert rest == []
+    assert len(llm.calls) == 2  # one 80-message chunk + one 20-message chunk
+    assert "[79]" in llm.calls[0][1] and "[79]" not in llm.calls[1][1]
+    assert [len(s.episodes) for s in out] == [80, 20]
+    assert [s.topic for s in out] == ["bulk", "tail"]
+
+
+def test_warm_start_bulk_backlog_exceeds_window():
+    """warm_start with the batch segmenter takes upstream's bulk shape
+    (add_messages accepts the whole LIST, memory_system.py:76-83): the corpus
+    lands in the buffer before one grab, so the segmentation LLM sees MORE
+    than ``window`` messages in a single call — per-message feeding would have
+    fired at exactly 20 (round-12 finding 2)."""
+    llm = StubLLM(
+        {
+            "extract": [{"episodes": [{"indices": list(range(25)), "topic": "trip"}]}],
+            "distill": [
+                {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},
+                {"facts": []},  # cold-start direct extraction
+            ],
+        }
+    )
+    org = NemoriOrganizer(fidelity="v4")  # window=20
+    mem = make_mem(org, llm)
+    try:
+        ops = org.warm_start(_eps(25), mem._ctx)
+        seg_calls = [p for role, p in llm.calls if role == "extract"]
+        assert len(seg_calls) == 1 and "[24]" in seg_calls[0]  # 25 > window, ONE grab
+        assert any(o.target_type == "episodes" for o in ops)
+    finally:
+        mem.close()
+
+
+def test_episode_min_messages_drops_small_groups_before_llm():
+    """Round-12 finding 3: upstream skips groups below episode_min_messages
+    (memory_system.py:118-119). The LIBRARY default (2) silently loses those
+    messages; both eval configs — and our default — use 1, keeping singletons."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},
+                {"facts": []},
+            ]
+        }
+    )
+    org2 = NemoriOrganizer(fidelity="upstream", episode_min_messages=2)
+    mem = make_mem(org2, llm)
+    try:
+        assert org2._flush_segments([Segment(_eps(1))], mem._ctx) == []
+        assert llm.calls == []  # dropped BEFORE any LLM call — the group is lost
+
+        org1 = NemoriOrganizer(fidelity="upstream")  # default 1 = published path
+        assert org1.episode_min_messages == 1
+        ops = org1._flush_segments([Segment(_eps(1))], mem._ctx)
+        assert any(o.target_type == "episodes" for o in ops)
+        # Paths without a segmenter topic feed upstream's filler (finding 7).
+        assert "Boundary detection reason:\nconversation" in llm.calls[0][1]
+    finally:
+        mem.close()
+
+
+def test_segment_topic_threads_into_episode_prompt_as_boundary_reason():
+    """Round-12 finding 7: the segmenter's per-group topic reaches the episode
+    generator as the boundary reason (upstream memory_system.py:121-123 →
+    prompts.py:17-18) instead of being discarded."""
+    llm = StubLLM(
+        {
+            "extract": [{"episodes": [{"indices": [0, 1], "topic": "weekend hiking plans"}]}],
+            "distill": [
+                {"title": "t", "narrative": "n", "timestamp": "2026-01-01"},
+                {"facts": []},
+            ],
+        }
+    )
+    org = NemoriOrganizer(fidelity="v4", window=2)
+    mem = make_mem(org, llm)
+    try:
+        mem.add_message("let's hike")
+        mem.add_message("this weekend")
+        narrate = next(p for role, p in llm.calls if role == "distill")
+        assert "Boundary detection reason:\nweekend hiking plans" in narrate
+    finally:
+        mem.close()
 
 
 # ---------------- EpisodeMerger (v4 §3.2.3 / upstream merger) ----------------
@@ -150,6 +263,117 @@ def test_episode_merger_merges_and_supersedes():
         assert merged[0].payload["supersedes"] == [inv[0].target_id]
         assert inv[0].payload["superseded_by"] == merged[0].target_id
         assert merged[0].payload["title"] == "hiking plan (merged)"
+    finally:
+        mem.close()
+
+
+def _seed_episode(mem, eid, title, content, source_ids=(), timestamp="2026-05-01"):
+    """ADD one nemori episode via the facade so doc + vec stores are populated."""
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="episodes",
+                target_id=eid,
+                payload={
+                    "id": eid,
+                    "title": title,
+                    "content": content,
+                    "timestamp": timestamp,
+                    "source_episode_ids": list(source_ids),
+                    "embedding_text": f"{title}\n{content}",
+                },
+            )
+        ],
+        actor="nemori",
+    )
+
+
+def test_upstream_preset_merge_has_no_similarity_floor():
+    """Round-12 finding 1: upstream's merge similarity 0.85 is config-plumbed
+    but NEVER read — _find_similar hands the top-5 hits to the LLM unfiltered.
+    Under the "upstream" preset a low-cosine candidate must still reach the
+    merge-decision LLM (the old preset value 0.85 suppressed the call)."""
+    llm = StubLLM({"distill": [{"decision": "new"}]})
+    org = NemoriOrganizer(fidelity="upstream")
+    mem = make_mem(org, llm)
+    try:
+        # Disjoint vocabulary -> FakeEmbedder cosine ~0.0 against the query.
+        _seed_episode(mem, new_id(), "banana zebra", "banana zebra quantum flux")
+        out = org._merger.merge_or_none(
+            "hiking plan", "User plans a hike", "2026-05-01", ["m1"], mem._ctx
+        )
+        assert out is None  # LLM said "new" -> caller takes the plain ADD path
+        assert len(llm.calls) == 1  # the low-cosine candidate DID reach the LLM
+    finally:
+        mem.close()
+
+
+def test_merge_decision_prompt_upstream_exposure():
+    """Round-12 finding 8 (verifier-corrected): the NEW episode is shown as
+    time + content only — NO title (upstream merger.py:87-94); candidates DO
+    carry ``Title:`` (merger.py:180 — the original audit had this backwards)
+    and their content is truncated to 200 chars (merger.py:181). Target
+    selection stays by index — upstream selects by ID string (documented
+    envelope difference)."""
+    long_content = " ".join(f"word{i}" for i in range(80))  # well over 200 chars
+    llm = StubLLM({"distill": [{"decision": "new"}]})
+    org = NemoriOrganizer(episode_merge="llm")
+    mem = make_mem(org, llm)
+    try:
+        _seed_episode(mem, new_id(), "CANDTITLE hiking", long_content, source_ids=["r1", "r2"])
+        org._merger.merge_or_none(
+            "NEWTITLE secret", "User plans a hike", "2026-05-01", ["m1"], mem._ctx
+        )
+        prompt = llm.calls[0][1]
+        assert "NEWTITLE" not in prompt  # new episode: time + content only
+        assert "Time: 2026-05-01 (1 messages)" in prompt  # new episode exposure
+        assert "Title: CANDTITLE hiking" in prompt  # candidates DO include Title
+        assert f"Content: {long_content[:200]}..." in prompt  # 200-char truncation
+        assert long_content not in prompt  # the full narrative is never shown
+        assert "(2 messages)" in prompt  # candidate message count from provenance
+    finally:
+        mem.close()
+
+
+def test_calibration_after_merge_sees_both_episodes_messages():
+    """Round-12 finding 4: after a MERGE, calibration must be generated from
+    the MERGED episode's raw material — target + new source messages combined
+    (upstream merger.py:133, memory_system.py:150-156, semantic.py:94-97) —
+    not from the new segment alone, and with the target's messages first."""
+    llm = StubLLM(
+        {
+            "distill": [
+                {"title": "hike 2", "narrative": "More hiking.", "timestamp": "2026-05-01"},
+                {"decision": "merge", "target_index": 0},
+                {"title": "hike merged", "narrative": "All hiking.", "timestamp": "2026-05-01"},
+                {"prediction": "hiking happens"},
+                {"facts": []},
+            ]
+        }
+    )
+    org = NemoriOrganizer(episode_merge="llm")
+    mem = make_mem(org, llm)
+    try:
+        # The target episode's raw messages, durable in the doc store —
+        # exactly as write-then-organize leaves them.
+        old_raw = Episode(content="OLD-RAW packed boots yesterday", role="user", namespace="t")
+        mem.doc_store.add_episode(old_raw)
+        _seed_episode(mem, new_id(), "hike 1", "User plans a hike.", source_ids=[old_raw.id])
+        # Existing semantic knowledge, so calibration takes the predict ->
+        # calibrate path (cold start would read only the generated narrative).
+        _seed_semantic(mem, [(new_id(), "User enjoys hiking trips")])
+        new_raw = Episode(content="NEW-RAW booked the trailhead", role="user", namespace="t")
+        mem.doc_store.add_episode(new_raw)
+
+        ops = org._flush_segment(Segment([new_raw], topic="hiking"), mem._ctx)
+
+        merge_op = next(o for o in ops if o.op is OpType.MERGE and o.target_type == "episodes")
+        assert merge_op.payload["source_episode_ids"] == [old_raw.id, new_raw.id]
+        calibrate_prompt = llm.calls[-1][1]
+        assert "OLD-RAW" in calibrate_prompt and "NEW-RAW" in calibrate_prompt
+        # Upstream order: target's source messages first, then the new ones.
+        assert calibrate_prompt.index("OLD-RAW") < calibrate_prompt.index("NEW-RAW")
     finally:
         mem.close()
 
