@@ -313,11 +313,15 @@ def test_zep_graph_entities_facts_and_invalidation():
                             "predicate": "lives_in",
                             "object": "Busan",
                             "statement": "Caroline lives in Busan.",
+                            "valid_at": "2024-01-01T00:00:00",
                         }
                     ]
                 },
             ],
-            "distill": [],  # no edges between Caroline-Busan yet -> no contradiction call
+            # No edges between Caroline-Busan, but the GRAPH-WIDE invalidation
+            # pool (round-12 finding 4) surfaces the Seoul fact for the second
+            # message, so an edge-resolve call happens; it flags nothing.
+            "distill": [{"duplicate_of": None, "contradicts": []}],
         }
     )
     org = ZepGraphOrganizer()
@@ -346,6 +350,11 @@ def test_zep_graph_contradiction_invalidates():
                             "predicate": "likes",
                             "object": "B",
                             "statement": "A likes B.",
+                            # STRICTLY OLDER than the contradicting fact — the
+                            # upstream truth table invalidates only that case
+                            # (round-12 finding 5); a dateless fact would be
+                            # inert now that null valid_at stays None.
+                            "valid_at": "2020-01-01T00:00:00",
                         }
                     ]
                 },
@@ -357,6 +366,7 @@ def test_zep_graph_contradiction_invalidates():
                             "predicate": "dislikes",
                             "object": "B",
                             "statement": "A dislikes B.",
+                            "valid_at": "2024-01-01T00:00:00",
                         }
                     ]
                 },
@@ -410,6 +420,7 @@ def test_zep_graph_is_rebuildable_from_the_evolution_log():
                             "predicate": "lives_in",
                             "object": "Seoul",
                             "statement": "Caroline lives in Seoul.",
+                            "valid_at": "2023-01-01T00:00:00",
                         }
                     ]
                 },
@@ -481,8 +492,10 @@ class ZepStub:
                     for s, o in pairs
                 ]
             }
-        if "Decide whether the NEW entity" in prompt:
-            return {"duplicate_id": None}
+        if "Decide for each NEW entity" in prompt:
+            # empty resolutions -> every unresolved entity becomes a new node
+            # (the batched-call guardrail path)
+            return {"resolutions": []}
         if "A new fact arrived" in prompt:
             return {"contradicts": []}
         if "Synthesize the information" in prompt:
@@ -948,42 +961,41 @@ def test_zep_search_recipes_match_upstream_and_name_the_papers_operating_point()
         zep_search_recipe("no_such_recipe")  # no silent fallback to the default
 
 
-def test_memoryos_stm_rolls_one_page_and_stays_resident():
-    """Upstream's STM is a FIFO rolling window, not a batch that empties.
-
-    ``add_memory`` calls ``process_short_term_to_mid_term`` while
-    ``is_full()``, and ``is_full()`` is ``len >= capacity``, so a single
-    ``pop_oldest`` already clears it: one page moves per new page, and
-    ``capacity - 1`` pages stay resident for the QA-time recent-context channel
-    (paper §3.3, "the oldest dialogue page is transferred ... according to the
-    FIFO principle"). Flushing the whole buffer instead — what this organizer
-    did until 2026-07-27 — moved the topic-summary call from once per page to
-    once per ``capacity`` pages and left nothing behind to inject."""
+def test_memoryos_stm_rolls_one_page_and_capacity_pages_stay_resident():
+    """Upstream pypi's STM is a FIFO rolling window that flushes at the START
+    of the overflowing add (``memoryos.py:242-246``: ``if is_full():
+    process(...)`` runs BEFORE ``add_qa_pair``): resident STM sits at
+    ``capacity`` pages — not ``capacity - 1``, the pre-round-12 claim
+    (finding 13) — and one page rolls to MTM when the (capacity+1)-th
+    arrives. The resident window feeds the QA-time recent-context channel
+    (paper §3.3, "the oldest dialogue page is transferred ... according to
+    the FIFO principle")."""
     llm = StubLLM(
-        {
-            "distill": [
-                {"groups": [{"topic": f"t{i}", "summary": f"s{i}", "page_indexes": [0]}]}
-                for i in range(4)
-            ]
-        }
+        {"distill": [{"groups": [{"topic": f"t{i}", "summary": f"s{i}"}]} for i in range(4)]}
     )
-    org = MemoryOSOrganizer(stm_capacity=3, dialogue_chain=False, heat_threshold=99.0)
+    org = MemoryOSOrganizer(stm_capacity=2, dialogue_chain=False, heat_threshold=99.0)
     mem = make_mem(org, llm)
     try:
-        for i in range(3):
-            mem.add_message(f"m{i}")  # one page each (same role -> each opens a page)
-        assert len(ops_of(mem, "pages")) == 1  # capacity reached -> ONE page left
-        assert [e.content for e in org._stm] == ["m1", "m2"]  # capacity-1 resident
+        # two full exchanges: X0 = m0/r0, X1 = m1/r1
+        for i in range(2):
+            mem.add_message(f"m{i}", meta={"speaker": "A"})
+            mem.add_message(f"r{i}", meta={"speaker": "B"})
+        # STM RESIDENT count equals capacity — nothing evicted yet
+        assert ops_of(mem, "pages") == []
+        assert [[e.content for e in p] for p in org._stm_pages] == [["m0", "r0"], ["m1", "r1"]]
 
-        mem.add_message("m3")
-        assert len(ops_of(mem, "pages")) == 2  # one more page rolled out
-        assert [e.content for e in org._stm] == ["m2", "m3"]
+        # the third exchange overflows: the OLDEST page rolls out, one page only
+        mem.add_message("m2", meta={"speaker": "A"})
+        mem.add_message("r2", meta={"speaker": "B"})
+        assert len(ops_of(mem, "pages")) == 1
+        assert [[e.content for e in p] for p in org._stm_pages] == [["m1", "r1"], ["m2", "r2"]]
 
         # ...and the resident window is what the recent-context channel serves
-        assert "m2" in org.recent_context() and "m3" in org.recent_context()
+        assert "m1" in org.recent_context() and "m2" in org.recent_context()
+        assert "m0" not in org.recent_context()
         # a drain does NOT empty it: upstream never drains STM
         assert org.flush_buffer(mem._ctx) == []
-        assert [e.content for e in org._stm] == ["m2", "m3"]
+        assert len(org._stm_pages) == 2
     finally:
         mem.close()
 

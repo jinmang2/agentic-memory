@@ -153,18 +153,32 @@ class SqliteGraphStore:
                 (t_invalid, edge_id),
             )
 
-    def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
+    def neighbors(
+        self, node_id: str, namespace: str, hops: int = 1, direction: str = "both"
+    ) -> list[dict]:
         """Nodes reachable within ``hops`` steps over ACTIVE edges only
-        (invalidated edges are not walked), excluding ``node_id`` itself."""
+        (invalidated edges are not walked), excluding ``node_id`` itself.
+
+        ``direction="both"`` (the generic-store default) treats edges as
+        undirected; ``"out"`` follows edges src->dst only — the mode Zep's
+        φ_bfs channel uses, because upstream's BFS queries walk
+        ``-[:RELATES_TO|MENTIONS*1..n]->`` (outgoing only,
+        search_utils.py:448+/790+; round-12 finding 12). Every other caller
+        (GraphRecall, node-distance, communities) keeps ``"both"``."""
+        if direction == "out":
+            step = "SELECT e.dst, w.depth + 1 FROM graph_edges e JOIN walk w ON e.src = w.id"
+        else:
+            step = (
+                "SELECT CASE WHEN e.src = w.id THEN e.dst ELSE e.src END, w.depth + 1"
+                " FROM graph_edges e JOIN walk w ON (e.src = w.id OR e.dst = w.id)"
+            )
         with self._lock:
             rows = self._conn.execute(
                 f"""
                 WITH RECURSIVE walk(id, depth) AS (
                     SELECT ?, 0
                     UNION
-                    SELECT CASE WHEN e.src = w.id THEN e.dst ELSE e.src END, w.depth + 1
-                    FROM graph_edges e JOIN walk w
-                      ON (e.src = w.id OR e.dst = w.id)
+                    {step}
                     WHERE w.depth < ? AND e.namespace = ? AND {_ACTIVE}
                 )
                 SELECT DISTINCT n.* FROM walk w JOIN graph_nodes n ON n.id = w.id

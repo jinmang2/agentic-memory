@@ -204,8 +204,15 @@ class KuzuGraphStore:
             )
             return self._rows(res, _EDGE_COLS)
 
-    def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
-        """BFS out to `hops` hops over active edges only; `node_id` itself is excluded."""
+    def neighbors(
+        self, node_id: str, namespace: str, hops: int = 1, direction: str = "both"
+    ) -> list[dict]:
+        """BFS out to `hops` hops over active edges only; `node_id` itself is excluded.
+
+        `direction="both"` walks edges as undirected (the generic-store
+        default); `"out"` follows src->dst only — Zep's φ_bfs mode, matching
+        upstream's `-[:RELATES_TO|MENTIONS*1..n]->` outgoing-only walk (see
+        `SqliteGraphStore.neighbors`)."""
         # hop-by-hop frontier walk over ACTIVE edges — version-stable across
         # Kuzu releases (recursive-rel predicate syntax varies)
         seen, frontier = {node_id}, [node_id]
@@ -213,10 +220,15 @@ class KuzuGraphStore:
         for _ in range(max(hops, 0)):
             if not frontier:
                 break
+            frontier_set = set(frontier)
             edges = self.edges_for_nodes(frontier, namespace)
             nxt: list[str] = []
             for e in edges:
-                for nid in (e["src"], e["dst"]):
+                if direction == "out":
+                    reached = [e["dst"]] if e["src"] in frontier_set else []
+                else:
+                    reached = [e["src"], e["dst"]]
+                for nid in reached:
                     if nid not in seen:
                         seen.add(nid)
                         nxt.append(nid)

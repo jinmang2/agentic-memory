@@ -45,9 +45,14 @@ BGE_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"
 
 # The three subgraphs φ returns (paper §3.1: "a 3-tuple containing lists of
 # semantic edges, entity nodes, and community nodes"), in the order the bundle
-# should serve them. `episodic` is deliberately absent: Zep's context template
-# has no raw-message section, and including it turns the config into the mixed
-# ablation docs/10 bars from paper-reproduction claims.
+# should serve them. `episodic` is deliberately absent — and that omission is a
+# deviation from CURRENT UPSTREAM, not a transcription of it: main's combined
+# recipes all carry an `episode_config` (BM25 + rrf/cross_encoder,
+# search_config_recipes.py:42-47/67-72/97-102) and its context string has an
+# <EPISODES> section (search_helpers.py). It is the PAPER's context template
+# that has no raw-message section, and this table follows the paper there
+# because including raw episodes turns the config into the mixed ablation
+# docs/10 bars from paper-reproduction claims (round-12 finding 11).
 SUBGRAPH_TYPES = ("facts", "entities", "communities")
 
 
@@ -76,13 +81,23 @@ class SearchRecipe:
         ``graph_expansion_cap=0`` is explicit rather than inherited: GraphRecall
         was this project's stand-in for φ_bfs, and leaving it on beside the real
         channel would double-serve the same edges through two mechanisms, only
-        one of which upstream has."""
+        one of which upstream has.
+
+        ``rrf_k=1`` is upstream's own RRF constant (``rank_const=1``,
+        search_utils.py:1780-1786) — the framework default 60 is the textbook
+        constant, not what a Graphiti run computes (see ``rrf_fuse`` for the
+        exact relationship). ``dense_min_score=0.6`` is upstream's
+        ``DEFAULT_MIN_SCORE`` on every cosine channel (search_utils.py:65);
+        the framework default is 0 (no cutoff). Both apply to every recipe
+        uniformly, as the upstream constants do."""
         kwargs: dict[str, Any] = {
             "lexical_types": self.lexical_types,
             "bfs_types": self.bfs_types,
             "bfs_max_depth": self.bfs_max_depth,
             "reranker_params": dict(self.reranker_params),
             "graph_expansion_cap": 0,
+            "rrf_k": 1,
+            "dense_min_score": 0.6,
         }
         if self.reranker is not None:
             kwargs["overrides"] = {"reranker": self.reranker}
@@ -91,7 +106,10 @@ class SearchRecipe:
 
 # Every combination upstream names, restricted to the "combined" ones (all three
 # subgraphs) plus the single-subgraph recipes that are the only place two of the
-# rerankers appear. Transcribed field by field from search_config_recipes.py.
+# rerankers appear. The search-method/reranker/limit fields follow
+# search_config_recipes.py; the episode channel those recipes also carry is
+# deliberately omitted (see SUBGRAPH_TYPES above), so this table is upstream's
+# recipes MINUS episodes, not a field-by-field transcription.
 ZEP_SEARCH_RECIPES: dict[str, SearchRecipe] = {
     # --- all three subgraphs -------------------------------------------------
     "cross_encoder": SearchRecipe(
@@ -157,7 +175,16 @@ def zep_search_recipe(name: str = DEFAULT_RECIPE) -> SearchRecipe:
 
     No silent fallback to the default: a typo'd recipe name would otherwise
     produce a run stamped with settings nobody asked for, which is the failure
-    mode this table exists to prevent."""
+    mode this table exists to prevent.
+
+    Note that NO production path applies a recipe automatically: nothing in the
+    harness or facade turns a ``SearchRecipe`` into an ``AgmemConfig``. The
+    intended workflow is manual transcription — a measured run copies
+    ``config_kwargs()`` into its config (TOML or Python) and stamps the recipe
+    ``name`` alongside its results. Every knob the table emits is live in
+    ``AgmemConfig``/``RetrievalPipeline``; only the copying is by hand, so the
+    stamped name is a claim the run's config can be audited against rather than
+    a switch that was flipped for you (round-12 finding 14)."""
     try:
         return ZEP_SEARCH_RECIPES[name]
     except KeyError:

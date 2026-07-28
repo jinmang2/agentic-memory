@@ -45,6 +45,8 @@ class RetrievalPipeline:
         lexical_types: tuple[str, ...] = ("episodic",),
         bfs_types: tuple[str, ...] = (),
         bfs_max_depth: int = MAX_SEARCH_DEPTH,
+        rrf_k: int = 60,
+        dense_min_score: float = 0.0,
         graph_expansion_cap: int = 0,
         graph_expansion_hops: int = 1,
         page_recall_cap: int = 10,
@@ -66,6 +68,14 @@ class RetrievalPipeline:
         upstream's recipes vary them independently: its RRF recipes run
         cosine+BM25, its cross-encoder recipes add BFS, and communities never
         get BFS in either.
+
+        ``rrf_k`` is the RRF constant handed to ``rrf_fuse`` (textbook 60 by
+        default; the Zep recipes emit 1, upstream's ``rank_const`` — see
+        ``rrf_fuse`` for the exact relationship). ``dense_min_score`` is a
+        cosine cutoff on the DENSE channel only: candidates scoring below it
+        are dropped before fusion. 0 (off) is the framework default; upstream
+        Zep applies ``DEFAULT_MIN_SCORE = 0.6`` to its cosine channels
+        (search_utils.py:65), so the Zep recipes emit 0.6.
 
         The three cap arguments configure the default post-step registry:
         ``link_expansion_cap`` bounds A-Mem's 1-hop note-link expansion,
@@ -89,6 +99,8 @@ class RetrievalPipeline:
         self.lexical_types = set(lexical_types)
         self.bfs_types = set(bfs_types)
         self.bfs_max_depth = bfs_max_depth
+        self.rrf_k = rrf_k
+        self.dense_min_score = dense_min_score
         self.read_steps = (
             read_steps
             if read_steps is not None
@@ -148,11 +160,15 @@ class RetrievalPipeline:
             type_k = k.get(memory_type, 10) if isinstance(k, dict) else k
             candidate_k = type_k * 3  # over-fetch per source, fuse down
 
-            rankings = [
-                self.vector_store.search(
-                    query_embedding, k=candidate_k, memory_type=memory_type, namespace=namespace
-                )
-            ]
+            dense = self.vector_store.search(
+                query_embedding, k=candidate_k, memory_type=memory_type, namespace=namespace
+            )
+            if self.dense_min_score > 0:
+                # Upstream Zep's cosine channels apply DEFAULT_MIN_SCORE = 0.6
+                # (search_utils.py:65); 0 keeps the framework's no-cutoff
+                # default. Dense only — BM25/BFS scores are not cosines.
+                dense = [(i, s) for i, s in dense if s >= self.dense_min_score]
+            rankings = [dense]
             if memory_type == "episodic":
                 rankings.append(
                     self.doc_store.search_lexical(query, k=candidate_k, namespace=namespace)
@@ -169,7 +185,7 @@ class RetrievalPipeline:
                 )
                 if bfs:
                     rankings.append(bfs)
-            fused = rrf_fuse(rankings)
+            fused = rrf_fuse(rankings, k=self.rrf_k)
             # `len(fused) > 1`, not `> type_k`. The old gate skipped the reranker
             # whenever the candidate pool did not exceed k, on the assumption
             # that a reranker only matters when it has to DROP something. It also

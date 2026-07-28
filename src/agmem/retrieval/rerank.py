@@ -51,6 +51,17 @@ class MMRReranker:
 
     lambda=1.0 is pure relevance (Graphiti's default mmr_lambda=1);
     lower values penalize redundancy among selected items.
+
+    Algorithm lineage: this is CLASSIC greedy-iterative MMR (redundancy
+    measured against the already-SELECTED set, one pick per round). Upstream's
+    ``maximal_marginal_relevance`` (search_utils.py:1901-1938) is a one-shot
+    batch formula instead — ``λ·(q·c) + (λ−1)·max_sim(c, all OTHER
+    candidates)`` scored once, then sorted — with no iterative selection. At
+    the shipped recipe's λ=1 the two are equivalent (both reduce to a pure
+    relevance sort, so the recipe table's operating point is unaffected); for
+    any λ<1 they rank differently. Deliberate: the greedy form is the paper
+    literature's MMR, and the divergence stays dormant at the only λ upstream
+    ships (round-12 finding 13).
     """
 
     requires = Requires()
@@ -231,7 +242,15 @@ class EpisodeMentionsReranker:
     ``len(source_episode_ids)``, the provenance every organizer already records
     — same quantity, since that list is exactly which episodes produced the
     item. Ties keep fusion order (``sorted`` is stable), so this only ever
-    promotes; it never invents an order among equally-mentioned items."""
+    promotes; it never invents an order among equally-mentioned items.
+
+    Sort DIRECTION is a named divergence from upstream: its
+    ``episode_mentions_reranker`` (search_utils.py:1860-1896) sorts the counts
+    ASCENDING with missing nodes at ``inf`` — the MOST-mentioned item lands
+    LAST, contradicting the paper sentence quoted above. That is almost
+    certainly an upstream bug (nothing there flags it as intentional), and this
+    class deliberately follows the PAPER instead: mention count descending
+    (round-12 finding 10)."""
 
     requires = Requires()
     name = "episode-mentions"
@@ -275,8 +294,13 @@ class NodeDistanceReranker:
     Distance is computed by widening BFS rings from the centroid
     (``graph_store.neighbors`` at increasing depth), so an item at hop 1 beats
     one at hop 2; unreachable items sort last, keeping fusion order among
-    themselves. Upstream reranks by shortest-path length over ``RELATES_TO``,
-    which is the same ordering.
+    themselves. This is the PAPER's shape ("graph distance from a designated
+    centroid node"), and a named divergence from upstream:
+    ``node_distance_reranker`` (search_utils.py:1798-1856) is actually a
+    1-HOP ADJACENCY TEST — direct neighbours score 1 and everything else
+    ``inf`` (the "shortest path" comment in that function is stale) — so
+    upstream ties hop-2 with hop-10 where this class orders them
+    (round-12 finding 9).
     """
 
     requires = Requires()

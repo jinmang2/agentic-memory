@@ -25,7 +25,23 @@ def rrf_fuse(rankings: list[list[tuple[str, float]]], k: int = 60) -> list[tuple
     candidate passes through the same set of rankings. That premise is exactly
     what per-type fusion breaks, which is why the divisor lives here rather
     than in the caller: any future second caller inherits comparable scores
-    instead of rediscovering this (2026-07-27 audit B2)."""
+    instead of rediscovering this (2026-07-27 audit B2).
+
+    ``k`` is the textbook RRF constant — score ``1/(k + rank)`` with rank
+    1-based, so at the default 60 a rank-1 hit scores 1/61 (Cormack et al.'s
+    form, and this framework's default; reachable from config as ``rrf_k``).
+    Upstream Zep/Graphiti's ``rrf`` is NOT this function at its own default:
+    it computes ``1/(i + rank_const)`` with a 0-BASED index and
+    ``rank_const=1`` (search_utils.py:1780-1786), so its rank-1 hit scores
+    1/1, not 1/61 — steep front-loading that is not a monotone rescale of
+    k=60 across multiple channels: items ranked (1,100) vs (3,3) in two
+    channels order differently under the two constants (round-12 finding 8).
+    The Zep recipe table therefore emits ``rrf_k: 1``. Note the residual
+    off-by-one: rrf_k=1 here scores rank-1 at 1/2 (1/(1+rank)), one position
+    shifted from upstream's exact 1/rank series — kept so the textbook
+    parametrization (and the measured default) stays untouched; the shift
+    reproduces upstream's front-loading and the (1,100)/(3,3) order flip, but
+    not upstream's scores bit-for-bit."""
     if not rankings:
         return []
     fused: dict[str, float] = {}

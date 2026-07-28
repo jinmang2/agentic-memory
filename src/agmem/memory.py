@@ -240,6 +240,8 @@ class AgenticMemory:
             lexical_types=self.config.lexical_types,
             bfs_types=self.config.bfs_types,
             bfs_max_depth=self.config.bfs_max_depth,
+            rrf_k=self.config.rrf_k,
+            dense_min_score=self.config.dense_min_score,
             link_expansion_cap=self.config.link_expansion_cap,
             attach_sources_top_r=self.config.attach_sources_top_r,
             graph_expansion_cap=self.config.graph_expansion_cap,

@@ -25,6 +25,15 @@ ring they were found in — the closer, the more "contextually similar", which i
 the paper's own justification for the channel) and then by a content-derived
 key, never by id (ids are random uuids, which would move the nondeterminism
 rather than remove it).
+
+Direction: upstream's BFS queries walk ``-[:RELATES_TO|MENTIONS*1..n]->`` —
+OUTGOING only (``node_bfs_search``/``edge_bfs_search``, search_utils.py:448+/
+790+) — so this channel walks the graph directed (``direction="out"`` on
+``neighbors``), and in that mode an edge counts as within-n-hops only when its
+SOURCE node is reachable: a fact ``B -> A`` does not make B reachable from A
+here, exactly as it does not upstream (round-12 finding 12). The generic store
+default stays undirected ``"both"`` for the non-Zep callers (GraphRecall,
+node-distance).
 """
 
 from __future__ import annotations
@@ -36,15 +45,22 @@ from typing import Any
 MAX_SEARCH_DEPTH = 3
 
 
-def _rings(graph_store: Any, origins: list[str], namespace: str, max_depth: int) -> dict[str, int]:
+def _rings(
+    graph_store: Any,
+    origins: list[str],
+    namespace: str,
+    max_depth: int,
+    direction: str = "out",
+) -> dict[str, int]:
     """node id -> the smallest hop count at which it was reached from any
     origin (origins themselves are 0). Built by widening ``neighbors`` calls
     rather than one deep call, because the store contract returns nodes without
-    their depth and the depth is what orders this channel."""
+    their depth and the depth is what orders this channel. ``direction="out"``
+    is this module's default — see the module docstring."""
     distance: dict[str, int] = {origin: 0 for origin in origins}
     for depth in range(1, max_depth + 1):
         for origin in origins:
-            for node in graph_store.neighbors(origin, namespace, depth):
+            for node in graph_store.neighbors(origin, namespace, depth, direction=direction):
                 distance.setdefault(str(node["id"]), depth)
     return distance
 
@@ -91,8 +107,11 @@ def bfs_fact_ranking(
     stores and across runs."""
     if graph_store is None or not origins or max_depth < 1:
         return []
-    # Edges within max_depth hops are those incident to a node reachable in
-    # max_depth - 1, so the ring walk stops one short of the edge horizon.
+    # Edges within max_depth OUTGOING hops are those whose SOURCE node is
+    # reachable in max_depth - 1, so the ring walk stops one short of the edge
+    # horizon and edges are keyed on their src (the directed walk traverses an
+    # edge src->dst only — an edge merely POINTING AT a reachable node is not
+    # on any outgoing path, so it is skipped).
     distance = _rings(graph_store, origins, namespace, max(max_depth - 1, 0))
     edges = graph_store.edges_for_nodes(list(distance), namespace)
     skip = exclude or set()
@@ -101,10 +120,9 @@ def bfs_fact_ranking(
         edge_id = str(edge.get("id"))
         if edge_id in skip:
             continue
-        hops = min(
-            distance.get(str(edge.get("src")), max_depth),
-            distance.get(str(edge.get("dst")), max_depth),
-        )
+        hops = distance.get(str(edge.get("src")))
+        if hops is None:
+            continue  # incident via dst only — not reachable on a directed walk
         scored.append(
             (hops, str(edge.get("valid_at") or ""), str(edge.get("content") or ""), edge_id)
         )

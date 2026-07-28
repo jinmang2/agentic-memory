@@ -72,6 +72,17 @@ class AgmemConfig:
     # type set is empty: no methodology except Zep searches a graph.
     bfs_types: tuple[str, ...] = ()
     bfs_max_depth: int = 3
+    # RRF constant for channel fusion (`rrf_fuse`): score = 1/(rrf_k + rank),
+    # rank 1-based. 60 is the textbook default and stays the framework's;
+    # upstream Zep's rrf uses rank_const=1 (search_utils.py:1780-1786), so the
+    # Zep recipe table emits 1 — see `rrf_fuse` for the exact (off-by-one)
+    # relationship between the two parametrizations.
+    rrf_k: int = 60
+    # Cosine cutoff on the DENSE channel before fusion. 0 = off (framework
+    # default — no other methodology cuts its dense channel); upstream Zep
+    # applies DEFAULT_MIN_SCORE = 0.6 to its cosine channels
+    # (search_utils.py:65), so the Zep recipes emit 0.6.
+    dense_min_score: float = 0.0
     # Which reranker (slot resolution) gets which constructor arguments —
     # e.g. the Zep paper's BGE-m3 cross-encoder is
     # {"model_name": "BAAI/bge-reranker-v2-m3"}, and MMR at mmr_lambda=1 is
@@ -209,6 +220,8 @@ def load_config(path: str | Path) -> AgmemConfig:
         lexical_types=tuple(retrieval.get("lexical_types", defaults.lexical_types)),
         bfs_types=tuple(retrieval.get("bfs_types", defaults.bfs_types)),
         bfs_max_depth=retrieval.get("bfs_max_depth", defaults.bfs_max_depth),
+        rrf_k=retrieval.get("rrf_k", defaults.rrf_k),
+        dense_min_score=retrieval.get("dense_min_score", defaults.dense_min_score),
         reranker_params=dict(retrieval.get("reranker_params", defaults.reranker_params)),
         link_expansion_cap=retrieval.get("link_expansion_cap", defaults.link_expansion_cap),
         attach_sources_top_r=retrieval.get("attach_sources_top_r", defaults.attach_sources_top_r),

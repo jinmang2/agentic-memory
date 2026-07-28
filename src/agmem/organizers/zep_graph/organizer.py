@@ -2,14 +2,25 @@
 
 Per message: entity extraction with the last n previous messages as
 context (paper §2.2.1, n=4) -> three-stage entity resolution as today's
-Graphiti does (embedding candidates >= 0.6 -> deterministic exact-name
-match -> LLM dedup judgment, refreshing the node's name/summary on merge)
--> fact extraction with INTEGRATED temporal fields (valid_at/invalid_at
-resolved against the message timestamp, as upstream extract_edges now
-does) -> same-pair duplicate/contradiction resolution in one LLM call
-(duplicate -> provenance append, contradiction -> temporally-guarded
-INVALIDATE, t_invalid = the invalidating fact's valid_at). Raw episodes
-stay untouched (verbatim-loss defense).
+Graphiti does (embedding candidates >= 0.6 with k=15 -> deterministic
+stage: exact normalized-name match PLUS fuzzy MinHash/LSH, ``dedup.py``
+-> ONE batched LLM dedup call for every entity the deterministic stage
+left unresolved). A confirmed merge refreshes the canonical node's
+name/summary — that refresh is the PAPER's dedup description ("generates
+an updated name and summary"), not current main's: main's
+``NodeDuplicate`` carries no summary field and ``_promote_resolved_node``
+only promotes type labels (round-12 finding 2). Then fact extraction with
+INTEGRATED temporal fields (valid_at/invalid_at resolved against the
+message timestamp, as upstream extract_edges now does) -> duplicate/
+contradiction resolution in one LLM call per new fact, with duplicate
+candidates from the same entity pair and invalidation candidates from a
+GRAPH-WIDE dense search minus the same-pair set (upstream
+edge_operations.py:408-419; see ``on_message``). Duplicates append
+provenance; contradictions apply upstream's actual truth table
+(``resolve_edge_contradictions``/``expire_new_edge`` below): only a
+strictly OLDER valid_at is invalidated, and a strictly NEWER candidate
+expires the NEW edge at write time instead. Raw episodes stay untouched
+(verbatim-loss defense).
 
 Entity embeddings use the NAME only (upstream semantic candidate search)
 while the item's ``content`` — what the render layer and the BM25 channel
@@ -46,9 +57,12 @@ moved past the paper — ``SagaNode`` (``_get_or_create_saga``/``summarize_saga`
 single-call node+edge extraction (``combined_extraction.extract_nodes_and_
 edges``), and ``temporal_operations.py`` dissolved into ``extract_edges``.
 Sagas and combined extraction are NOT ported; entity resolution follows
-current main (three-stage, above), everything else the paper's shape. This
-port is therefore a dated mixed snapshot, deliberately: each piece's lineage
-is named where it is used.
+current main (three-stage as above, with the merge refresh being the one
+paper-lineage piece inside it — named where it happens), the temporal
+truth table and the duplicate fast paths follow current main, and the
+extraction prompts/context window follow the paper. This port is
+therefore a dated mixed snapshot, deliberately: each piece's lineage is
+named where it is used.
 """
 
 from __future__ import annotations
@@ -69,9 +83,23 @@ from agmem.organizers.zep_graph.community import (
     label_propagation,
     truncate_at_sentence,
 )
+from agmem.organizers.zep_graph.dedup import (
+    _normalize_string_exact,
+    build_candidate_indexes,
+    deterministic_resolve,
+)
 from agmem.stores.sqlite_graph import SqliteGraphStore
 
 logger = logging.getLogger("agmem.organizers.zep_graph")
+
+# Upstream node_operations.py:64 — the candidate pool per unresolved entity in
+# the semantic search AND the LLM dedupe context. Ours used k=5 until round-12
+# finding 3.
+NODE_DEDUP_CANDIDATE_LIMIT = 15
+# Upstream's invalidation-candidate search runs EDGE_HYBRID_SEARCH_RRF at its
+# default limit (search_config.DEFAULT_SEARCH_LIMIT = 10) — the constructor
+# knob `invalidation_candidate_limit` defaults to it.
+INVALIDATION_CANDIDATE_LIMIT = 10
 
 ENTITY_SCHEMA = {
     "type": "object",
@@ -93,14 +121,28 @@ ENTITY_SCHEMA = {
     "required": ["entities"],
 }
 
+# One resolution entry per unresolved entity, integer-indexed like upstream's
+# `NodeDuplicate {id, duplicate_candidate_id}` (prompts/dedupe_nodes.py) — the
+# name/summary fields on top of it are the PAPER's merge refresh, which main
+# does not ask the dedupe call for (round-12 finding 2, deliberate).
 RESOLVE_SCHEMA = {
     "type": "object",
     "properties": {
-        "duplicate_id": {"type": ["string", "null"]},
-        "name": {"type": "string"},
-        "summary": {"type": "string"},
+        "resolutions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "duplicate_candidate_id": {"type": "integer"},
+                    "name": {"type": "string"},
+                    "summary": {"type": "string"},
+                },
+                "required": ["id", "duplicate_candidate_id"],
+            },
+        }
     },
-    "required": ["duplicate_id"],
+    "required": ["resolutions"],
 }
 
 FACT_SCHEMA = {
@@ -152,19 +194,23 @@ relations, actions, dates, or bare pronouns as entities.
 Return JSON: {{"entities": [{{"name": "...", "type": "Person|Place|Organization|Object|Topic",
 "summary": "one clause"}}]}}"""
 
-RESOLVE_PROMPT = """Decide whether the NEW entity is the same real-world entity as one of
-the CANDIDATES. Same thing under a different spelling or nickname counts
-as a duplicate; a different thing with a similar name does NOT (e.g.
-"Java" the language vs "Java" the island).
+RESOLVE_PROMPT = """Decide for each NEW entity whether it is the same real-world entity as
+one of the CANDIDATES. Same thing under a different spelling or nickname
+counts as a duplicate; a different thing with a similar name does NOT
+(e.g. "Java" the language vs "Java" the island).
 
-NEW entity: name="{name}", summary="{summary}"
-Message context: "{content}"
+NEW entities:
+{entities}
 
 Candidates:
 {candidates}
 
-Return JSON: {{"duplicate_id": "<candidate id or null>",
-"name": "best canonical name", "summary": "one-clause merged summary"}}"""
+Message context: "{content}"
+
+Return JSON with ONE entry per NEW entity:
+{{"resolutions": [{{"id": <new entity id>,
+"duplicate_candidate_id": <candidate_id of the duplicate, or -1 if none>,
+"name": "best canonical name", "summary": "one-clause merged summary"}}]}}"""
 
 FACT_PROMPT = """Extract relationship facts between these entities from the CURRENT
 MESSAGE. Use ONLY these entity names as subject/object: {names}
@@ -200,19 +246,27 @@ Return JSON: {{"facts": [{{"subject": "<entity name>", "predicate": "SCREAMING_S
 "object": "<entity name>", "statement": "the fact as one sentence",
 "valid_at": "...", "invalid_at": null}}]}}"""
 
-EDGE_RESOLVE_PROMPT = """A new fact arrived between the same two entities as some existing
-facts. Decide two things:
-1. duplicate_of: the id of an existing fact stating the SAME information
-   (null if none).
-2. contradicts: ids of existing facts that can no longer be true if the
-   new fact is true (usually none).
+# Upstream's resolve_edge context carries TWO candidate lists in one call
+# (edge_operations.py:698-713): EXISTING FACTS (same entity pair — only these
+# may be the duplicate) and FACT INVALIDATION CANDIDATES (graph-wide search
+# hits — these plus the same-pair facts may be contradicted). Same split here;
+# `duplicate_of` outside the same-pair section is ignored on parse.
+EDGE_RESOLVE_PROMPT = """A new fact arrived. Decide two things:
+1. duplicate_of: the id of an EXISTING FACT (same two entities) stating
+   the SAME information (null if none). Only ids from the EXISTING FACTS
+   list qualify.
+2. contradicts: ids of facts from EITHER list that can no longer be true
+   if the new fact is true (usually none).
 
-Existing facts:
+EXISTING FACTS (between the same two entities):
 {existing}
+
+FACT INVALIDATION CANDIDATES (elsewhere in the graph):
+{invalidation_candidates}
 
 New fact: "{statement}" (valid from {valid_at})
 
-Return JSON: {{"duplicate_of": null, "contradicts": ["<edge id>", ...]}}"""
+Return JSON: {{"duplicate_of": null, "contradicts": ["<fact id>", ...]}}"""
 
 
 def _fmt(episode: Episode) -> str:
@@ -239,6 +293,86 @@ def _relation_type(predicate: str) -> str:
     enough that relying on the prompt alone would leave the graph mixed."""
     cleaned = re.sub(r"[^0-9A-Za-z]+", "_", str(predicate or "")).strip("_")
     return cleaned.upper() or "RELATED_TO"
+
+
+def _ts(value) -> str | None:
+    """ISO timestamp string or None. Comparisons below are string comparisons,
+    which order correctly for uniformly-formatted ISO-8601 — the same
+    convention the store's `_ACTIVE` filter and `edges_between` rely on."""
+    return str(value) if value else None
+
+
+def resolve_edge_contradictions(
+    resolved_edge: dict, invalidation_candidates: list[dict]
+) -> list[dict]:
+    """Upstream ``resolve_edge_contradictions`` (edge_operations.py:538-573),
+    the FULL truth table — dict-shaped (``valid_at``/``invalid_at`` ISO strings
+    or None) instead of EntityEdge.
+
+    Two skip conditions, then the strictly-older guard:
+    - skip if the candidate had already ended before the new fact began
+      (``edge.invalid_at <= resolved.valid_at``);
+    - skip if the new fact ended before the candidate began
+      (``resolved.invalid_at <= edge.valid_at``);
+    - invalidate ONLY if ``edge.valid_at < resolved.valid_at`` — strictly
+      older, both non-None. An equal or LATER candidate valid_at is never
+      invalidated (that case expires the NEW edge instead — ``expire_new_edge``),
+      and a None valid_at on either side is inert: every upstream condition
+      requires non-None (round-12 findings 5/6).
+
+    Mutates each invalidated candidate's ``invalid_at`` to the new fact's
+    ``valid_at`` (t_invalid) and returns them; the T' axis (``expired_at``) is
+    stamped by the store's ``invalidate_edge`` when the op is applied, which is
+    where upstream's ``edge.expired_at = utc_now()`` lives here."""
+    invalidated: list[dict] = []
+    resolved_valid = _ts(resolved_edge.get("valid_at"))
+    resolved_invalid = _ts(resolved_edge.get("invalid_at"))
+    for edge in invalidation_candidates:
+        edge_valid = _ts(edge.get("valid_at"))
+        edge_invalid = _ts(edge.get("invalid_at"))
+        if (
+            edge_invalid is not None
+            and resolved_valid is not None
+            and edge_invalid <= resolved_valid
+        ) or (
+            edge_valid is not None
+            and resolved_invalid is not None
+            and resolved_invalid <= edge_valid
+        ):
+            continue
+        elif edge_valid is not None and resolved_valid is not None and edge_valid < resolved_valid:
+            edge["invalid_at"] = resolved_valid
+            invalidated.append(edge)
+    return invalidated
+
+
+def expire_new_edge(resolved_edge: dict, invalidation_candidates: list[dict]) -> None:
+    """Upstream's new-edge self-expiry (edge_operations.py:826-841): if any
+    contradicting candidate has a strictly LATER valid_at than the new fact,
+    the NEW edge enters the graph already expired — ``invalid_at`` = the
+    EARLIEST such candidate's valid_at (upstream sorts candidates by valid_at,
+    None last, and breaks on the first hit). Mutates ``resolved_edge`` in
+    place; runs only when the new edge is not already expired (upstream keys on
+    ``expired_at``, which it stamps whenever ``invalid_at`` is set — here that
+    means: skip when the model already returned an invalid_at). Must run BEFORE
+    ``resolve_edge_contradictions``, as upstream orders them: the self-expiry
+    can set ``resolved.invalid_at``, which the skip conditions then read."""
+    if resolved_edge.get("invalid_at"):
+        return
+    resolved_valid = _ts(resolved_edge.get("valid_at"))
+    candidates = sorted(
+        invalidation_candidates,
+        key=lambda c: (c.get("valid_at") is None, _ts(c.get("valid_at")) or ""),
+    )
+    for candidate in candidates:
+        candidate_valid = _ts(candidate.get("valid_at"))
+        if (
+            candidate_valid is not None
+            and resolved_valid is not None
+            and candidate_valid > resolved_valid
+        ):
+            resolved_edge["invalid_at"] = candidate_valid
+            break
 
 
 def _community_id(member_ids: list[str]) -> str:
@@ -275,13 +409,20 @@ class ZepGraphOrganizer(Organizer):
         context_window: int = 4,
         community_refresh: bool = True,
         update_communities: bool = False,
+        invalidation_candidate_limit: int = INVALIDATION_CANDIDATE_LIMIT,
     ) -> None:
         """`graph=None` defers to `ctx.graph_store` at hook time (facade-wired,
         persistent); pass an explicit `graph` to override that (e.g. standalone use).
         `candidate_threshold` is the min cosine similarity for entity-resolution
         embedding candidates (upstream `NODE_DEDUP_COSINE_MIN_SCORE`);
         `context_window` bounds how many recent messages are shown to the entity/fact
-        extraction prompts (paper n=4).
+        extraction prompts — 4 is the PAPER's n=4 (§2.2.1), and a recorded
+        divergence from current main, whose `EPISODE_WINDOW_LEN = 3`
+        (graph_data_operations.py:29; round-12 finding 15).
+        `invalidation_candidate_limit` caps the graph-wide invalidation-candidate
+        search per new fact — upstream runs EDGE_HYBRID_SEARCH_RRF at its
+        default limit 10 there (edge_operations.py:408-419); see `on_message`
+        for the dense-only stand-in.
 
         The two community knobs mirror upstream's two entry points, and their
         defaults are upstream's defaults. `community_refresh` runs the full
@@ -296,7 +437,8 @@ class ZepGraphOrganizer(Organizer):
         (§2.2.4)."""
         self._own_graph = graph
         self.candidate_threshold = candidate_threshold  # upstream NODE_DEDUP_COSINE_MIN_SCORE
-        self.context_window = context_window  # paper n=4 previous messages
+        self.context_window = context_window  # paper n=4 (main uses 3 — see docstring)
+        self.invalidation_candidate_limit = invalidation_candidate_limit
         self.community_refresh = community_refresh
         self.update_communities = update_communities
         self._recent: list[Episode] = []
@@ -324,75 +466,11 @@ class ZepGraphOrganizer(Organizer):
 
     # -- entity resolution ----------------------------------------------------
 
-    def _resolve_entity(
-        self, ent: dict, episode: Episode, ctx: OrganizerContext, ops: list[MemoryOp]
-    ) -> str:
-        """Three-stage resolution (Graphiti): embedding candidates ->
-        exact normalized name -> LLM judgment. Returns the node id.
-
-        Emits ops only — the node itself reaches the graph when the facade
-        applies them (``AgenticMemory._apply_graph``)."""
+    def _new_entity_op(self, ent: dict, episode: Episode, ops: list[MemoryOp]) -> str:
+        """ADD op for an entity that resolved to nothing existing; returns the
+        new node id."""
         name = str(ent.get("name", "")).strip()
         summary = str(ent.get("summary", ""))
-        etype = str(ent.get("type", "Entity"))
-
-        query_embedding = ctx.embedder.embed([name])[0]  # name only, as upstream
-        hits = [
-            (i, s)
-            for i, s in ctx.vector_store.search(
-                query_embedding, k=5, memory_type="entities", namespace=ctx.namespace
-            )
-            if s >= self.candidate_threshold
-        ]
-        candidates = ctx.doc_store.get_items([i for i, _ in hits], "entities")
-
-        norm = name.casefold()
-        for c in candidates:  # deterministic exact-name match
-            if str(c.get("name", "")).casefold() == norm:
-                return c["id"]
-
-        if candidates and ctx.llm is not None:  # LLM dedup judgment
-            verdict = ctx.llm.call(
-                "extract",
-                RESOLVE_PROMPT.format(
-                    name=name,
-                    summary=summary,
-                    content=episode.content,
-                    candidates="\n".join(
-                        f'- id={c["id"]} name="{c.get("name", "")}" '
-                        f'summary="{c.get("summary", "")}"'
-                        for c in candidates
-                    ),
-                ),
-                RESOLVE_SCHEMA,
-                required_keys=("duplicate_id",),
-            )
-            dup = (verdict or {}).get("duplicate_id")
-            by_id = {c["id"]: c for c in candidates}
-            if dup in by_id:
-                # merge: refresh canonical name/summary (paper: "generates
-                # an updated name and summary" — round-5 ⑦)
-                new_name = str(verdict.get("name") or by_id[dup].get("name", name))
-                new_summary = str(verdict.get("summary") or by_id[dup].get("summary", summary))
-                ops.append(
-                    MemoryOp(
-                        op=OpType.UPDATE,
-                        target_type="entities",
-                        target_id=dup,
-                        payload={
-                            "name": new_name,
-                            "summary": new_summary,
-                            # entity_type rides along so the graph upsert this op
-                            # drives does not reset the node's type to the default
-                            "entity_type": etype,
-                            "content": _node_text(new_name, new_summary),
-                            "embedding_text": new_name,
-                        },
-                    )
-                )
-                self._touched[dup] = new_summary
-                return dup
-
         node_id = new_id()
         ops.append(
             MemoryOp(
@@ -403,7 +481,7 @@ class ZepGraphOrganizer(Organizer):
                     "id": node_id,
                     "name": name,
                     "summary": summary,
-                    "entity_type": etype,
+                    "entity_type": str(ent.get("type", "Entity")),
                     "source_episode_ids": [episode.id],
                     # `content` is what the render layer and the BM25 channel see.
                     # Without it an entity item stored ONLY name/summary, so a
@@ -421,6 +499,138 @@ class ZepGraphOrganizer(Organizer):
         )
         self._touched[node_id] = summary
         return node_id
+
+    def _merge_entity_op(
+        self, ent: dict, canonical: dict, verdict: dict, ops: list[MemoryOp]
+    ) -> str:
+        """UPDATE op refreshing the canonical node on an LLM-confirmed merge.
+
+        The name/summary refresh is the PAPER's dedup description ("generates
+        an updated name and summary"), NOT current main's: main's
+        ``NodeDuplicate`` is ``{id, name, duplicate_candidate_id}`` with no
+        summary field, and ``_promote_resolved_node`` keeps the existing node,
+        only promoting type labels — summaries there are maintained by a
+        separate attribute/summary batch path (round-12 finding 2; behavior
+        kept deliberately, lineage relabeled)."""
+        dup = str(canonical.get("id"))
+        name = str(ent.get("name", "")).strip()
+        summary = str(ent.get("summary", ""))
+        new_name = str(verdict.get("name") or canonical.get("name", name))
+        new_summary = str(verdict.get("summary") or canonical.get("summary", summary))
+        ops.append(
+            MemoryOp(
+                op=OpType.UPDATE,
+                target_type="entities",
+                target_id=dup,
+                payload={
+                    "name": new_name,
+                    "summary": new_summary,
+                    # entity_type rides along so the graph upsert this op
+                    # drives does not reset the node's type to the default
+                    "entity_type": str(ent.get("type", "Entity")),
+                    "content": _node_text(new_name, new_summary),
+                    "embedding_text": new_name,
+                },
+            )
+        )
+        self._touched[dup] = new_summary
+        return dup
+
+    def _resolve_entities(
+        self, ents: list[dict], episode: Episode, ctx: OrganizerContext, ops: list[MemoryOp]
+    ) -> list[str]:
+        """Three-stage resolution as current main (``resolve_extracted_nodes``,
+        node_operations.py:627-690): per entity, semantic candidates (name
+        embedding, k=15, cosine >= 0.6) -> the deterministic stage from
+        ``dedup.py`` (exact normalized name + fuzzy MinHash/LSH; an ambiguous
+        exact match escalates instead of first-wins) -> ONE batched LLM dedupe
+        call for ALL still-unresolved entities of the message against their
+        merged candidate pool (node_operations.py:552-556). The batch shape is
+        load-bearing for call-count parity: upstream pays at most one dedupe
+        call per message, not one per entity (round-12 findings 1/3).
+
+        Returns node ids aligned with ``ents``. Emits ops only — nodes reach
+        the graph when the facade applies them (``AgenticMemory._apply_graph``)."""
+        resolved: list[str | None] = [None] * len(ents)
+        candidates_per_entity: list[list[dict]] = []
+        unresolved: list[int] = []
+
+        for idx, ent in enumerate(ents):
+            name = str(ent.get("name", "")).strip()
+            query_embedding = ctx.embedder.embed([name])[0]  # name only, as upstream
+            hits = [
+                (i, s)
+                for i, s in ctx.vector_store.search(
+                    query_embedding,
+                    k=NODE_DEDUP_CANDIDATE_LIMIT,
+                    memory_type="entities",
+                    namespace=ctx.namespace,
+                )
+                if s >= self.candidate_threshold
+            ]
+            candidates = ctx.doc_store.get_items([i for i, _ in hits], "entities")
+            candidates_per_entity.append(candidates)
+            if not candidates:
+                # no semantic candidates -> new node, no LLM (upstream leaves
+                # the slot unresolved and never sends it to the dedupe call)
+                continue
+            match_id = deterministic_resolve(name, build_candidate_indexes(candidates))
+            if match_id is not None:
+                resolved[idx] = match_id
+            else:
+                unresolved.append(idx)
+
+        if unresolved and ctx.llm is not None:
+            # Merged candidate pool across the unresolved entities, deduped by
+            # id, integer candidate ids as upstream's existing_nodes context.
+            merged: list[dict] = []
+            seen_ids: set[str] = set()
+            for idx in unresolved:
+                for c in candidates_per_entity[idx]:
+                    cid = str(c.get("id"))
+                    if cid not in seen_ids:
+                        seen_ids.add(cid)
+                        merged.append(c)
+            verdict = ctx.llm.call(
+                "extract",
+                RESOLVE_PROMPT.format(
+                    entities="\n".join(
+                        f'- id={rel} name="{ents[idx].get("name", "")}" '
+                        f'summary="{ents[idx].get("summary", "")}"'
+                        for rel, idx in enumerate(unresolved)
+                    ),
+                    candidates="\n".join(
+                        f'- candidate_id={i} name="{c.get("name", "")}" '
+                        f'summary="{c.get("summary", "")}"'
+                        for i, c in enumerate(merged)
+                    ),
+                    content=episode.content,
+                ),
+                RESOLVE_SCHEMA,
+                required_keys=("resolutions",),
+            )
+            # Guardrails as upstream's _resolve_with_llm: invalid or repeated
+            # ids are ignored, an invalid candidate id means "no duplicate",
+            # entities the model skipped stay unresolved and become new nodes.
+            processed: set[int] = set()
+            for resolution in (verdict or {}).get("resolutions", []):
+                rel = resolution.get("id")
+                if not isinstance(rel, int) or not (0 <= rel < len(unresolved)):
+                    continue
+                if rel in processed:
+                    continue
+                processed.add(rel)
+                idx = unresolved[rel]
+                cand_id = resolution.get("duplicate_candidate_id")
+                if isinstance(cand_id, int) and 0 <= cand_id < len(merged):
+                    resolved[idx] = self._merge_entity_op(
+                        ents[idx], merged[cand_id], resolution, ops
+                    )
+
+        return [
+            node_id if node_id is not None else self._new_entity_op(ents[idx], episode, ops)
+            for idx, node_id in enumerate(resolved)
+        ]
 
     # -- communities (paper §2.2.4) -------------------------------------------
 
@@ -653,11 +863,12 @@ class ZepGraphOrganizer(Organizer):
             return []
 
         ops: list[MemoryOp] = []
-        name_to_id: dict[str, str] = {}
         self._touched, self._pending_neighbors = {}, {}
-        for ent in extracted["entities"][:10]:
-            if str(ent.get("name", "")).strip():
-                name_to_id[str(ent["name"]).strip()] = self._resolve_entity(ent, episode, ctx, ops)
+        ents = [e for e in extracted["entities"][:10] if str(e.get("name", "")).strip()]
+        node_ids = self._resolve_entities(ents, episode, ctx, ops)
+        name_to_id = {
+            str(ent["name"]).strip(): node_id for ent, node_id in zip(ents, node_ids, strict=True)
+        }
 
         if len(name_to_id) < 2:
             return self._finish(ops, ctx)
@@ -684,6 +895,10 @@ class ZepGraphOrganizer(Organizer):
         # Keyed by unordered pair, matching `edges_between`'s either-direction
         # match.
         pending: dict[frozenset[str], list[dict]] = {}
+        # Fast path (a): in-batch pre-dedup of identical extractions — same
+        # endpoints (directional) + same normalized fact text collapse to one
+        # edge before any resolution work (upstream edge_operations.py:344-358).
+        seen_in_batch: set[tuple[str, str, str]] = set()
 
         for f in facts.get("facts", [])[:10]:
             subj, obj = name_to_id.get(f.get("subject")), name_to_id.get(f.get("object"))
@@ -697,27 +912,102 @@ class ZepGraphOrganizer(Organizer):
                 # either-direction clause, so it would be its own duplicate
                 # candidate on the next message.
                 continue
-            valid_at = str(f.get("valid_at") or ref_time)
-            invalid_at = f.get("invalid_at") or None
+            normalized_fact = _normalize_string_exact(statement)
+            batch_key = (subj, obj, normalized_fact)
+            if batch_key in seen_in_batch:
+                continue
+            seen_in_batch.add(batch_key)
+            # A null valid_at from the model STAYS None — upstream parses null
+            # to None (edge_operations.py:253-270), and a None-valid_at edge can
+            # neither invalidate nor be invalidated (every condition in the
+            # truth table requires non-None). The old `or ref_time` default made
+            # every fact a dated, invalidation-capable fact — more aggressive
+            # temporal semantics than either lineage (round-12 finding 6).
+            # Call-parity note: upstream retries a missing valid_at once via
+            # `_extract_edge_timestamps` — an extra LLM call per new dateless
+            # edge that is deliberately NOT reproduced here.
+            valid_at = _ts(f.get("valid_at"))
+            invalid_at = _ts(f.get("invalid_at"))
 
             pair = frozenset((subj, obj))
             existing = graph.edges_between(subj, obj, ctx.namespace) + [
                 e for e in pending.get(pair, []) if not e.get("invalid_at")
             ]
-            if existing:
-                by_id = {e["id"]: e for e in existing}
+
+            # Fast path (b): verbatim reuse — normalized fact text + directional
+            # endpoints matching an existing edge exactly skip the LLM call and
+            # just append provenance (upstream edge_operations.py:687-700).
+            verbatim = next(
+                (
+                    e
+                    for e in existing
+                    if str(e.get("src")) == subj
+                    and str(e.get("dst")) == obj
+                    and _normalize_string_exact(str(e.get("content", ""))) == normalized_fact
+                ),
+                None,
+            )
+            if verbatim is not None:
+                items = ctx.doc_store.get_items([verbatim["id"]], "facts")
+                prov = list((items[0] if items else {}).get("source_episode_ids", []))
+                ops.append(
+                    MemoryOp(
+                        op=OpType.UPDATE,
+                        target_type="facts",
+                        target_id=verbatim["id"],
+                        payload={"source_episode_ids": prov + [episode.id]},
+                    )
+                )
+                continue
+
+            # Invalidation candidates come from a GRAPH-WIDE search, minus the
+            # same-pair duplicates (upstream edge_operations.py:408-419). This
+            # is a documented stand-in: upstream runs EDGE_HYBRID_SEARCH_RRF
+            # (bm25 + cosine fused by RRF) over all edges of the group; here it
+            # is the DENSE channel only, over the `facts` type in the
+            # namespace, k = `invalidation_candidate_limit` (upstream's search
+            # limit 10). Without this pool the paper's flagship temporal
+            # mechanism only ever fired between the identical entity pair
+            # (round-12 finding 4).
+            same_pair_ids = {str(e["id"]) for e in existing}
+            statement_embedding = ctx.embedder.embed([statement])[0]
+            hit_ids = [
+                i
+                for i, _ in ctx.vector_store.search(
+                    statement_embedding,
+                    k=self.invalidation_candidate_limit,
+                    memory_type="facts",
+                    namespace=ctx.namespace,
+                )
+            ]
+            inval_candidates = [
+                item
+                for item in ctx.doc_store.get_items(hit_ids, "facts")
+                if str(item.get("id")) not in same_pair_ids
+            ]
+
+            if existing or inval_candidates:
+                by_id = {str(e["id"]): e for e in existing}
+                inval_by_id = {str(e["id"]): e for e in inval_candidates}
+
+                def _fact_line(e: dict) -> str:
+                    return (
+                        f'- id={e["id"]} "{e["content"]}" '
+                        f"(valid {e.get('valid_at') or '?'} - "
+                        f"{e.get('invalid_at') or 'present'})"
+                    )
+
                 verdict = (
                     ctx.llm.call(
                         "distill",
                         EDGE_RESOLVE_PROMPT.format(
-                            existing="\n".join(
-                                f'- id={e["id"]} "{e["content"]}" '
-                                f"(valid {e.get('valid_at') or '?'} - "
-                                f"{e.get('invalid_at') or 'present'})"
-                                for e in existing
-                            ),
+                            existing="\n".join(_fact_line(e) for e in existing) or "(none)",
+                            invalidation_candidates="\n".join(
+                                _fact_line(e) for e in inval_candidates
+                            )
+                            or "(none)",
                             statement=statement,
-                            valid_at=valid_at,
+                            valid_at=valid_at or "unknown",
                         ),
                         EDGE_RESOLVE_SCHEMA,
                         required_keys=("contradicts",),
@@ -726,7 +1016,7 @@ class ZepGraphOrganizer(Organizer):
                 )
 
                 dup = verdict.get("duplicate_of")
-                if dup in by_id:
+                if dup in by_id:  # only a same-pair fact can be the duplicate
                     # duplicate: reuse the edge, append provenance (upstream
                     # episodes.append) — no new edge (round-5 ⑤)
                     items = ctx.doc_store.get_items([dup], "facts")
@@ -741,27 +1031,28 @@ class ZepGraphOrganizer(Organizer):
                     )
                     continue
 
-                for contradicted_id in verdict.get("contradicts", []):
-                    e = by_id.get(contradicted_id)
-                    if e is None:
-                        continue
-                    # temporal-overlap guard (upstream
-                    # resolve_edge_contradictions): don't retro-invalidate
-                    # facts that had already ended, or that started after
-                    # the new fact ended
-                    if e.get("invalid_at") and str(e["invalid_at"]) <= valid_at:
-                        continue
-                    if invalid_at and e.get("valid_at") and str(invalid_at) <= str(e["valid_at"]):
-                        continue
-                    # the INVALIDATE op carries this to the graph; mark the
-                    # local view so a later fact in this same message does not
-                    # contradict an edge already on its way out
-                    e["invalid_at"] = valid_at
+                # The LLM flags contradictions from either list (upstream's
+                # continuous indexing across both); the temporal truth table
+                # then decides what actually expires, in upstream's order:
+                # self-expiry of the NEW edge first, then invalidation of the
+                # strictly-older candidates.
+                contradicted = [
+                    by_id.get(cid) or inval_by_id.get(cid) for cid in verdict.get("contradicts", [])
+                ]
+                contradicted = [e for e in contradicted if e is not None]
+                new_edge_times = {"valid_at": valid_at, "invalid_at": invalid_at}
+                expire_new_edge(new_edge_times, contradicted)
+                invalid_at = new_edge_times.get("invalid_at")
+                for e in resolve_edge_contradictions(new_edge_times, contradicted):
+                    # `resolve_edge_contradictions` already stamped the local
+                    # view's invalid_at, so a later fact in this same message
+                    # does not contradict an edge already on its way out; the
+                    # INVALIDATE op carries it to the graph.
                     ops.append(
                         MemoryOp(
                             op=OpType.INVALIDATE,
                             target_type="facts",
-                            target_id=contradicted_id,
+                            target_id=str(e["id"]),
                             payload={"t_invalid": valid_at},
                         )
                     )
@@ -784,6 +1075,10 @@ class ZepGraphOrganizer(Organizer):
                 "embedding_text": statement,
             }
             if invalid_at:
+                # Either the model's own invalid_at or the self-expiry above.
+                # `_apply_graph` re-stamps the graph edge after the upsert, so
+                # the edge enters the graph already expired, as upstream's
+                # resolved_edge does.
                 payload["invalid_at"] = str(invalid_at)
             self._pending_neighbors.setdefault(subj, []).append(obj)
             self._pending_neighbors.setdefault(obj, []).append(subj)
@@ -791,6 +1086,10 @@ class ZepGraphOrganizer(Organizer):
                 {
                     "id": edge_id,
                     "content": statement,
+                    # src/dst so the verbatim fast path can match pending edges
+                    # the same way it matches store rows
+                    "src": subj,
+                    "dst": obj,
                     "valid_at": valid_at,
                     "invalid_at": payload.get("invalid_at"),
                 }

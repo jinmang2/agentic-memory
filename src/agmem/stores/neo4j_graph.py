@@ -161,12 +161,19 @@ class Neo4jGraphStore:
             ids=node_ids,
         )
 
-    def neighbors(self, node_id: str, namespace: str, hops: int = 1) -> list[dict]:
+    def neighbors(
+        self, node_id: str, namespace: str, hops: int = 1, direction: str = "both"
+    ) -> list[dict]:
         """Native Cypher variable-length path (`*1..hops`) restricted to active,
         same-namespace edges; deduped via `RETURN DISTINCT`. Unlike
-        `KuzuGraphStore.neighbors` (manual frontier walk), this is a single query."""
+        `KuzuGraphStore.neighbors` (manual frontier walk), this is a single query.
+
+        `direction="out"` makes the pattern directed (`->`), Zep's φ_bfs mode —
+        upstream's own Cypher is the directed `-[:RELATES_TO|MENTIONS*1..n]->`
+        (see `SqliteGraphStore.neighbors`); `"both"` stays the generic default."""
+        arrow = "->" if direction == "out" else "-"
         return self._run(
-            f"MATCH p = (a:Entity {{id: $id}})-[:RELATES*1..{int(hops)}]-(n:Entity)"
+            f"MATCH p = (a:Entity {{id: $id}})-[:RELATES*1..{int(hops)}]{arrow}(n:Entity)"
             " WHERE all(r IN relationships(p) WHERE r.invalid_at IS NULL"
             " AND r.namespace=$ns)"
             " RETURN DISTINCT n.id AS id, n.namespace AS namespace,"
