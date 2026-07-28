@@ -31,7 +31,7 @@ each is verified in ``docs/research/amac-admission-gate.md`` and handled here:
 2. **Type Prior matches keywords as bare substrings.** ``'is' in content`` is
    true for "sister", "this", "island"; the ``fact`` keyword set is
    ``{'is','are','was','were',...}``, so almost any substantive English turn
-   classifies as ``fact`` (prior 0.7). Under the published weights that alone
+   classifies as ``fact`` (prior 0.7). Under the release's weights that alone
    decides admission — see ``TypePriorClassifier``.
 3. **The 5-fold CV never fits on the training folds.** ``optimize_weights_cv``
    splits into ``(train_idx, val_idx)`` but only ever evaluates
@@ -42,11 +42,14 @@ each is verified in ``docs/research/amac-admission-gate.md`` and handled here:
    subclass, a few regexes, with a ``TODO: Could integrate with spaCy NER``.
    We implement what shipped and do not invent the POS stage.
 
-Consequence for anyone about to measure: the published weights
+Consequence for anyone about to measure: the release's weights
 ``[0.1, 0.1, 0.1, 0.1, 0.6]`` / ``theta=0.55`` were fit **on top of defects 1
-and 2** — with N pinned at 1.0, R at 0.0 and Type Prior saturating at ``fact``,
+and 2**. ("Release's", not "published": the paper discloses theta* = 0.55 —
+Table 3 — but never the weight vector; its Table 2 gives only relative feature
+importance, so the vector exists ONLY in the released code. docs/16 session 8.)
+With N pinned at 1.0, R at 0.0 and Type Prior saturating at ``fact``,
 that operating point reduces to "admit iff the turn is not a bare
-interjection". They are kept as this module's defaults so the paper's
+interjection". The values are kept as this module's defaults so the paper's
 configuration is reachable verbatim, but they are *not* transferable to the
 debugged features; re-tuning needs a labeled pass, which is a measurement.
 ``type_matching="substring"`` reproduces defect 2 exactly for that comparison.
@@ -256,7 +259,7 @@ class TypePriorClassifier:
       preference: ``'is'`` hits "sister" and "this", ``'was'`` hits "wasn't"'s
       stem and any past-tense line, so nearly every substantive turn scores as
       ``fact`` (0.7) while only bare interjections fall through to ``unknown``
-      (0.5). Under the published weights that difference *is* the admission
+      (0.5). Under the release's weights that difference *is* the admission
       decision, which is how the release reaches recall 0.972.
 
     Neither mode implements the paper's "part-of-speech cues" — no POS tagger
