@@ -126,6 +126,55 @@ def test_link_expansion_capped():
         mem.close()
 
 
+def test_link_application_preserves_insertion_order_and_duplicates():
+    """Round-12 finding 3: upstream is ``note.links.extend`` in both editions
+    (memory_layer.py:835) — insertion order, duplicates kept — and the read path
+    consumes links in stored order under the cap, so overflow selection is
+    first-linked-wins. The old ``sorted(set())`` LINK merge silently made it
+    lowest-id-wins. Deliberate residual deviation, asserted here: upstream's
+    read (memory_layer.py:889-897) has no dedup and would serve a duplicate
+    twice while burning a cap slot per occurrence; our seen-set serves it once
+    and the duplicate burns no cap budget."""
+    from agmem.config import AgmemConfig
+    from agmem.core.ops import MemoryOp, OpType
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=["passthrough"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(link_expansion_cap=2),
+    )
+    try:
+        put_indexed(mem, "hub", "notes", {"content": "hub note", "links": []})
+        for lid in ("z9", "a1", "m5"):
+            put_indexed(mem, lid, "notes", {"content": f"leaf {lid}", "links": []})
+        # two evolutions, as two LINK ops: z9 first, then a duplicate z9 + a1 + m5
+        for payload in (["z9"], ["z9", "a1", "m5"]):
+            mem._apply_ops(
+                [
+                    MemoryOp(
+                        op=OpType.LINK,
+                        target_type="notes",
+                        target_id="hub",
+                        payload={"links": payload},
+                    )
+                ],
+                actor="amem",
+            )
+        hub = mem.doc_store.get_items(["hub"], "notes")[0]
+        assert hub["links"] == ["z9", "z9", "a1", "m5"]  # order + duplicate survive storage
+
+        bundle = mem.search("hub note", memory_types=["notes"], k=1)
+        served = [s.item.data["id"] for s in bundle.items]
+        # cap=2 overflow is first-linked-wins: z9 then a1; the duplicate z9 is
+        # served exactly once and burns no cap slot; m5 overflows. The old
+        # sorted-set merge would have served {a1, m5} here.
+        assert sorted(served) == ["a1", "hub", "z9"]
+        assert served.count("z9") == 1
+    finally:
+        mem.close()
+
+
 def test_read_step_caps_are_configurable():
     """The A-Mem link cap and Nemori's r are documented upstream deviations, so
     they must be ablatable from config — they used to be pipeline constructor

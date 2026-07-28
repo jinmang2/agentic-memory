@@ -90,7 +90,12 @@ class Note:
 
     def embedding_text(self) -> str:
         """Content plus keywords/tags/context, unlike the plain-content default."""
-        # A-Mem finding: embed content concatenated with metadata.
+        # A-Mem finding: embed content concatenated with metadata. Three
+        # formats exist: ours = paper eq.(3) unlabeled order (content, K, G, X);
+        # upstream both editions = labeled "content:.. context:.. keywords:..
+        # tags:.." order c,X,K,G (memory_layer.py:722); and after any upstream
+        # consolidate_memories() the corpus silently switches to a third format
+        # ("content , context keywords tags", memory_layer.py:749-751).
         parts = [
             self.content,
             " ".join(self.keywords),

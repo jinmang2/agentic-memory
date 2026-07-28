@@ -20,8 +20,13 @@ upstream 클론(`~/.agmem/upstream/`)·우리 코드를 세션마다 직접 읽�
 - 우리가 논문 쪽으로 교정한 것: 이웃 검색 쿼리 = `embedding_text()`(식 (3) 충실; 양쪽 공식 코드는 raw
   content), 이웃 ID 지칭(#32), 진짜 cosine(#23/#24). upstream을 따라간 것: 단방향 링크,
   add-then-evolve 2-op 분리.
-- 잔여 편차 1건: read 링크 확장 cap — upstream은 히트당 k개(k=10이면 ~100), 우리는 전역 5개
-  (`link_expansion_cap`). upstream #16/#21 스스로도 의미론 미확정.
+- 잔여 편차(라운드 12에서 "1건"이 과소집계로 판명, 실제 집합): ① read 링크 확장 cap 의미론 —
+  upstream은 히트당 k개(k=10이면 ~100, #16/#21 스스로도 미확정), 우리는 전역 5개
+  (`link_expansion_cap`) + 중복 링크 dedup(upstream은 중복을 두 번 서빙하며 cap 슬롯 소모);
+  ② 진화된 이웃의 즉시 재임베딩 — upstream은 `consolidate_memories()`까지 stale 인덱스
+  (fidelity-deep-audit §1.1); ③ 첫 노트 evolution 콜 스킵 — robust 계보를 따름, plain
+  (발표수치) 대비 대화당 콜 -1. 라운드 12에서 편차였다가 해소된 것: LINK 순서(sorted-set →
+  upstream의 삽입순서+중복 보존), 새 노트 tag 가드(무조건 적용으로 plain 재현).
 - 평가: **추상화가 가장 잘 맞는 케이스.** 비용은 "구현이 write(organizer)/read(step) 두 파일로
   갈라진 것"뿐. `produces`→`default_memory_types` 다리는 A-Mem에선 무해.
 

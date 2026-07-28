@@ -207,6 +207,56 @@ def test_amem_note_link_and_evolution():
         mem.close()
 
 
+def test_amem_tag_refinement_is_unconditional_including_empty_wipe():
+    """Round-12 finding 2: the plain (published-numbers) edition applies
+    ``note.tags = new_tags`` with NO guard (memory_layer.py:834-836) — its
+    strict schema requires the key but permits ``[]``. Our round-11
+    emptiness+equality guard suppressed no-op verdicts (skewing evolution-log
+    op counts) and blocked [] wipes; both now flow through as UPDATE ops, the
+    wipe staying auditable in the op log. (Robust-edition variant: emptiness
+    guard only, memory_layer_robust.py:506-507 — not what we reproduce.)"""
+    from agmem.organizers.amem import AMemOrganizer
+
+    llm = StubLLM(
+        {
+            "extract": [
+                {"keywords": ["a"], "context": "c1", "tags": ["t1"]},
+                {"keywords": ["a"], "context": "c2", "tags": ["travel", "budget"]},
+            ],
+            "distill": [
+                {
+                    "should_evolve": True,
+                    "actions": ["strengthen"],
+                    "connections": ["__FIRST__"],
+                    "new_note_tags": [],  # the wipe the strict schema permits
+                },
+            ],
+        }
+    )
+    mem = make_mem(AMemOrganizer(), llm)
+    try:
+        mem.add_message("first note about topic alpha")
+        first_id = next(o.target_id for o in mem.log.tail(10) if o.target_type == "notes")
+        llm.responses["distill"][0]["connections"] = [first_id]
+
+        mem.add_message("second note about topic alpha")
+        ops = mem.log.tail(20)
+        second_id = [o.target_id for o in ops if o.op is OpType.ADD and o.target_type == "notes"][
+            -1
+        ]
+        tag_updates = [
+            o
+            for o in ops
+            if o.op is OpType.UPDATE and o.target_id == second_id and "tags" in o.payload
+        ]
+        assert len(tag_updates) == 1, "the empty verdict must still emit the UPDATE op"
+        assert tag_updates[0].payload["tags"] == []
+        second = mem.doc_store.get_items([second_id], "notes")[0]
+        assert second["tags"] == [], "Ps1 tags are wiped, exactly as upstream would"
+    finally:
+        mem.close()
+
+
 def test_amem_hallucinated_neighbor_ids_ignored():
     from agmem.organizers.amem import AMemOrganizer
 
@@ -230,8 +280,20 @@ def test_amem_hallucinated_neighbor_ids_ignored():
         mem.add_message("first note about topic alpha")
         mem.add_message("second note about topic alpha")
         ops = mem.log.tail(20)
-        # bug-fix #32 behavior: fake ids produce no LINK/UPDATE ops
-        assert all(o.op not in (OpType.LINK, OpType.UPDATE) for o in ops)
+        # bug-fix #32 behavior: fake ids produce no LINK ops and no neighbor
+        # UPDATE ops. The one UPDATE that MAY appear targets the new note
+        # itself: strengthen's tag refinement is unconditional (round-12
+        # finding 2, memory_layer.py:834-836), independent of connection
+        # validity.
+        assert all(o.op is not OpType.LINK for o in ops)
+        note_ids = {o.target_id for o in ops if o.op is OpType.ADD and o.target_type == "notes"}
+        second_id = [o.target_id for o in ops if o.op is OpType.ADD and o.target_type == "notes"][
+            -1
+        ]
+        for o in ops:
+            if o.op is OpType.UPDATE:
+                assert o.target_id == second_id, "no neighbor may be updated via a fake id"
+        assert note_ids, "both notes must still be stored"
     finally:
         mem.close()
 

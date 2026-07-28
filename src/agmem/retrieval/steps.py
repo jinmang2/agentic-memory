@@ -92,11 +92,21 @@ class LinkExpansion(ReadStep):
     """A-Mem 1-hop: pull linked neighbor notes of retrieved notes.
 
     Links are unidirectional as upstream. Cap semantics deviate: upstream caps
-    PER HIT (agiresearch k per hit; WujiangXu k+1 via an off-by-one), so eval
-    k=10 can pull ~100 link neighbors — WujiangXu #16/#21 show even upstream
-    considers this ambiguous. We use one global cap (default 5); neighbors score
-    just below their parent. Keep this deviation in result caveats when
-    comparing multi-hop."""
+    PER HIT (agiresearch k per hit — repo not retained in ~/.agmem/upstream,
+    verified 2026-07-27, not re-verifiable locally; WujiangXu k+1 via an
+    off-by-one), so eval k=10 can pull ~100 link neighbors — WujiangXu #16/#21
+    show even upstream considers this ambiguous. We use one global cap
+    (default 5); neighbors score just below their parent.
+
+    Ordering under the cap matches upstream since round-12 finding 3: links are
+    stored in insertion order with duplicates (upstream ``links.extend``), and
+    this step consumes them in stored order, so overflow selection is
+    first-linked-wins. (Pre-round-12, LINK application sorted a dedup'd set —
+    lowest-id-wins.) Duplicate handling still deviates: upstream's read
+    (memory_layer.py:889-897) has no dedup, so a duplicate link serves the same
+    neighbor twice AND burns a cap slot per occurrence; our seen-set skips a
+    duplicate id before the cap check, so it is served once and burns no extra
+    budget. Keep both deviations in result caveats when comparing multi-hop."""
 
     def __init__(self, cap: int = 5) -> None:
         self.cap = cap

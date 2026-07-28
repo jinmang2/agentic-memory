@@ -684,9 +684,22 @@ class AgenticMemory:
             items = self.doc_store.get_items([op.target_id], op.target_type)
             if items:
                 data = items[0]
-                key = "links" if op.op == OpType.LINK else "tags"
-                merged = set(data.get(key, [])) | set(op.payload.get(key, []))
-                data[key] = sorted(merged)
+                if op.op == OpType.LINK:
+                    # Insertion order WITH duplicates — A-Mem upstream is
+                    # ``note.links.extend(...)`` in both editions
+                    # (memory_layer.py:835, memory_layer_robust.py:505). The
+                    # order is load-bearing on the read path: LinkExpansion
+                    # consumes links in stored order under a cap, so overflow
+                    # selection is first-linked-wins. ``sorted(set(...))`` here
+                    # (pre-round-12 finding 3) silently made it
+                    # lowest-id-wins instead.
+                    data["links"] = list(data.get("links", [])) + list(op.payload.get("links", []))
+                else:
+                    # TAG has no emitter today (A-Mem tag refinement rides
+                    # UPDATE); the set-merge stays as generic framework
+                    # semantics until some methodology pins it down.
+                    merged = set(data.get("tags", [])) | set(op.payload.get("tags", []))
+                    data["tags"] = sorted(merged)
                 self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
         elif op.op == OpType.DELETE:
             # physical delete is reserved for capacity eviction (MemoryOS

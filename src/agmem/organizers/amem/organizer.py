@@ -18,11 +18,31 @@ round-4 verification, docs/research/fidelity-round4-verification.md):
   note.content only
 - an empty ``actions`` array falls back to both effects (small models
   omit the field); upstream treats it as a no-op
+- first-note skip: with an empty store we make no evolution call —
+  this branch follows the ROBUST edition (memory_layer_robust.py:473-474).
+  The plain (published-numbers) edition still spends the Ps3 call on an
+  empty neighbor block (memory_layer.py:753-758, 861-862) and its
+  strengthen can then extend ``note.links`` with dangling integer indices
+  into an empty memory list. Vs the plain edition our per-conversation
+  evolution call count is therefore exactly -1 (cost-parity caveat, same
+  treatment as the MemoryOS first-page continuity call); reproducing the
+  wasted call buys nothing, and the dangling-link half is structurally
+  impossible under the facade (links are validated note IDs).
+Tag refinement (``new_note_tags``) is applied UNCONDITIONALLY, including
+empty lists, exactly like the plain edition's ``note.tags = new_tags``
+(memory_layer.py:834-836; its strict schema requires the key but permits
+``[]``). Variant: the robust edition guards emptiness only
+(memory_layer_robust.py:506-507). A ``[]`` wipe is auditable in the
+facade's op log, so fidelity wins over protectiveness here.
 Ps1 is effectively dead in BOTH official editions: agiresearch add_note
 never calls analyze_content (metadata stays at constructor defaults),
 and WujiangXu's plain memory_layer.py lacks ``import re`` so metadata
 falls back to empty keywords/tags and context "General"; only
 memory_layer_robust.py behaves as the paper describes.
+All agiresearch/A-mem claims in this module (the add_note/analyze_content
+claim above, the issue #23/#24/#32 characterizations) refer to a repo not
+retained in ~/.agmem/upstream; verified 2026-07-27, not re-verifiable
+locally.
 Read-path counterpart (1-hop link expansion, upstream eval's
 find_related_memories_raw) is ``LinkExpansion`` in retrieval/steps.py,
 configured by ``AgmemConfig.link_expansion_cap``. It used to live in
@@ -275,26 +295,33 @@ class AMemOrganizer(Organizer):
             # (audit P1-5) — it is not accidental redundancy, so keep it split
             # from the ADD above rather than folding the tags into it: the op
             # stream then matches upstream's add-then-evolve two phases.
+            # Applied UNCONDITIONALLY, including [] — the plain edition's
+            # ``note.tags = new_tags`` (memory_layer.py:834-836) has no guard,
+            # and its strict schema requires the key but permits an empty
+            # array; a [] wipe is auditable in the op log. Variant: the robust
+            # edition guards emptiness only (memory_layer_robust.py:506-507).
+            # A round-11 guard here (``if new_tags and new_tags != note.tags``)
+            # also suppressed no-op verdicts, skewing evolution-log op counts
+            # vs upstream (round-12 finding 2).
             new_tags = [str(t) for t in evolution_verdict.get("new_note_tags") or []]
-            if new_tags and new_tags != note.tags:
-                refreshed_self = Note(
-                    content=note.content,
-                    id=note.id,
-                    keywords=note.keywords,
-                    tags=new_tags,
-                    context=note.context,
+            refreshed_self = Note(
+                content=note.content,
+                id=note.id,
+                keywords=note.keywords,
+                tags=new_tags,
+                context=note.context,
+            )
+            ops.append(
+                MemoryOp(
+                    op=OpType.UPDATE,
+                    target_type="notes",
+                    target_id=note.id,
+                    payload={
+                        "tags": new_tags,
+                        "embedding_text": refreshed_self.embedding_text(),
+                    },
                 )
-                ops.append(
-                    MemoryOp(
-                        op=OpType.UPDATE,
-                        target_type="notes",
-                        target_id=note.id,
-                        payload={
-                            "tags": new_tags,
-                            "embedding_text": refreshed_self.embedding_text(),
-                        },
-                    )
-                )
+            )
 
         if "update_neighbor" in actions:
             for upd in evolution_verdict.get("neighbor_updates", []) or []:
