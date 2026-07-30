@@ -39,3 +39,31 @@ jobs:
       # backends and test something other than the core install.
       - name: Run tests
         run: uv run --no-default-groups --group dev pytest tests/ -q
+
+      # Tier-0 defect reproductions (docs/17-defect-ledger.md): each script proves
+      # one upstream defect deterministically, $0, against the pinned snapshots
+      # fetched here. GitHub serves arbitrary reachable SHAs, so a depth-1 fetch
+      # of the exact pin is enough. Scripts self-skip when evidence is absent
+      # (e.g. the A-Mem dynamic half needs heavy deps the core install omits).
+      - name: Fetch pinned upstream snapshots
+        run: |
+          set -eu
+          fetch_pin() {
+            dir="$HOME/.agmem/upstream/$1"
+            git init -q "$dir"
+            git -C "$dir" fetch -q --depth 1 "https://github.com/$2" "$3"
+            git -C "$dir" checkout -q FETCH_HEAD
+          }
+          fetch_pin AgenticMemory WujiangXu/AgenticMemory 0c8039f28fdcc08189a23c07a3437d9d2482f9c2
+          fetch_pin GMemory bingreeky/GMemory 7b581c51d993bd600df14691d101d7e601040cc6
+          fetch_pin MemMachine MemMachine/MemMachine 18f1211290c50ae30e9960b90bbe57d89bf68600
+          fetch_pin nemori nemori-ai/nemori d2a6dff6e5481214a0be6a2d10147feccfc16244
+
+      - name: Run Tier-0 defect reproductions
+        working-directory: scripts/repro/defects
+        run: |
+          set -eu
+          for script in repro_*.py; do
+            echo "== $script"
+            uv run --no-default-groups --group dev python "$script"
+          done
