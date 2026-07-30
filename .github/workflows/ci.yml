@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The suite runs on the CORE dependency set only — no vector/graph backends,
+  # no local embedder, no LLM endpoint. That is deliberate: it is the cheapest
+  # standing proof that capability gating actually degrades (docs/01), since
+  # every optional path has to skip rather than fail. The full install adds
+  # real backends and is exercised locally (441 passed / 1 skipped).
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install core dependencies
+        run: uv sync --no-default-groups --group dev
+
+      - name: Check formatting
+        run: uvx ruff@0.16.0 format --check src/ tests/ scripts/
+
+      # The group flags are repeated here on purpose: a bare `uv run` re-syncs
+      # with the DEFAULT groups, which would silently reinstall the heavy
+      # backends and test something other than the core install.
+      - name: Run tests
+        run: uv run --no-default-groups --group dev pytest tests/ -q

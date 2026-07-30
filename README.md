@@ -1,49 +1,141 @@
-# Agentic Memory Study
+# agmem — agentic memory, reimplemented with its lineage attached
 
-MemoryOS · Zep · Nemori · A-Mem · ACE · ReasoningBank · G-Memory 7개 방법론을 직접 구현하고,
-LongMemEval/LoCoMo로 재현 평가하며, MCP로 배포
+Eight agentic-memory methodologies — **A-Mem · Nemori · MemoryOS · Zep/Graphiti · G-Memory · ACE · ReasoningBank · MemMachine** — reimplemented behind one API, where *which version of the method you are running* is a first-class, pinnable, testable property.
 
-## 문서 인덱스
+[![CI](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.12+-blue.svg)](pyproject.toml)
 
-| 문서 | 내용 |
-|---|---|
-| [docs/00-environment.md](docs/00-environment.md) | 로컬 하드웨어 제약 + 파생 설계 원칙 |
-| [docs/01-capability-system.md](docs/01-capability-system.md) | capability detection / profile(lite·standard·full) 스펙 — "방법론은 버리지 않고 코드로 거른다" |
-| [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | 8개 시스템 서베이·메커니즘·벤치마크·재현성 비교 |
-| [docs/03-spec-considerations.md](docs/03-spec-considerations.md) | retrieval/rerank·graph·latency·cold-start·storage·소형모델 대응 상세 스펙 |
-| [docs/04-architecture.md](docs/04-architecture.md) | 모듈 구조 (Organizer 플러그인 + MemoryOp/EvolutionLog 추상화) |
-| [docs/05-api-design.md](docs/05-api-design.md) | Python API + MCP 도구 설계 + 벤치 CLI |
-| [docs/06-roadmap.md](docs/06-roadmap.md) | Phase 0–5 개발 계획, 리스크, 즉시 다음 액션 |
-| [docs/12-code-conventions.md](docs/12-code-conventions.md) | 코드 컨벤션 (이름/docstring/구조) — 리뷰 게이트 기준 |
-| docs/research/ | 논문·공식 코드 원자료 리서치 노트 (시스템별) |
+---
+
+## The problem this repo is built around
+
+Reimplementing a memory paper sounds like a transcription task. It isn't, because **the paper and the official code routinely describe different systems** — and a benchmark number is meaningless if you cannot say which of the two you measured.
+
+Every row below was found by reading the paper against the official repository, and each was independently re-verified (by code-line citation, or by a deterministic reproduction) before being acted on:
+
+| Methodology | What the paper (or the label) says | What the official code does |
+|---|---|---|
+| **MemoryOS** | segments with the lowest *heat* are evicted (§3.3) | both codebases call `evict_lfu` — a min over an access counter. Lowest-heat eviction exists in neither. |
+| **A-Mem** | notes carry LLM-extracted keywords / context / tags | in the published-numbers edition the extractor raises `NameError` (no `import re`), so every note stores **empty** metadata — after spending the LLM call |
+| **G-Memory** | link tasks at `similarity >= 0.7` | 0.7 is applied to `1 − squared_L2` on normalized vectors — an effective **cosine of 0.85** |
+| **Nemori** | merge candidates are filtered at 0.85 | the threshold is plumbed from config into a field **no code reads**; all top-5 candidates reach the LLM |
+| **Zep/Graphiti** | the paper's extraction/temporal pipeline | main has moved *past* its own paper: saga nodes, single-call combined extraction, `temporal_operations.py` dissolved |
+| **A-MAC** | θ\* = 0.55 with five weighted features | the weight vector appears only in the release, fit while novelty was pinned at 1.0 and recency ≈ 0 |
+| **MemMachine** | an eval harness that produced the published numbers | at the audited SHA every eval entry point raises `TypeError` before it runs |
+
+This is **not a criticism of those projects** — it is the ordinary condition of research code, and all eight are serious pieces of work. It is, however, fatal to the naive goal of "being faithful to the paper," because that target does not exist as a single point.
+
+**The stance this repo takes instead: pin the lineage.** Every divergent constant names the lineage it came from, and the choice is an explicit, switchable, tested object:
+
+```python
+NemoriOrganizer(fidelity="v1")        # the v1 paper's formalism
+NemoriOrganizer(fidelity="v4")        # the current paper
+NemoriOrganizer(fidelity="upstream")  # what the deployed code actually does
+MemoryOSOrganizer(fidelity="eval")    # the harness that produced the paper's LoCoMo numbers
+```
+
+A run can therefore state *which system it measured*, and a reviewer can check that claim against the preset table rather than against prose.
+
+---
+
+## Design
+
+**One write-path abstraction.** Every memory mutation is an append-only `MemoryOp` — `ADD / UPDATE / MERGE / DELETE / INVALIDATE / LINK`. ACE's delta operations, G-Memory's rule ops and Zep's bi-temporal invalidation all project onto it. Two things fall out for free: Zep's bi-temporal T′ axis (the store stamps it), and the structural impossibility of a whole class of in-place mutation bugs the upstreams carry.
+
+**Methodologies are write-path plugins.** Retrieval is shared infrastructure (hybrid recall → RRF → rerank → read steps); what actually differs between these papers is how experience becomes memory. An `Organizer` implements a small hook contract (`on_message`, `on_task_end`, `on_retrieval`, `on_feedback`, `consolidate`, …) and declares what it `produces`/`consumes`, so organizers can be chained — Nemori emitting episodes that MemoryOS then consumes is a supported composition, not a fork.
+
+**Mechanism vs. policy.** Some published contributions are not memory systems but *controls over* one: A-MAC's admission gate (write side) and MemMachine's retrieval agent (read side). They own no memory type and emit no ops, so they wrap any host mechanism instead of being welded into one.
+
+**Capability gating.** Neo4j, Kuzu, LanceDB, Qdrant, Chroma, Postgres, cross-encoder rerankers and local LLMs are all implemented, then selected or downgraded from detected hardware — the heavy path is never a hard requirement. CI proves it: the suite runs green on a **core-only install** with every optional path skipping cleanly.
+
+---
+
+## How the claims here were checked
+
+The interesting engineering in this repo is not that eight systems were written; it is that they were *audited*, repeatedly, against their sources.
+
+- **A dozen audit rounds**, recorded in `docs/10-fidelity-audit.md` and `docs/research/fidelity-*.md`.
+- The final round ran **eight parallel fresh-eyes audits** that read the upstream clones directly and treated this repo's own documentation as *claims to be verified*, not evidence — because those docs came from the same eyes that would have made any original mistake.
+- Findings then went through an **adversarial verification pass** whose job was to *refute* them, using **zero LLM/API/model calls**: code-line citation, and deterministic reproductions with hand-made vectors and stubs.
+- **96 verdicts: 94 confirmed, 2 sub-claims refuted** — and the refutations were honored in the fixes.
+- Everything confirmed was either fixed to match upstream or kept and **disclosed as a deliberate deviation at the code site** (e.g. we skip an evolution call the published A-Mem edition wastes on an empty store — so our per-conversation call count is exactly −1, and the docstring says so).
+- **441 tests**, many of them pinning tests written specifically so a fidelity property cannot silently regress.
+
+Recurring defect classes this process surfaced — useful beyond this repo — are catalogued in `docs/16-abstraction-study.md`: *the same constant applied to different math*, *reviving a knob that is dead upstream*, *reading one variant when the benchmark ran another*, and *a docstring that outlived its code*.
+
+---
+
+## Status, honestly
+
+**Measurement is deliberately deferred.** No benchmark result is claimed on this page.
+
+LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts from earlier runs are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). But the fidelity fixes from the latest audit round changed write-path behavior in seven of the eight methodologies, so **those numbers are stale and have not been re-measured.** The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first.
+
+---
 
 ## Quickstart
 
 ```bash
-uv sync                          # embed 그룹 포함 기본 설치
-scripts/setup-local-llm.sh       # llama.cpp + Qwen3-0.6B (~/.agmem, 멱등)
-scripts/serve-llm.sh &           # 로컬 LLM 데몬 :8080
-uv run pytest tests/ -q          # 126 tests
+uv sync                     # full install (real vector/graph backends + local embedder)
+uv sync --no-default-groups --group dev   # core-only: suite still runs, heavy paths skip
 
-# 라이브러리
-uv run python -c "
+uv run pytest tests/ -q     # 441 passed (core-only: 417 passed, 24 skipped)
+```
+
+```python
 from agmem import AgenticMemory
-mem = AgenticMemory(organizers=['nemori','reasoning_bank'])
-mem.add_message('파리 여행 예산은 300만원')
-print(mem.search('여행 예산').render(400))"
 
-# MCP 서버 (Claude Code 등록은 docs/05 §2.3)
+mem = AgenticMemory(organizers=["nemori", "reasoning_bank"])
+mem.add_message("The Paris trip budget is 3,000,000 KRW")
+print(mem.search("travel budget").render(400))
+```
+
+Serve it over MCP (registration details in `docs/05-api-design.md` §2.3):
+
+```bash
 uv run agmem-mcp --namespace main --organizers nemori,reasoning_bank
+```
 
-# LoCoMo 재현 실험
+Run a reproduction experiment (needs an LLM endpoint — see `docs/07-local-llm-setup.md`):
+
+```bash
 uv run python scripts/exp_locomo_conv0.py --configs passthrough amem nemori memoryos
 ```
 
-## 설계 한 줄 요약
+---
 
-- **Write-path가 방법론의 전부**: retrieval은 공통 인프라(hybrid recall→RRF→rerank), 방법론 차이는 `Organizer` 플러그인으로 캡슐화.
-- **모든 메모리 변경은 append-only `EvolutionLog` 연산**(ADD/UPDATE/MERGE/DELETE/INVALIDATE/LINK) — ACE delta, G-Memory rule ops, Zep invalidation을 하나의 추상화로.
-- **Capability-gated**: Neo4j·cross-encoder 등 무거운 구성요소도 전부 구현하되 감지된 하드웨어에 따라 자동 선택/강등.
-- **원문 episode 불변 보존** — 그래프/요약 추상화의 verbatim 손실(Zep 실증)에 대한 방어.
-- **Organizer 간 chaining**: 한 organizer의 산출물을 다른 organizer가 `consumes` 구독으로 받는 이벤트 훅(`on_memory_event`)과, 명시적 `mem.consolidate()`로만 도는 유예 배치 훅(`consolidate`)을 계약으로 분리 — Nemori(방출)→MemoryOS/A-Mem(`input="episodes"`) 조합으로 검증 (docs/04 §2–3).
-- **Nemori fidelity 스위치**: `NemoriOrganizer(fidelity="v1"|"v4"|"upstream")`으로 논문 v1/v4/upstream 코드/우리 mixing을 같은 구현에서 재현 (docs/11).
+## Repository map
+
+```
+src/agmem/
+  core/          MemoryOp, Episode, MemoryBundle — the facade's vocabulary
+  organizers/    one package per methodology (+ presets/recipes that pin lineage)
+  policies/      admission (A-MAC) and retrieval (MemMachine agent) — host-agnostic controls
+  retrieval/     hybrid recall, RRF fusion, rerankers, read steps, BFS graph expansion
+  stores/        sqlite/lance/qdrant/chroma · kuzu/neo4j · postgres, behind one contract
+  capabilities/  hardware detection and profile resolution (lite · standard · full)
+  bench/         LoCoMo and LongMemEval harnesses
+  mcp/           MCP server
+docs/            design record (00–16) + docs/research/ paper↔code forensics
+tests/           441 tests, incl. fidelity pinning suites
+```
+
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the eight systems: mechanisms, benchmarks, reproducibility |
+| [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
+| [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |
+| [docs/01-capability-system.md](docs/01-capability-system.md) | capability detection and profiles |
+| [docs/16-abstraction-study.md](docs/16-abstraction-study.md) | three-way study: paper ↔ upstream ↔ this code, and the abstraction verdict |
+| [docs/research/fidelity-round12-fresh-eyes-reaudit.md](docs/research/fidelity-round12-fresh-eyes-reaudit.md) | the latest audit round, its adversarial verification, and the fix record |
+| [docs/15-repro-portable-runbook.md](docs/15-repro-portable-runbook.md) | reproduction runbook |
+| [docs/12-code-conventions.md](docs/12-code-conventions.md) | code conventions used as the review gate |
+
+Design documents are written in Korean; code, comments and this page are in English.
+
+## License
+
+[Apache-2.0](LICENSE). The reimplementations here are original code written from the papers and the public repositories of each methodology; those upstream projects retain their own licenses and are credited in the per-organizer module docstrings.

@@ -1,9 +1,21 @@
 [project]
 name = "agmem"
 version = "0.1.0"
-description = "Unified agentic memory library: 7 memory methodologies behind one capability-gated API"
+description = "Eight agentic-memory methodologies behind one capability-gated API, each pinned to the lineage it reproduces"
 authors = [
     { name = "MyungHoon Jin", email = "jinmang2@gmail.com" }
+]
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+keywords = ["agentic-memory", "llm", "memory", "rag", "mcp", "reproducibility"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
 ]
 requires-python = ">=3.12"
 dependencies = [
@@ -12,6 +24,11 @@ dependencies = [
     "openai>=2.45.0",
     "sqlite-vec>=0.1.9",
 ]
+
+[project.urls]
+Homepage = "https://github.com/jinmang2/agentic-memory"
+Repository = "https://github.com/jinmang2/agentic-memory"
+Documentation = "https://github.com/jinmang2/agentic-memory/tree/main/docs"
 
 [build-system]
 requires = ["uv_build>=0.11.19,<0.12.0"]
