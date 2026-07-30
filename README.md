@@ -143,6 +143,7 @@ tests/           441 tests, incl. fidelity pinning suites
 
 | Doc | What's in it |
 |---|---|
+| [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the eight systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |

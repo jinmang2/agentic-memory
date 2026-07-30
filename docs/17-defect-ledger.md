@@ -1,0 +1,225 @@
+# The defect ledger — what the source papers' own code does
+
+This repository reimplements nine upstream artifacts: the eight memory methodologies listed in the README plus A-MAC's admission policy. Doing that faithfully required reading each paper against its official repository line by line, and the recurring outcome was not a transcription difficulty but a factual one — **the paper and the code frequently describe different systems, and in several cases the published number is an artifact of a defect rather than of the mechanism the paper argues for.** This document is the ledger of those findings. It is not a survey of the literature and it is not a criticism of the projects involved; every one of them is serious work, and research code that drifts from its paper is the ordinary condition of the field. It is, however, the reason "be faithful to the paper" is not a well-defined target, and the reason this repo pins lineages instead.
+
+The evidence standard is fixed and applies to every entry below. Each claim cites the upstream `file:line` at a **pinned SHA** — the snapshot table gives the full hashes, and a proof against any other SHA proves something else. Each entry then carries a proof cell naming one of three things: a Tier-0 reproduction script under `scripts/repro/defects/`, which CI runs on every push against the pinned snapshots and which spends $0 and makes no model call; a pinning test in `tests/`; or the research document that established the finding, in which case the finding also passed the adversarial verification round described below. Findings originated in twelve audit rounds recorded under `docs/research/`; the final round ran eight parallel fresh-eyes audits that read the upstream clones directly and treated this repo's own documentation as claims to be broken rather than as evidence. Those findings then went through a verification pass whose explicit mandate was to refute them, using code-line citation and deterministic reproduction only: **96 verdicts, 94 confirmed and 2 sub-claims refuted.** The refutations were honored: both overturned sub-claims were withdrawn rather than softened, and neither survives into this ledger. Four entries below additionally record a correction to *our own* earlier claim, because a ledger that only catalogues other people's errors is not an audit.
+
+The full per-entry evidence base, roughly ninety items across twelve sections with impact tags, lives in [`docs/research/upstream-defect-catalog.md`](research/upstream-defect-catalog.md). This ledger reorganizes the load-bearing subset into three tiers.
+
+---
+
+## How to read an entry
+
+Every entry uses the same five-field schema:
+
+| Field | What it holds |
+|---|---|
+| **Paper claim** | what the paper (or the release's own documentation) says the mechanism is |
+| **Official code** | what the released code actually does, with `file:line` at the pinned SHA |
+| **Our handling** | the fix, or the deliberate deviation — disclosed at the code site, not only here |
+| **Proof** | a `scripts/repro/defects/*.py` script run by CI, a pinning test, or the research doc plus its verification verdict |
+| **Impact** | what this does to the published numbers, stated no more strongly than the evidence supports |
+
+The tiers order entries by how much they cost a reader who wants to cite these systems:
+
+- **Tier A — the published number is an artifact.** The reported result is produced by the defect, not by the mechanism the paper credits.
+- **Tier B — paper ≠ code.** The mechanism the paper describes is absent, inert, or numerically different in the code, but the effect on any specific published number is not established.
+- **Tier C — the evaluation harness itself.** Defects in the scoring and benchmark code, which move numbers for everyone who uses them, including us.
+
+A note on what this ledger does *not* do. Entries tagged in the catalog as latent — dead code with no path to a published number — stay latent here. Where our own earlier claim was stronger than the evidence, the walked-back version is what appears below.
+
+---
+
+## Pinned upstream snapshots
+
+Every citation to a *methodology's* code in this document resolves against these commits. CI fetches the first four at exactly these SHAs (`.github/workflows/ci.yml`); all nine are kept locally under `$AGMEM_UPSTREAM` (default `~/.agmem/upstream`), and the four pins are duplicated in `scripts/repro/defects/_common.py` as `PINS`, which warns loudly if a local clone has moved. Licenses were read from the LICENSE file present in each snapshot.
+
+| Local name | Repository | Pinned SHA | License at pin |
+|---|---|---|---|
+| `AgenticMemory` | [WujiangXu/AgenticMemory](https://github.com/WujiangXu/AgenticMemory) — A-Mem, paper-repro edition | `0c8039f28fdcc08189a23c07a3437d9d2482f9c2` | MIT |
+| `nemori` | [nemori-ai/nemori](https://github.com/nemori-ai/nemori) | `d2a6dff6e5481214a0be6a2d10147feccfc16244` | MIT |
+| `MemoryOS` | [BAI-LAB/MemoryOS](https://github.com/BAI-LAB/MemoryOS) | `587ed7755c7aed179965792830ff1b5ad9a6fa92` | Apache-2.0 |
+| `graphiti` | [getzep/graphiti](https://github.com/getzep/graphiti) — Zep | `9140123a7282d44efc077a0af09179919f3defdf` | Apache-2.0 |
+| `GMemory` | [bingreeky/GMemory](https://github.com/bingreeky/GMemory) | `7b581c51d993bd600df14691d101d7e601040cc6` | **none** — no LICENSE file at this SHA |
+| `ace` | [ace-agent/ace](https://github.com/ace-agent/ace) | `bcb7cea0504afad6f55fec4845dd4864c9f9eee7` | Apache-2.0 |
+| `reasoning-bank` | [google-research/reasoning-bank](https://github.com/google-research/reasoning-bank) | `ed80611788292ea739f1effd31f16c53823b8a0d` | Apache-2.0 |
+| `MemMachine` | [MemMachine/MemMachine](https://github.com/MemMachine/MemMachine) | `18f1211290c50ae30e9960b90bbe57d89bf68600` | Apache-2.0 |
+| `amac` | [GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents](https://github.com/GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents) | `40407aec883bf289664653406ac15a4cac1f6158` | MIT |
+
+The G-Memory row is not an oversight on our part: the repository carries no license of any kind, re-confirmed via the GitHub API on 2026-07-27 (`license: null`). We read it, cite it, and reimplement from it; we vendor nothing.
+
+Two repositories cited in Tier C are **not** in this table and are not pinned locally: `snap-research/locomo` and `xiaowu0162/LongMemEval` (MIT). Their citations come from the research docs that transcribed the relevant functions with `file:line`, and — where a Tier-0 proof exists for that area — it runs against *our own committed result artifacts* rather than against an unpinned clone. The distinction is stated rather than smoothed over, because it is exactly the kind of gap this ledger exists to name.
+
+Three of these projects ship more than one copy of their own core, and the copies disagree on constants *and* formulas — MemoryOS has three (`memoryos-pypi/`, `memoryos-chromadb/`, `eval/`), A-Mem has three repositories plus a plain-vs-robust split inside one of them, MemMachine has two backends across two harnesses. Wherever that matters below, the entry names the copy.
+
+---
+
+## Tier A — the published number is an artifact
+
+### A-1 · A-MAC: recall 0.972 is a product of a substring bug
+
+| | |
+|---|---|
+| **Paper claim** | An adaptive admission gate scores each candidate on five weighted features — novelty, recency, type prior, coherence, utility — and admits above θ\* = 0.55, reporting recall 0.972 / precision 0.417 / F1 0.583. |
+| **Official code** | Three of the five features do not behave as described. The type prior matches its keyword sets as **bare substrings** (`features/type_prior.py:129`, `if keyword in content`), and the `fact` set contains `{'is','are','was','were',…}` (`:69-72`, prior 0.7 at `:38`) — so `'is'` matches *sister*, *this*, *island*, and nearly every substantive turn classifies as `fact`. Novelty is pinned at 1.0 on both executable paths, because `extract_features_for_candidates` passes `existing_memories=[]` (`optimize_weights_cv.py:78`, `run_all_baselines.py:98`) and `features/novelty.py:47-49` returns 1.0 on an empty list — the README-advertised `all-MiniLM-L6-v2` is never called. Recency is ≈ 0 for every candidate: `current_time=time.time()` against LoCoMo timestamps seeded at 2023-05-01 (`data_loader.py:110-119`) gives age 28,378 h and `exp(−0.01·28378) = 5.7e-124`. With the release weights `[0.1,0.1,0.1,0.1,0.6]`, θ = 0.55, N = 1, R = 0 and the utility fallback 0.5, the score reduces to `S = 0.57 + 0.1·C ≥ θ` **always** for `fact`/`preference`/`identity`; only `unknown` (T = 0.5) would need C ≥ 1.0, which is unreachable. The published gate is therefore *"admit unless the turn is a bare interjection."* |
+| **Our handling** | Not fixed — this *is* the artifact, so it is reproduced and isolated instead. Two configs bracket it: `amem_amac` (`matching="word"`, whole token or phrase) is our default, `amem_amac_upstream` (`matching="substring"`) is byte-exact release reproduction. Novelty is scored against the run's real vector index (ANN top-1 per type, which is the formula's `max`); recency is reproduced faithfully with `decay_rate` exposed and `AdmissionStats` recording feature means, so the deadness is **observed in our runs, not assumed**. Each deviation is declared in `policies/admission.py`. |
+| **Proof** | `tests/test_admission_gate.py:499` (`test_substring_matching_admits_more_which_is_defect_2_in_our_own_pipeline`) pins the behavioral difference end to end: on a 5-turn facade run, ungated ingest produces 5 notes / 9 organizer LLM calls / admit rate 1.00; word matching gives 2 / 3 / 0.40; substring matching — the release — gives 3 / 5 / 0.60, and the single extra admitted turn is exactly the *"…with my sister…"* turn, admitted via `s-**is**-ter`. Substring mode was separately verified against the upstream classifier imported standalone: **5015/5015 classify-and-score matches**, equal priors, equal keyword sets element for element, identical iteration order and tie-breaks (catalog §1, §11). |
+| **Impact** | **The strongest single claim in this ledger.** Recall 0.972 follows from admitting nearly everything, and precision 0.417 barely exceeds the base rate of the label itself (A-Mem's 0.371 on the same table). The paper's "type prior dominates" ablation was additionally run with two of the five features constant. |
+
+One caveat travels with any citation of A-MAC's numbers, and it is not a defect so much as a definition: the reported F1 is an **admission-decision** F1 over oracle labels (N = 225) back-derived from future QA — `data_loader.get_memory_candidates` sets `is_referenced` from the union of all QA evidence — not an answer F1. A-Mem's recall of 1.000 in that table is 1 by definition, since it stores everything, and the label cannot exist at deployment time. A-MAC's 0.583 must therefore never be tabulated beside A-Mem Table 1's answer F1. Our own success criterion for this gate is stated differently: answer quality held while note count and write tokens fall, with `admission=None` as the control.
+
+### A-2 · A-Mem: the published-numbers edition stores empty metadata, after paying for it
+
+| | |
+|---|---|
+| **Paper claim** | Eq. (1)–(2): every note carries LLM-extracted keywords, context and tags, and those fields participate in the note's embedding and in link formation. |
+| **Official code** | In the paper-repro repository's plain `memory_layer.py`, `re` is never imported (import block at `:1-19`), but `analyze_content` calls `re.sub` at `:380` after the LLM has responded. The resulting `NameError` lands in a bare `except:` at `:382` whose handler references an undefined `e` at `:383` — a second `NameError` — and the outer handler at `:393` returns `{"keywords": [], "context": "General", "tags": []}`. **Every note therefore ends up with empty metadata, after the extraction call has already been spent.** Only `memory_layer_robust.py` parses correctly (`:317-345`). |
+| **Our handling** | Not applicable to our port — we always run the extraction step and parse its output. The finding was added to the reproduction checklist as a precondition: *confirm which path you are on before comparing to a published number.* |
+| **Proof** | `scripts/repro/defects/repro_amem_nameerror.py`, run by CI against the pinned snapshot. Its static half is an AST proof that `re.*` is used and `re` is never imported, so the `NameError` is unavoidable. Its dynamic half imports the clone's own module, calls the real `analyze_content` with a stub LLM returning *perfectly valid* JSON, and asserts the return value is the empty-metadata fallback after **exactly one** LLM call. |
+| **Impact** | The shipped default path of the repository that produced the paper's numbers yields notes with no metadata at all. Corroborated externally by upstream issues #24 ("all metrics zero") and #5. |
+
+This one is inseparable from the repo-multiplicity problem. Three official A-Mem repositories exist: the paper-repro repository (whose numbers come from the *robust* path), the system edition, and the library edition that the arXiv page links to. The library edition never calls the extractor at all — `add_note` does not invoke `analyze_content`, so its step-1 extraction is dead code (issue #10, partially patched by #13, still open). Any A-Mem reproduction must state which of the three it ran and, inside the first, which of the two parsers.
+
+### A-3 · MemMachine: no evaluation entry point executes at the audited SHA
+
+| | |
+|---|---|
+| **Paper claim** | LoCoMo and LongMemEval results produced by the evaluation harness shipped in the repository. |
+| **Official code** | `evaluation/utils/agent_utils.py:452-459` *calls* `LongTermMemoryParams(...)`, but at this SHA that name is a type expression, not a class: `Annotated[DeclarativeBackendParams \| EventBackendParams, Field(discriminator="backend")]` (`long_term_memory.py:162-165`). Python raises `TypeError: 'types.UnionType' object is not callable` at the typing layer, before pydantic ever sees the keyword arguments — so the failure is pydantic-version-independent. Every eval entry point routed through `init_memmachine_params` dies at construction, and the legacy scripts' separate tuple-unpack `ValueError` is never even reached. |
+| **Our handling** | Documented, with both shipped operating points registered on our side as explicit configs (`memmachine` = the legacy `limit=30, expand_context=3`; `memmachine_library` = the library defaults `20 / 0`), since they are different systems and neither is "the" MemMachine. Our own earlier note claiming the retrieval-agent path was the recommended and therefore working entry point was wrong and was corrected (commit `1f4df42`). |
+| **Proof** | `scripts/repro/defects/repro_memmachine_typeerror.py`. The static half asserts both source facts in the pinned clone; the dynamic half rebuilds the exact construct with pydantic and catches the `TypeError`. |
+| **Impact** | The published numbers necessarily predate the union refactor, and the harness that would reproduce them does not run at HEAD of a 3.3k-star repository. |
+
+---
+
+## Tier B — paper ≠ code
+
+### B-1 · MemoryOS: lowest-heat eviction exists in neither codebase
+
+| | |
+|---|---|
+| **Paper claim** | §3.3: "segments with the lowest heat are evicted." Heat is the paper's headline mid-term memory mechanism, combining interaction count, page count and recency. |
+| **Official code** | Both code lineages evict by **access-count LFU** — `mid_term.py:71-75` in the pypi core and `eval/mid_term_memory.py:56-60` in the copy that produced the paper's LoCoMo numbers. No heat-based eviction exists anywhere in either; the heat heap is used only for the promotion peek. The recency axis of heat is separately inert in the eval lineage: `R_recency` is a stored value (initialized 1.0, refreshed only on a retrieval hit) multiplied by γ = 1e-4 against β = 0.8, i.e. **1/8000 of a single interaction**, and the refresh recomputes decay against a just-updated timestamp so it always returns 1.0. The paper's own recency time constant is μ ≈ 1e7 s (≈ 2778 h); the code uses τ = 24 h. |
+| **Our handling** | Relabeled `eviction="lfu"` in both presets, with `"lowest_heat"` retained as an explicitly non-lineage option, and the DELETE reason on the op log derives from the policy that actually ran rather than from the paper's vocabulary. The dead recency term is **reproduced deliberately**, because it is the published operating point, not fixed. |
+| **Proof** | Catalog §4 (MOS-1, MOS-4, MOS-14), re-verified in round 12 with the verdict "HOLDS". A regression test asserts the heat difference between two segments differing **only** in recency is 1e-4 — under 1/1000 of one page's contribution — so the axis provably cannot change any comparison. |
+| **Impact** | A paper headline mechanism exists in neither codebase, and a second one exists but cannot affect an ordering. This is the same family as A-MAC's constant novelty and recency: a feature presented as an axis of the score that is arithmetically incapable of moving it. |
+
+### B-2 · G-Memory: the "0.7 similarity" edge gate is an effective cosine of 0.85
+
+| | |
+|---|---|
+| **Paper claim** | Tasks are linked into the query graph when their similarity is at least 0.7; the resulting graph is what Eq. (5) neighbour expansion and Eq. (6) recall consume. |
+| **Official code** | The Chroma collection is constructed with **no `collection_metadata`** (`GMemory.py:38-41`), so the space is Chroma's default `l2` — *squared* L2. `similarity_search_with_score` then yields `similarity = 1 − distance`, and with the harness's normalizing MiniLM embedder `d = 2 − 2·cos`, so the gate `1 − d ≥ 0.7` is exactly `cos ≥ 0.85`. Verified numerically rather than assumed: chromadb 1.5.9's default `l2` is squared distance, `cos 0.85 → 1 − d = 0.700` exactly, and the embedder's normalization was confirmed from the cached `modules.json` `2_Normalize` entry without loading the model. |
+| **Our handling** | We gate **true cosine at 0.85**, with the L2 derivation written out in a comment at the gate, and removed the misleading `0.7` literal from the code entirely (commit `6fad7bb`). |
+| **Proof** | `scripts/repro/defects/repro_gmemory_threshold.py`. It re-asserts the gate's shape and the metadata-free Chroma constructor in the pinned clone — so a later upstream commit that pins a space will fail the script rather than silently invalidate the derivation — then sweeps `cos` over `[−1, 1]` at 1e-3 resolution showing the two predicates are identical, and checks that our own gate encodes the derived constant. |
+| **Impact** | Every published G-Memory graph's density is set by a mis-specified distance space, and the graph is the input to everything the method's equations do. |
+
+### B-3 · Nemori: the 0.85 merge threshold is plumbed into a field nothing reads
+
+| | |
+|---|---|
+| **Paper claim** | Merge candidates are filtered by similarity before the merge decision, at a threshold of 0.85. |
+| **Official code** | `merger._similarity_threshold` is written once and never read. `_find_similar` (`merger.py:69-80`) hands the top-5 Qdrant hits straight to the merge-decision LLM with **no similarity filter at all**, and `config.py:86` faithfully plumbs the configured value into the dead field via `factory.py:55`. It is one of a cluster: `buffer_size_max` (`config.py:73`), `episode_max_messages` (`:77`) and `semantic_similarity_threshold` (`:82`) are likewise never read, which makes the eval config's `buffer_size_max: 20` inert as well. |
+| **Our handling** | Removed on our side too. Our `upstream` preset had **resurrected** the dead knob as a live 0.85 filter, which suppressed most merge-decision LLM calls and would have made our "upstream" runs cheaper than upstream. Round 12 caught it; `merge_similarity → None` for that preset (commit `688c959`), and the knob survives only as a documented extension of *ours*. |
+| **Proof** | `scripts/repro/defects/repro_nemori_dead_knob.py`: an AST walk asserting exactly one `Store` and **zero** `Load`s of the attribute, plus the factory line that plumbs the config value into it. |
+| **Impact** | No effect on upstream's published numbers — the filter was never active when they were produced. The entry is here because of the second half: this is the defect class that produced a real error on *our* side, and it is why the "dead knobs stay dead" rule below is a standing project stance rather than an observation. |
+
+### B-4 · Zep/Graphiti: the code runs ahead of its paper, and the mentions reranker sorts backwards
+
+| | |
+|---|---|
+| **Paper claim** | §2.2 describes separate extraction stages, a reflexion-style entity recheck, fulltext candidate collection, and a dedicated temporal-extraction pass; and it argues that frequently referenced items become more accessible over time. Paper v1 (2025-01-20) is the only version. |
+| **Official code** | Drift runs in both directions. Absent from current main though claimed by the paper: the reflexion recheck (`grep reflexion` returns 0 hits), fulltext candidate collection (replaced by cosine top-15 at ≥ 0.6 plus MinHash/LSH), and the separate `extract_edge_dates` prompt with its `temporal_operations.py` (dissolved into `extract_edges`). Absent from the paper though present in main: saga nodes, the entity-attribute ontology, and **combined single-call extraction**, which runs directly against §2.2's separate-stage design. Separately, `episode_mentions_reranker` **sorts ascending** (`search_utils.py:1860-1896`, `sorted_uuids.sort(key=scores)` with missing nodes scored `inf`), so the most-mentioned items rank **last** — the exact inverse of the paper's accessibility argument, and almost certainly an upstream bug. |
+| **Our handling** | The lineage is pinned rather than blended: we implement separate-stage extraction (the paper side) and track the additions as additions. For the reranker we follow the **paper** (descending), and the deliberate choice of paper over upstream is named in the docstring instead of being silently right. |
+| **Proof** | Catalog §5 (ZEP-1, ZEP-6); round 12 `# [zep]` #10, confirmed by reproducing the inversion numerically in the verification round. |
+| **Impact** | Zep is the sole reverse case in this ledger — a project whose code is *ahead* of its paper rather than behind it — which is why any "Zep fidelity" statement is meaningless unless it says paper-or-main. The reranker inversion contradicts a stated paper mechanism directly. |
+
+Two further Graphiti findings are worth a line each because they sit at the boundary of "bug" and "specification". Upstream's label propagation for community detection can **never terminate** on a common input: synchronous relabelling inside `while True` with no round bound means a two-node component joined by *two* edges swaps labels forever, and a two-entity, two-fact subgraph is an ordinary dialogue shape. We added 2-cycle detection and a `max_rounds` bound, both warned — and we did **not** invent a merge, because in every state of that cycle the two labels differ, so the honest reading of the published rule is that it cannot cluster that component. And upstream's RRF uses `rank_const = 1` (`search_utils.py:1780-1786`), not the textbook `1/(60+rank)`; across multiple channels that is not a monotone rescale, since items at ranks (1,100) and (3,3) order differently under the two constants. Same function name, different math — so `rrf_k` is configuration in our port (default 60, Zep recipe 1).
+
+### B-5 · A-MAC: θ\* was selected on the evaluation data, and the weights are not in the paper
+
+| | |
+|---|---|
+| **Paper claim** | Weights and threshold are chosen by 5-fold cross-validation over a grid; Table 2 reports the features' relative importance. |
+| **Official code** | The cross-validation never fits anything. `optimize_weights_cv.py:180-185` assigns `X_train, y_train` and then calls only `evaluate_weights_threshold(X_val, y_val, …)`; selection at `:198-201` reads the best result off that evaluation, and `final_result` at `:204` re-scores on the full data — so weights and θ are chosen **on the data they are then reported against**. The candidate set is 1 equal-weight vector + 100 random + 5 feature-emphasized = 106 vectors, not the paper's grid; only the θ list `[0.3…0.6]` matches. The separate `weight_optimizer.py` never fits either (`val_data = train_data` when None, `:69-70`) and passes `candidate.dialogue_turn`, which exposes `.text`, into extractors expecting `.content` (`:110-113`), with `existing_memories=[]` again at `:113`. The operating weight vector `[0.1,0.1,0.1,0.1,0.6]` **is not in the paper at all** — it exists only in the repo's `README.md:79-80` and `results/optimized_weights_cv.json`, while the code defaults in `scorer.py` are equal weights `[0.2]*5` at θ = 0.5. That README quick-start is itself not runnable against the release's own classes: it imports a nonexistent `WeightOptimizerCV`, constructs `MemoryCandidate(turn=…)` where the real field is `dialogue_turn`, and calls `scorer.score(candidate)` where `score` takes a `Features`. |
+| **Our handling** | We do not ship their fitting code, so there is nothing to fix; the finding is used as the documented reason the release operating point is **not transferable** to debugged features. All our prose says "the release's weights", never "the published weights" (corrected at three sites), and the operating point is kept as our default with a re-tuning warning at the config site. |
+| **Proof** | Catalog §1 (A-MAC-5, A-MAC-8); round 12 `# [amac]` #3 and #5–#7, corroborated by a third independent pass recorded in `docs/16-abstraction-study.md`. |
+| **Impact** | Combined with A-1, this is why the A-MAC ablation planned in this repo must **re-tune** before measuring: an operating point fitted on the evaluation data, on top of a feature set where two of five features are constant and a third is driven by a substring bug, has no reason to survive the removal of any of those conditions. |
+
+---
+
+## Tier C — the evaluation harness itself
+
+### C-1 · LoCoMo category 5 is scored as a two-choice MCQ with the gold answer displayed
+
+| | |
+|---|---|
+| **Paper claim** | The adversarial category measures whether a system correctly declines to answer questions the conversation does not support; A-Mem reports 50.03 on it. |
+| **Official code** | The official evaluation presents the **gold answer and "Not mentioned in the conversation" as a two-choice multiple-choice question** (`test_advanced.py:146-160`), with a temperature of 0.5 dedicated to that category — the correct answer is in the prompt. Option order is decided by an **unseeded** `random.random() < 0.5` (`:149-154`), so reruns are not reproducible. Category 3's gold is a `"A; B; C"` string of which only the primary answer is graded, category 5's gold is `adversarial_answer`, and category 5 is scored with the same token F1 as every other category. |
+| **Our handling** | We keep the MCQ for reproduction — removing it would produce a number that is not comparable to anything published — but derive the coin from `md5(question)` so ordering is byte-stable across reruns, and add an `(a)/(b)` → option-text resolver. Our default outside reproduction mode is the stricter non-MCQ prompt. |
+| **Proof** | `docs/14-amem-reproduction.md` §2 transcribes the entire upstream scoring table with `file:line`, and its "cat5 MCQ reproducibility" section records our handling; the gold-leakage reading is corroborated externally by upstream issue #8. |
+| **Impact** | The published adversarial score is measured under gold exposure, and no rerun of the official script reproduces its own option ordering. |
+
+### C-2 · Three incompatible graders are all called "the A-Mem LoCoMo eval"
+
+| | |
+|---|---|
+| **Paper claim** | LoCoMo F1 numbers across this literature are presented as mutually comparable. |
+| **Official code** | They are computed by at least three different functions. `snap-research/locomo` uses a SQuAD-style `normalize_answer` — lowercase, punctuation strip, **article removal** (`a/an/the/and`) and **Porter stemming** — with a multiset F1. `WujiangXu`'s `utils.calculate_metrics` uses a **set-based** token F1 with lowercasing and `.,!?`→space, **no stemming and no article removal**, plus BLEU-1 on a different tokenizer entirely (`nltk.word_tokenize` with `sentence_bleu((1,0,0,0), SmoothingFunction().method1)`). Mem0's J-score is a binary LLM judge over categories 1–4 only. Stemming and article removal both *increase* partial credit, so mixing the three silently moves scores. Two smaller traps ride along: `snap-research`'s `rougel_score` returns a **rouge-1** F despite its name, and that repository contains no BLEU implementation at all; and neither official grader has a J-score, so every J number in this literature comes from Mem0's re-run protocol rather than from the original authors. |
+| **Our handling** | Fully separated code paths — `--eval-mode ours\|wujiang` plus an opt-in `--judge` — so a stored result names the scorer that produced it. `bleu1_wujiang` calls real nltk and **omits** the metric when nltk is absent rather than reporting 0.0. Our own earlier `wujiang`-mode BLEU was a hybrid (upstream gold and F1 with our normalization); the affected stored artifacts are flagged as hybrid rather than quietly re-labeled. |
+| **Proof** | `scripts/repro/defects/repro_locomo_rescoring.py`, run by CI, replays the eight committed `results/repro/*.records.jsonl` artifacts with no new spend. Replayed under the scorer lineage that produced each file, **12,314 questions** re-score to a maximum drift of **5.00e-04** — pure rounding, so any auditor can re-derive our stored headline numbers offline. Replayed across lineages, **2,804 of those 12,314 questions score differently**, and the count is pinned so a scorer edit fails CI. The asymmetry is the point: a *uniform* replay does not reproduce the stored values at all (uniform `token_f1` on the wujiang-scored files drifts by up to 1.0), which is itself the evidence that scorer lineage is load-bearing. |
+| **Impact** | Every cross-paper LoCoMo comparison must name its grader, and A-Mem's LoCoMo score is in fact reported as 52.5, 61.4, 65.3 and 68.83 across three citing papers — a 16-point spread for one system on one benchmark — so only same-backbone, same-grader comparisons are defensible. |
+
+One risk in this area was closed by measurement rather than by argument, and the result is negative: nltk's default `PorterStemmer` differs from Porter (1980) — the step-1c `y→i` condition differs, so `cry`/`cried` do not merge under the original algorithm — but replaying the same corpus under both stemmer modes changed **zero** questions and moved F1 by 0.000. Residual divergence between the two implementations touches 10 of the 692 LoCoMo vocabulary words. We still pin the mode explicitly in `bench/locomo.py`, because a stored artifact should not depend on which library version was installed, but the correction is not a source of anyone's error.
+
+### C-3 · MemoryOS batching: the cost comparison measured our deviation, not MemoryOS
+
+| | |
+|---|---|
+| **Paper claim** | MemoryOS's batched write path is economical relative to per-message extraction methods — a claim **this repository's own earlier summary repeated**. |
+| **Official code** | The upstream design spends, per page, one TOPIC call plus one continuity call plus one meta-info call, which is roughly **600+ LLM calls per conversation** — making MemoryOS-the-method *more* expensive than A-Mem or Nemori, not less. Our earlier "91 calls, cheapest by batch design" figure measured **our** batching, which had deviated from upstream's. Two further details make the accounting copy-dependent: the first page's continuity call is made against an empty previous page and its answer discarded (`utils.py:359-374`, `updater.py:130-132`), and the retrieval-stage keyword term is *dead* in the pypi core (`mid_term.py:292`, `query_keywords = set()` sitting directly above the term that consumes it) but **live in the eval lineage with a different formula and an extra LLM call per question** (`eval/mid_term_memory.py:200`) — and different again in the chromadb copy, which runs the query through the write-side prompt and scores with Jaccard. |
+| **Our handling** | `docs/09-results-summary.md` conclusion 3 was formally corrected and the header carries the correction; the old wiring is preserved as an explicitly named config (`memoryos_mixed`) so the earlier artifacts remain reproducible rather than being orphaned; our skip of the first continuity call is documented as a known 1-call-per-conversation difference. |
+| **Proof** | Catalog §4 (MOS-16, MOS-8, MOS-7), from round 8 §M1 and round 10 §M8. A regression test, `test_the_read_and_merge_keyword_formulas_are_the_same_function` in `tests/test_organizers_phase3.py:1352`, pins the read-time and merge-time keyword formulas to be the *same function per lineage*, which is the property the three upstream copies violate. |
+| **Impact** | Any cost claim about MemoryOS must name the copy, because the lineage that produced the published numbers spends a read-time LLM call the other two do not. Listed here rather than buried because the corrected table was ours. |
+
+### C-4 · LongMemEval: two different "accuracies", and a label that leaks the answer
+
+| | |
+|---|---|
+| **Paper claim** | A LongMemEval accuracy, reported as a single comparable number — including a full-context baseline of 60.6. |
+| **Official code** | The official aggregator prints **two** accuracies that are not equal and does not force a choice between them: `Task-averaged Accuracy` (the mean of six per-type means) and `Overall Accuracy` (over all questions), with unbalanced type counts (`print_qa_metrics.py:31-33`). Abstention is not a seventh type but a **cross-cutting slice** — each entry goes into its own type bucket and `_abs` entries are *additionally* added to the abstention bucket (`:19-23`) — so those 30 questions are double-counted inside both figures. The judge is enforced by a hard gate rather than a convention: `assert entry['autoeval_label']['model'] == 'gpt-4o-2024-08-06'` (`:20`) means results judged by any other model are refused outright. And `run_generation.py:177-191` **pops `has_answer` from every turn** before assembling the prompt; that label marks the turns containing the answer, so leaving it in tells the model where to look. |
+| **Our handling** | We report both accuracies explicitly and reproduce the abstention slice verbatim, including the double-count. `JUDGE_MODEL_PIN` / `check_judge_model` fails *before* spending 500 judge calls rather than at aggregation time. The `has_answer` strip is implemented in `longmemeval.render_sessions` on a copy, so turn-level recall labels survive for our own diagnostics while never reaching the prompt. |
+| **Proof** | Catalog §10a (LME-1 through LME-5), from the round-6 re-confirmation that our port matched the source. |
+| **Impact** | Any published LongMemEval number that does not say *which* accuracy it is cannot be compared to another one. The `has_answer` trap deserves separate emphasis because of how it fails: leaking the label surfaces as a **score increase, not an error** — you would "reproduce" the 60.6 full-context baseline while actually solving an easier problem. **Our own first port made exactly this mistake**, which is why it is in this ledger rather than in a list of things other people got wrong. |
+
+### C-5 · Citation defects that belong to no one's code
+
+The last class needs no code at all: numbers that travel between papers and change meaning on the way.
+
+The sharpest instance is that **GRAVITY's Table 3 A-Mem row is token-identical to Nemori v4's Table 3** — 912.6K input, 236.8K output, 1,149.4K total. Identical to the digit is not an independent measurement; it is a re-citation, which means the widely repeated claim that "A-Mem's build cost is 10× GRAVITY's" has no independent basis behind it. By our count only Nemori and RecMem genuinely measured that cost, which makes our own measurement the **third**: we record 1,175.3 calls per conversation against Nemori v4's 1,175.5 — agreement to three digits, which is the real result, because it says our write-path *call structure* matches upstream's. Our token count is lower (933.4K versus 1,149.4K, −18.8%), consistent with our more compressed prompts, so ours should be cited as a lower bound rather than as a correction.
+
+Three shorter ones. A-Mem's own §4.3 reports 85–93% token savings, but that figure **counts read context only** and omits the entire write path — which is the path this repo has spent the most effort measuring. RecMem's own table reports **Full Context 84.18 above RecMem's 81.10**, i.e. the strongest baseline still wins, matching what we see with a passthrough configuration. And several third-party claims about these systems remain unverified, so we deliberately do **not** propagate them: HyMem's "A-Mem inference 796.7s, slowest of eight", GRAVITY's unconfirmed A-Mem baseline backbone, and the exact LoCoMo subset behind A-MAC's 225 samples.
+
+---
+
+## Cross-cutting patterns
+
+These five are findings in their own right — they generalize past this repo, and each has been adopted as a project stance rather than left as an observation.
+
+1. **"Paper ≠ official code" is the rule, not the exception.** A-Mem's extraction step is dead in two of its three repositories; Nemori's §3.3.3 is absent from the code; MemoryOS's paper constants are not the constants that produced its numbers, and its lowest-heat eviction is in *neither* codebase; G-Memory's §4.3 summary function is absent, the code being a regex critique finetune instead; ACE's grow-and-refine is thin, ADD-only with a silently skipped dedup; A-MAC's weights are unpublished and were fitted on top of defects. **Zep is the sole reverse case**, with code running ahead of its paper. The consequence adopted here: *"faithful to the paper" cannot be a single target*, so every divergent constant names the lineage it came from, and the lineage is a switchable, tested object (`NEMORI_PRESETS`, `MEMORYOS_PRESETS`, `ZEP_SEARCH_RECIPES`, `MEMMACHINE_PRESETS`). **Pin the lineage** is the only defensible position, and a run states which system it measured.
+
+2. **Dead knobs stay dead.** Values that read as configuration but are never loaded are everywhere: A-MAC's `X_train`/`y_train` and five more; MemMachine's `QueryPolicy`, all six fields, confirmed by `grep -rn 'policy\.'` returning nothing; MemoryOS's `query_keywords = set()`, its `lambda_t` in all three copies, its eval `R_recency`, its dead profile-update prompt; Nemori's four; ReasoningBank's MaTTS correctness label, which is both dead **and** inverted relative to its sibling file; ACE's default-off dedup analyzer. The rule adopted: **reproduce dead knobs as dead, never resurrect them.** Resurrecting one silently changes the cost and behavior of the thing you claim to be reproducing — and the single violation of this rule was ours (B-3), caught in round 12 and reverted.
+
+3. **"Which copy produced the number?" is a question with an answer, and it must be asked.** MemoryOS ships three cores with different constants and different formulas (issue #73 records the drift as a real incident), A-Mem three repositories with a plain-vs-robust split inside one, Nemori two paper versions whose ablation conclusions *reverse* between them, MemMachine two backends across two harnesses, Graphiti a codebase in continuous drift from a single 2025 paper. A verdict reached by reading only one copy is a distinct, nameable defect class, and several early findings in this project failed exactly that way.
+
+4. **"Which path did the harness actually call?" is a different question from "what does this code do."** It is answered by following call sites, not by reading files, and it is where the highest-value findings came from: MemMachine's published path is `declarative` with short-term memory disabled, and neither harness runs at all (A-3); G-Memory's three MAS workflows **discard the failed-trajectory list** at the call site, so failures never reach read time despite the signature suggesting otherwise, and the harness constants are `1 / 3 / 0.0`, not the function's Python defaults; MemoryOS's eval driver passes a mid-term capacity of 2000 against a class default of 7; A-Mem's plain-versus-robust split is invisible until you trace the import.
+
+5. **Most of the felt distance from a paper is naming, not semantics.** Three generations of vocabulary stack up — paper rhetoric, upstream engineering name, our mechanism name (segment = session; Profile Memory = `semantic_memory` = `profile.py`; Local Message Partitioning = `BatchSegmenter` = `BatchPartitioner`). The mitigation is mechanical and cheap: every organizer and stage docstring carries the paper §-number and the original term, so a reviewer can check the mapping instead of inferring it.
+
+---
+
+## Status of this ledger
+
+Entries here are outcomes; the process logs that produced them are the twelve fidelity rounds under `docs/research/`, and the per-entry evidence base with its impact tags is `docs/research/upstream-defect-catalog.md`. Remediation was carried out in eight per-methodology commits (`ed44610` A-MAC, `6fad7bb` G-Memory, `a3bf258` Zep, `1f4df42` MemMachine, `7ced0eb` MemoryOS, `688c959` Nemori, `3038510` A-Mem, `eba9e97` ACE/ReasoningBank), which took the suite from 388 to 441 passing tests — the added 53 being mostly pinning tests written so that a fidelity property cannot regress silently.
+
+The Tier-0 proofs in `scripts/repro/defects/` are the deterministic half of the evidence: they cost nothing, make no model calls, and either prove their claim or fail CI. They deliberately self-skip with a `SKIP:` line when their evidence is absent — an upstream clone that was not fetched, or a heavy dependency the core install omits — following the same capability-gating convention as the test suite, so that a missing prerequisite never masquerades as a passing proof. The API-measured half — ablations that quantify what these defects cost in benchmark points and dollars — is planned and not yet run; where a number would belong in this ledger, there is no number.
