@@ -17,6 +17,7 @@ Evidence: docs/research/upstream-defect-catalog.md §2; round-12 `# [amem]`
 
 import ast
 import sys
+import types
 from types import SimpleNamespace
 
 from _common import proven, skip, upstream
@@ -42,11 +43,64 @@ def main() -> None:
     assert "re" not in imported, "an `import re` appeared — the defect is gone"
     proven("static: memory_layer.py uses re.* without importing re -> NameError is inevitable")
 
+    def _stub_module(name: str) -> None:
+        """Stub a missing module so the clone's import block succeeds.
+
+        The traced execution path (analyze_content -> re.sub) never touches these
+        stubs — they exist only so module-level imports don't fail. The defect
+        (missing re import) and the proof (empty metadata on NameError) stand
+        independently of whether sentence_transformers, nltk, etc. are available.
+        """
+
+        class _StubAttr:
+            """Stub object that handles arbitrary attribute access and calls."""
+
+            def __getattr__(self, name):
+                return self
+
+            def __call__(self, *args, **kwargs):
+                return self
+
+            def __str__(self):
+                return ""
+
+            def __repr__(self):
+                return "<stubbed>"
+
+            def __fspath__(self):
+                return "<stubbed>"
+
+            # String-like methods that might be called during initialization
+            def endswith(self, suffix):
+                return False
+
+            def split(self, sep):
+                return []
+
+            def splitext(self):
+                return ("", "")
+
+            # Make it work in path operations
+            def startswith(self, prefix):
+                return False
+
+        module = types.ModuleType(name)
+        module.__getattr__ = lambda attr: _StubAttr()
+        sys.modules[name] = module
+
     sys.path.insert(0, str(path.parent))
-    try:
-        import memory_layer
-    except Exception as exc:  # the clone's module-level deps are heavy and optional here
-        skip(f"dynamic half needs the clone's deps: {type(exc).__name__}: {exc}")
+    memory_layer = None
+    for _ in range(20):  # each round stubs one missing dep of the clone's import block
+        try:
+            import memory_layer  # noqa: F811
+
+            break
+        except ModuleNotFoundError as exc:
+            if exc.name is None:
+                skip(f"dynamic half: unstubbable import failure: {exc}")
+            _stub_module(exc.name)
+    if memory_layer is None:
+        skip("dynamic half: could not stub the clone's deps after 20 rounds")
 
     calls: list[str] = []
 
