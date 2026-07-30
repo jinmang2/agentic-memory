@@ -1,16 +1,23 @@
 """Re-scoring replay over stored eval artifacts — no new tokens spent.
 
-1. Self-consistency: recomputing token_f1 from each stored (pred, gold) pair
-   reproduces the stored per-question `f1` to rounding drift (< 1e-3; measured
-   max 4.8e-04) — the stored headline numbers are a pure function of the
-   persisted artifacts, so any auditor can re-derive them offline.
+1. Self-consistency: each records file is replayed with the scorer lineage that
+   produced it (files with `*_wujiang_*` in the name use token_f1_wujiang, others
+   use token_f1). Recomputing with the correct scorer reproduces stored f1 to
+   rounding drift (< 1e-3; measured max 5.00e-04 across all 8 files). Uniform
+   replay with a single scorer would NOT reproduce stored f1 — uniform token_f1
+   on wujiang files yields max drift 1.0. This asymmetry is itself scorer-lineage
+   evidence. Any auditor can re-derive the stored headline numbers offline if they
+   match the scorer to the eval_mode that produced it (docs/research/
+   upstream-defect-catalog.md §10b/§11 documents the ours-mode stemmer audit
+   measured 4.8e-04 over its 4-file subset).
+
 2. Scorer-lineage divergence: the upstream (WujiangXu) scorer disagrees with the
    uniform scorer on a stable nonzero subset of questions (stopword/article
    partial credit), which is why any cross-edition F1 comparison must name its
    scorer. The divergence count is pinned; a changed count means a scorer edit.
 
-Evidence: docs/research/upstream-defect-catalog.md §10b/§11 (stemmer null result:
-11,914 questions, delta-F1 = 0.000); docs/research/amac-admission-gate.md §4.
+Evidence: docs/research/amac-admission-gate.md §4 (scorer selection); harness
+eval_mode (agmem/bench/locomo.py:704-781).
 """
 
 import json
