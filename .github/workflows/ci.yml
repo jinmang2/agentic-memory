@@ -43,8 +43,9 @@ jobs:
       # Tier-0 defect reproductions (docs/17-defect-ledger.md): each script proves
       # one upstream defect deterministically, $0, against the pinned snapshots
       # fetched here. GitHub serves arbitrary reachable SHAs, so a depth-1 fetch
-      # of the exact pin is enough. Scripts self-skip when evidence is absent
-      # (e.g. the A-Mem dynamic half needs heavy deps the core install omits).
+      # of the exact pin is enough. Scripts self-skip when their evidence is
+      # absent (e.g. an upstream clone that was not fetched, or no results/
+      # artifacts to replay) — a missing prerequisite must not read as a pass.
       - name: Fetch pinned upstream snapshots
         run: |
           set -eu

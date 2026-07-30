@@ -47,7 +47,7 @@ class PorterStemmer:
     stays ``cry`` while ``cried`` becomes ``cri``), changing token overlap.
 
     The mode choice was **measured to change nothing we have published**:
-    re-scoring all 11,914 stored ``results/repro/*.records.jsonl`` QA pairs under
+    re-scoring all 12,314 stored ``results/repro/*.records.jsonl`` QA pairs under
     both modes moves zero questions' F1 (``docs/research/amac-admission-gate.md``
     §4). So this is a closed risk, not an open decision — which is also why
     flipping the default is not worth a re-measurement.

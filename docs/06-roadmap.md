@@ -320,7 +320,7 @@ type에 한 것과 **같은 처방이 필요한 세 번째 용어**인데 아직
     (`NLTK_EXTENSIONS`)를 쓰는데 `agmem/_porter.py`는 Porter(1980) 원문 조건이라, step 1c
     `Y→I`에서 `cry`/`cried`가 병합되지 않는 등 실제 차이가 있다. `PorterStemmer(mode=...)`로
     파라미터화했고 기본값은 `"original"`(기존 동작) 유지 — `bench/locomo.py`가 명시적으로 지정.
-    **저장된 `results/repro/*.records.jsonl` 8파일 11,914 질문을 두 모드로 오프라인 재채점한
+    **저장된 `results/repro/*.records.jsonl` 8파일 12,314 질문을 두 모드로 오프라인 재채점한
     결과 F1이 바뀌는 질문이 0건**(감사 문서 §4 표). 발표 수치 무영향이므로 기본값 전환도
     재측정도 불필요. 잔여 gap(nltk 불규칙 pool·step5a 2글자 cvc·step2, 692어휘 중 10단어)은
     같은 이유로 낮은 우선순위의 별건.
