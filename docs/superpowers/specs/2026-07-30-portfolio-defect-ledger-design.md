@@ -1,7 +1,8 @@
 # Portfolio: Defect Ledger + Selective Proof + Claude Code Memory MCP — Design
 
 Date: 2026-07-30
-Status: approved-in-conversation; pending written-spec review
+Status: reviewed 2026-07-30 — factual corrections applied (Phase 0 premise, MCP tool
+count, evidence-catalog wording); approved for execution
 
 ## Goal
 
@@ -22,9 +23,15 @@ Decisions made with the user:
 
 ## Non-negotiable constraints (standing directives)
 
-1. **Phase 0 gate**: round-12 re-audit findings (docs/research/fidelity-round12-fresh-eyes-reaudit.md)
-   are currently unverified and unactioned, and the "no experiments until wiring verified"
-   directive stands. No API spend until round 12 is verified and actioned.
+1. **Phase 0 gate**: SATISFIED as of 2026-07-28 (review correction — the original
+   "unverified and unactioned" premise came from a stale memory-index line). Round-12
+   findings were adversarially verified (96 verdicts: 94 confirmed / 2 refuted) and
+   actioned in 8 per-methodology commits on main (ed44610…eba9e97, record commit
+   178069f), suite 441 passed / 1 skipped. Residual deviations are intentional and
+   disclosed at their code sites; the one open decision (GraphRecall fusion) is
+   deferred to Phase 2 start. Phase 0 therefore reduces to: re-run the full suite at
+   HEAD and confirm green — that confirmation lifts the experiment freeze. Per-spend
+   approval (constraint 2) still applies to every API experiment.
 2. **Pre-spend quote gate**: before each API experiment, produce a dry-run cost estimate
    from harness call-count instrumentation and get user approval.
 3. **Full artifact capture**: every run persists LLM I/O traces, retrieval chunks, memory
@@ -53,8 +60,10 @@ into three tiers:
 Entry schema: paper claim → what the official code actually does (code-line citation) →
 our handling (fix, or disclosed deviation at the code site) → proof method (§2 tier) →
 impact on published numbers. The 96 adversarial verdicts (94 confirmed / 2 refuted) are
-the evidence base; the background-compiled defect catalog (this session) supplies
-per-entry evidence pointers.
+the evidence base; the background-compiled defect catalog — recovered from the
+compiling agent's transcript during the 2026-07-30 review and persisted as
+`docs/research/upstream-defect-catalog.md` (~90 entries, 12 sections, PORTFOLIO/
+CITATION impact tags) — supplies per-entry evidence pointers.
 
 ## §2 Two-tier proof + cost plan (cap $50)
 
@@ -87,7 +96,7 @@ before each spend; full artifact capture always.
 
 ## §3 Claude Code memory MCP
 
-`src/agmem/mcp/server.py` already ships 7 tools + admin (stdio/HTTP). Remaining work
+`src/agmem/mcp/server.py` already ships 6 tools + 2 admin tools (stdio/HTTP). Remaining work
 is integration, automation, demo, and reliability:
 
 1. **Integration package**: example `.mcp.json`; CLAUDE.md instruction template
@@ -106,7 +115,8 @@ is integration, automation, demo, and reliability:
 
 ## §4 Phasing
 
-- **Phase 0** — verify + action round-12 findings (lifts the experiment freeze).
+- **Phase 0** — already done 2026-07-28 (verify + action of round-12); remaining:
+  full-suite re-run at HEAD confirms green (lifts the experiment freeze).
 - **Phase 1** — defect ledger EN + Tier-0 repro scripts wired into CI.
 - **Phase 2** — per-experiment dry-run quote → approval → run all four ablations,
   results into ledger + README.
