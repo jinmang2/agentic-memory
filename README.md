@@ -41,6 +41,24 @@ A run can therefore state *which system it measured*, and a reviewer can check t
 
 ## Design
 
+```mermaid
+flowchart LR
+    subgraph W["write path — where the methodologies differ"]
+        M["message /<br/>task result"] --> AP{{"admission policy<br/>(A-MAC)"}}
+        AP --> ORG["Organizer<br/>A-Mem · Nemori · MemoryOS<br/>Zep · G-Memory · ACE<br/>ReasoningBank · MemMachine"]
+        ORG --> OPS["MemoryOp log<br/>ADD · UPDATE · MERGE<br/>DELETE · INVALIDATE · LINK"]
+    end
+    OPS --> ST[("stores<br/>doc · vector · graph")]
+    subgraph R["read path — shared infrastructure"]
+        Q["query"] --> RP{{"retrieval policy<br/>(MemMachine agent)"}}
+        RP --> HR["hybrid recall"] --> RRF["RRF fusion"] --> RR["rerank"] --> RS["read steps<br/>link / graph / context expansion"]
+    end
+    ST -.-> HR
+    RS --> B["MemoryBundle"]
+```
+
+Policies (rounded) own no memory type and emit no ops, so they wrap any host mechanism. Everything an organizer does reaches the stores as a `MemoryOp`; nothing writes through a side channel.
+
 **One write-path abstraction.** Every memory mutation is an append-only `MemoryOp` — `ADD / UPDATE / MERGE / DELETE / INVALIDATE / LINK`. ACE's delta operations, G-Memory's rule ops and Zep's bi-temporal invalidation all project onto it. Two things fall out for free: Zep's bi-temporal T′ axis (the store stamps it), and the structural impossibility of a whole class of in-place mutation bugs the upstreams carry.
 
 **Methodologies are write-path plugins.** Retrieval is shared infrastructure (hybrid recall → RRF → rerank → read steps); what actually differs between these papers is how experience becomes memory. An `Organizer` implements a small hook contract (`on_message`, `on_task_end`, `on_retrieval`, `on_feedback`, `consolidate`, …) and declares what it `produces`/`consumes`, so organizers can be chained — Nemori emitting episodes that MemoryOS then consumes is a supported composition, not a fork.
