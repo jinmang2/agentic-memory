@@ -15,10 +15,9 @@ from types import SimpleNamespace
 
 from agmem import AgenticMemory
 from agmem.bench import locomo
-from agmem.config import AgmemConfig
+from agmem.bench.counting import build_counting_memory
 from agmem.embed.fake import FakeEmbedder
 from agmem.llm.client import LLMClient, RoleConfig
-from agmem.llm.structured import StructuredCaller
 from agmem.organizers.amem import AMemOrganizer
 
 _REPRO_PATH = Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
@@ -210,43 +209,13 @@ def test_memory_snapshot_enumerates_episodic_and_derived(tmp_path):
 # ---------------- 4) write-once / read-sweep: eval-only = ZERO write calls ------
 
 
-class _FakeCountingLLM:
-    """Counts chat() calls per role and returns schema-valid canned JSON so the
-    AMem write path (extract note + distill evolution) and the eval read path
-    (extract keyword-rewrite + generate answer) both run without any API."""
-
-    def __init__(self):
-        self.calls: dict[str, int] = {}
-
-    def chat(self, role, messages, budget_key=None, **overrides):
-        self.calls[role] = self.calls.get(role, 0) + 1
-        prompt = " ".join(m.get("content", "") for m in messages)
-        if role == "extract":
-            if "generate several keywords" in prompt:
-                return '{"keywords": "alpha, beta"}'
-            return '{"keywords": ["k1"], "context": "ctx", "tags": ["t1", "t2", "t3"]}'
-        if role == "distill":
-            return '{"should_evolve": false, "connections": []}'
-        return "stub answer"
+# _FakeCountingLLM / _build_counting_mem live at agmem.bench.counting now
+# (CountingLLM / build_counting_memory) — one home for the fixture, shared with
+# the dry-run quote harness.
 
 
 def _build_counting_mem(data_dir, namespace):
-    cfg = AgmemConfig(
-        profile="lite",
-        data_dir=data_dir,
-        llm_roles={"extract": RoleConfig(endpoint="x", model="m")},
-        use_guided_json=False,
-        sync_write=True,
-        lexical_types=("episodic",),
-    )
-    mem = AgenticMemory(
-        namespace=namespace, organizers=[AMemOrganizer()], embedder=FakeEmbedder(dim=64), config=cfg
-    )
-    fake = _FakeCountingLLM()
-    mem.llm = fake
-    mem.structured = StructuredCaller(fake, use_guided_json=False)
-    mem._ctx.llm = mem.structured  # organizer writes through the fake too
-    return mem, fake
+    return build_counting_memory("amem", lambda: [AMemOrganizer()], data_dir, namespace, ("notes",))
 
 
 def test_write_once_then_eval_only_issues_zero_write_calls(tmp_path):
