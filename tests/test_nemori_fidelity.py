@@ -317,11 +317,15 @@ def test_merge_candidate_scores_are_logged(caplog):
     filter rate is unexplainable on non-upstream embedders (round-12 gap).
     merge_or_none must log every candidate's raw score — BEFORE the floor is
     applied — on the organizer's existing "agmem.organizers.nemori" logger
-    channel (same convention as zep_graph's label-propagation debug log and
-    ace's dedup-skip info log: %s-interpolated message, no new sink). This is
-    diagnostics only: the filtered-out candidate must still be logged even
-    though it never reaches the LLM, and behavior (ops/return value/LLM
-    calls) must be byte-identical to the pre-existing filter test."""
+    channel, at INFO (fix round 1: DEBUG would need the paid run's driver to
+    both raise this channel's level and attach a persisting handler just to
+    keep the records, defeating the point — ace/organizer.py's dedup-skip
+    log is the repo's INFO precedent for this kind of score note; the
+    unstructured %s-interpolated message itself still follows both that and
+    zep_graph/community.py's debug log, no new sink). This is diagnostics
+    only: the filtered-out candidate must still be logged even though it
+    never reaches the LLM, and behavior (ops/return value/LLM calls) must be
+    byte-identical to the pre-existing filter test."""
     llm = StubLLM({"distill": [{"decision": "new"}]})
     org = NemoriOrganizer(episode_merge="llm", merge_similarity=0.85)
     mem = make_mem(org, llm)
@@ -331,7 +335,7 @@ def test_merge_candidate_scores_are_logged(caplog):
         # filtered OUT of the candidate set (no LLM call) but must still be
         # logged, since the whole point is explaining the filter rate.
         _seed_episode(mem, low_id, "banana zebra", "banana zebra quantum flux")
-        with caplog.at_level(logging.DEBUG, logger="agmem.organizers.nemori"):
+        with caplog.at_level(logging.INFO, logger="agmem.organizers.nemori"):
             out = org._merger.merge_or_none(
                 "hiking plan", "User plans a hike", "2026-05-01", ["m1"], mem._ctx
             )
@@ -342,7 +346,10 @@ def test_merge_candidate_scores_are_logged(caplog):
         score_records = [r for r in caplog.records if "merge candidate" in r.message]
         assert len(score_records) == 1
         record = score_records[0]
-        assert record.levelno == logging.DEBUG
+        # INFO, not DEBUG: a paid run at the library's default logging config
+        # (no level override, no extra handler) must still capture this —
+        # DEBUG would silently drop it, defeating the point of the log.
+        assert record.levelno == logging.INFO
         assert record.name == "agmem.organizers.nemori"
         logged_ids = [hit_id for hit_id, _score in record.args[-1]]
         assert low_id in logged_ids  # logged even though the floor filtered it out

@@ -406,8 +406,14 @@ class EpisodeMerger:
         # silent discard on other embedders — log every candidate's raw
         # score BEFORE filtering so a later analysis script can read the
         # would-be filter rate back off these records, including candidates
-        # this floor drops before the LLM ever sees them.
-        logger.debug(
+        # this floor drops before the LLM ever sees them. INFO, not DEBUG:
+        # a paid run's driver would otherwise have to raise this logger's
+        # level AND attach a persisting handler for the channel just to keep
+        # these records, defeating the point — a run at the library's
+        # default logging config captures this at INFO. Args stay an
+        # unstructured %s-interpolated tuple (no `extra=`) per the repo's
+        # existing convention (zep_graph/community.py, ace/organizer.py).
+        logger.info(
             "nemori: merge candidate scores namespace=%s top_k=%s threshold=%s hits=%s",
             ctx.namespace,
             self.top_k,
