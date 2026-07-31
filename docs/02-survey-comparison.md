@@ -48,7 +48,7 @@
 | MemoryOS | dialogue page | 배치성: STM 방출 시 page당 1–2 + 배치 1, heat≥5 시 +2 (병렬) | sync (배치 몰림) | FIFO 방출→topic 분할→segment 병합(F_score≥0.6)→heat 승격 |
 | A-Mem | note | **2 고정** (구성 Ps1 + 진화 Ps3) | sync (턴 지연 큼, issue #21) | note 생성→top-5 이웃 링크→이웃 context/tags 재작성 |
 | Zep/Graphiti | episode | **4–6+** | async 가능, SEMAPHORE_LIMIT | entity 추출→resolution→edge 추출→temporal 파싱→invalidation→community |
-| Nemori | episode (2–25 msgs) | ~3/episode (분절 배치 1 + 서사 1 + 예측 1 + 증류 1) — LoCoMo 전체 373 calls (**최강 baseline 대비 -59.5%**) | **완전 async** (asyncpg) | boundary 탐지(σ=0.7)→3인칭 서사(시간 절대화)→예측→원본과 대조해 gap만 증류→(opt) episode merge |
+| Nemori | episode (2–25 msgs) | 4 calls/episode (서사 1 + 병합결정 1 + 예측 1 + 증류 1) + 20메시지당 분절 1 — LoCoMo 전체 373 calls (**LangMem 대비 calls -59.5%**) | **완전 async** (asyncpg) | boundary 탐지(σ=0.7)→3인칭 서사(시간 절대화)→예측→원본과 대조해 gap만 증류→(opt) episode merge |
 | ACE | task trajectory | 3-role: Generator/Reflector(≤3회 반복)/Curator | offline/online 양쪽 | reflection→delta ops→결정론적 merge→(opt-in) embedding dedup 0.90 |
 | ReasoningBank | task trajectory | 2 (judge 판정 t=0.0 + 추출 t=1.0, ≤3 items) | 태스크 종료 시 | self-judge 성공/실패→양방향 전략 증류→append only. MaTTS 시 self-contrast(≤5 items) |
 | G-Memory | MAS trajectory | 궤적당 1–2 + 주기적 finetune/merge | 태스크 종료 시 | sparsify→저장→5개마다 insight finetune→20개마다 FINCH merge |
@@ -90,7 +90,7 @@ LongMemEval temporal-reasoning에서 Zep이 +48% 상대개선을 보인 반면 k
 | Zep | gpt-4o-mini | 63.8% | +8.4%p | 3.20s | 자체 논문 |
 | **Nemori** | gpt-4o-mini | 64.2% | +9.2%p | 컨텍스트 95% 절감 (3.7~4.8k tokens) | 자체 논문 |
 | Nemori | gpt-4.1-mini | **74.6%** | +9.0%p | — | 자체 논문 |
-| (LoCoMo 참고) Nemori | gpt-4o-mini | LLM-judge 73.0 (Full Context 72.3 상회, Mem0 61.3 대비 +19%) | 총 latency 3.05s (MemoryOS 15.2s, LangMem 22.1s) | 구축 비용 -59.5% calls | 자체 논문 (baseline 7종 동일 judge) |
+| (LoCoMo 참고) Nemori | gpt-4o-mini | LLM-judge 73.0 (Full Context 72.3 상회, Mem0 61.3 대비 +19%) | 총 latency 3.05s (MemoryOS 15.2s, LangMem 22.1s) | 구축 비용 calls -59.5% (LangMem 대비) / tokens -38.7% (MemoryOS 대비) | 자체 논문 (baseline 7종 동일 judge) |
 | Mem0 (참고) | — | 94.4% | — | 6.8k tokens/call | **벤더 자체 발표 (미검증)** |
 | Supermemory (참고) | — | 95% | — | 720 tokens | **벤더 자체 발표 (미검증)** |
 
