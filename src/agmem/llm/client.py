@@ -12,7 +12,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -32,8 +32,8 @@ class RoleConfig:
     endpoint: str
     model: str
     api_key: str = "not-needed"  # local servers ignore it
-    temperature: float = 0.1
-    max_tokens: int = 1024
+    temperature: float | None = 0.1
+    max_tokens: int | None = 1024
     extra_body: dict[str, Any] = field(default_factory=dict)
 
 
@@ -61,6 +61,7 @@ class LLMClient:
         self._clients: dict[str, Any] = {}
         self.trace_path: Path | None = Path(trace_path) if trace_path else None
         self._trace_lock = threading.Lock()
+        self._usage_warned: set[str] = set()
 
     def _client_for(self, cfg: RoleConfig) -> Any:
         key = f"{cfg.endpoint}|{cfg.api_key}"
@@ -93,12 +94,11 @@ class LLMClient:
             )
         cfg = self.roles[role]
         client = self._client_for(cfg)
-        kwargs: dict[str, Any] = {
-            "model": cfg.model,
-            "messages": messages,
-            "temperature": cfg.temperature,
-            "max_tokens": cfg.max_tokens,
-        }
+        kwargs: dict[str, Any] = {"model": cfg.model, "messages": messages}
+        if cfg.temperature is not None:
+            kwargs["temperature"] = cfg.temperature
+        if cfg.max_tokens is not None:
+            kwargs["max_tokens"] = cfg.max_tokens
         if cfg.extra_body:
             kwargs["extra_body"] = cfg.extra_body
         kwargs.update(overrides)
@@ -119,6 +119,16 @@ class LLMClient:
         usage = getattr(resp, "usage", None)
         tokens_in = getattr(usage, "prompt_tokens", 0) or 0
         tokens_out = getattr(usage, "completion_tokens", 0) or 0
+        if usage is None:
+            wkey = f"{cfg.endpoint}|{cfg.model}"
+            if wkey not in self._usage_warned:
+                self._usage_warned.add(wkey)
+                logger.warning(
+                    "%s returned no usage for %s — token counts recorded as 0, "
+                    "cost figures for this run will UNDERCOUNT.",
+                    cfg.endpoint,
+                    cfg.model,
+                )
         self.budget.record(budget_key or role, tokens_in, tokens_out, latency_ms)
         content = resp.choices[0].message.content or ""
         self._trace(
@@ -146,7 +156,7 @@ class LLMClient:
         if self.trace_path is None:
             return
         line = {
-            "ts_iso": datetime.now(timezone.utc).isoformat(),
+            "ts_iso": datetime.now(UTC).isoformat(),
             "role": role,
             "budget_key": budget_key or role,
             "model": model,
