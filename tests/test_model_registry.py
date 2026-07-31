@@ -1,3 +1,7 @@
+import importlib.util as _ilu
+import sys
+from pathlib import Path
+
 import pytest
 
 from agmem.bench.registry import (  # noqa: F401
@@ -6,6 +10,17 @@ from agmem.bench.registry import (  # noqa: F401
     get_model,
     registry_cost_usd,
 )
+
+_REPRO_PATH = Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
+
+
+def _load_repro():
+    if str(_REPRO_PATH.parent) not in sys.path:
+        sys.path.insert(0, str(_REPRO_PATH.parent))
+    spec = _ilu.spec_from_file_location("exp_amem_repro", _REPRO_PATH)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def test_get_model_known():
@@ -44,3 +59,20 @@ def test_specs_are_immutable():
     spec = get_model("gpt-4o-mini")
     with pytest.raises(Exception):  # noqa: B017
         spec.usd_per_1m_in = 0.0  # frozen dataclass
+
+
+def test_rates_dict_shape():
+    spec = get_model("gpt-4o-mini")
+    assert spec.rates_dict() == {
+        "model": "gpt-4o-mini",
+        "usd_per_1m_in": 0.15,
+        "usd_per_1m_out": 0.60,
+    }
+
+
+def test_repro_cost_usd_delegates_to_registry():
+    H = _load_repro()  # reuse the exact loader below
+    budget = {"extract": {"tokens_in": 2_000_000, "tokens_out": 1_000_000}}
+    assert H.cost_usd(budget, "gpt-4o-mini") == pytest.approx(2 * 0.15 + 0.60)
+    with pytest.raises(KeyError):
+        H.cost_usd(budget, "gpt-imaginary")

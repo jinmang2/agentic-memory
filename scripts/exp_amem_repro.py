@@ -35,6 +35,7 @@ from agmem import AgenticMemory
 from agmem._env import load_env_local
 from agmem.bench import locomo
 from agmem.bench import stamp as bench_stamp
+from agmem.bench.registry import ModelSpec, get_model, registry_cost_usd
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
@@ -49,11 +50,6 @@ OUT = Path(__file__).resolve().parent.parent / "results" / "repro"
 # `amem` config. cat5 answers at 0.5 (upstream temperature_c5).
 MEMORY_TYPES = ("notes",)
 CAT5_TEMPERATURE = 0.5
-
-# gpt-4o-mini published rates (USD per 1M tokens) used to turn the token budget
-# into a self-describing cost_usd. Stored into the summary stamp so the number
-# is reproducible even if list prices change later.
-COST_RATES = {"model": "gpt-4o-mini", "usd_per_1m_in": 0.15, "usd_per_1m_out": 0.60}
 
 # Memory types the snapshot enumerates. `episodic` is dumped from the episodes
 # table (list_episodes); the rest are derived item types across all methodologies
@@ -151,15 +147,19 @@ def dir_size_bytes(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def cost_usd(merged_budget: dict) -> float:
-    """USD cost from summed tokens × COST_RATES, across all roles."""
-    tin = sum(s.get("tokens_in", 0) for s in merged_budget.values())
-    tout = sum(s.get("tokens_out", 0) for s in merged_budget.values())
-    return round(
-        tin / 1_000_000 * COST_RATES["usd_per_1m_in"]
-        + tout / 1_000_000 * COST_RATES["usd_per_1m_out"],
-        6,
-    )
+def cost_usd(merged_budget: dict, model: str) -> float:
+    """USD cost at `model`'s registered rates — loud KeyError on unregistered models."""
+    return registry_cost_usd(merged_budget, model)
+
+
+def resolve_api_key(spec: ModelSpec) -> str:
+    key = os.environ.get(spec.api_key_env)
+    if not key:
+        raise SystemExit(
+            f"{spec.api_key_env} is not set (required for model {spec.name}). Add it to "
+            f"repo-root .env.local (KEY=VALUE, gitignored) or export it before running."
+        )
+    return key
 
 
 def dump_memory_snapshot(mem: AgenticMemory, conv_idx: int, out) -> dict[str, int]:
@@ -537,7 +537,9 @@ def _merge_run_budgets(budgets: list[dict]) -> dict:
 def main() -> None:
     ap = argparse.ArgumentParser(description="A-Mem x LoCoMo reproduction harness")
     ap.add_argument("--model", default="gpt-4o-mini")
-    ap.add_argument("--endpoint", default="https://api.openai.com/v1")
+    ap.add_argument(
+        "--endpoint", default=None, help="overrides the registered model's default endpoint"
+    )
     ap.add_argument("--embedder", default="all-MiniLM-L6-v2")
     ap.add_argument("--conv", default="0", help="conversation index (0-9) or 'all'")
     ap.add_argument("--k", type=int, default=10)
@@ -580,18 +582,18 @@ def main() -> None:
         ap.error("--ingest-only and --eval-only are mutually exclusive")
 
     load_env_local()
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        raise SystemExit(
-            "OPENAI_API_KEY is not set. Add it to repo-root .env.local "
-            "(KEY=VALUE, gitignored) or export it before running."
-        )
+    spec = get_model(args.model)
+    api_key = resolve_api_key(spec)
 
     conv_indices = list(range(10)) if args.conv == "all" else [int(args.conv)]
     # Fail loud if asked to score a store whose ingest didn't provably finish for
     # these convs (partial/crashed ingest) — before spending any answer calls.
     if args.eval_only:
         verify_ingest_sentinel(args.data_dir, conv_indices)
+    # Resolve the effective endpoint once and write it back onto args so every
+    # downstream reader of args.endpoint (make_roles, _stamp) sees the real value
+    # actually used, not the raw (possibly None) CLI arg.
+    args.endpoint = args.endpoint or spec.endpoint
     roles = make_roles(args.endpoint, args.model, api_key)
     embedder = SentenceTransformerEmbedder(args.embedder)
 
@@ -613,11 +615,13 @@ def main() -> None:
             args, embedder, roles, conv_indices, trace_path=trace_path, memory_path=memory_path
         )
         summary = {
-            "stamp": _stamp(args, sha, utc_started, datetime.now(timezone.utc).isoformat(), None),
+            "stamp": _stamp(
+                args, spec, sha, utc_started, datetime.now(timezone.utc).isoformat(), None
+            ),
             "ingest_only": True,
             "per_conv": combined.get("per_conv"),
             "llm_budget": combined.get("llm_budget"),
-            "cost_usd": cost_usd(combined.get("llm_budget", {})),
+            "cost_usd": cost_usd(combined.get("llm_budget", {}), args.model),
             "drops": combined.get("drops"),
             "timing": {"ingest_s": combined.get("ingest_s"), "total_s": combined.get("ingest_s")},
             "memory_capacity": combined.get("memory_capacity"),
@@ -703,12 +707,12 @@ def main() -> None:
     n_records = write_records_sidecar(OUT / records_name, runs_out)
 
     result = {
-        "stamp": _stamp(args, sha, utc_started, utc_finished, first.get("n_questions")),
+        "stamp": _stamp(args, spec, sha, utc_started, utc_finished, first.get("n_questions")),
         "overall": first["overall"],
         "by_category": first["by_category"],
         "per_conv": first.get("per_conv"),
         "llm_budget": budget,
-        "cost_usd": cost_usd(budget),
+        "cost_usd": cost_usd(budget, args.model),
         "drops": merged_drops,
         "timing": {
             "ingest_s": first.get("ingest_s"),
@@ -723,7 +727,7 @@ def main() -> None:
                 "overall": r["overall"],
                 "run_seconds": r["run_seconds"],
                 "llm_budget": r.get("llm_budget", {}),
-                "cost_usd": cost_usd(r.get("llm_budget", {})),
+                "cost_usd": cost_usd(r.get("llm_budget", {}), args.model),
             }
             for r in runs_out
         ],
@@ -740,12 +744,14 @@ def main() -> None:
     print(f"[done] wrote {OUT / records_name} ({n_records} question records)", flush=True)
     print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
     print(f"[done] wrote {memory_path} (memory snapshot)", flush=True)
-    print(f"[cost] ~${result['cost_usd']} (gpt-4o-mini rates in stamp)", flush=True)
+    print(f"[cost] ~${result['cost_usd']} ({spec.name} rates in stamp)", flush=True)
     if run_summary:
         print(f"[mean±std] {run_summary}", flush=True)
 
 
-def _stamp(args, sha: str | None, utc_started: str, utc_finished: str, n_questions) -> dict:
+def _stamp(
+    args, spec: ModelSpec, sha: str | None, utc_started: str, utc_finished: str, n_questions
+) -> dict:
     """Self-describing config stamp for the summary JSON: model/embedder/k/
     eval-mode/temps/expand + provenance (commit, dataset_path, timestamps) +
     the cost rates so cost_usd is reproducible, and the cat5 seed note.
@@ -782,7 +788,7 @@ def _stamp(args, sha: str | None, utc_started: str, utc_finished: str, n_questio
         git_sha=sha,
         utc_started=utc_started,
         utc_finished=utc_finished,
-        cost_rates=COST_RATES,
+        cost_rates=spec.rates_dict(),
         cat5_seed="md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
     )
 

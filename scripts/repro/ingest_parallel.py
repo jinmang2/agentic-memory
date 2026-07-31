@@ -115,12 +115,13 @@ def conv_is_done(model: str, data_dir: str, conv: int, tag_suffix: str) -> bool:
     return sp.exists() and sd.exists() and any(sd.rglob("*"))
 
 
-def merge_ingest_summaries(summaries: list[dict]) -> dict:
+def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
     """Fold per-conv ingest summaries into the combined blocks the sequential
     ``--conv all --ingest-only`` summary carries: summed per-role LLM budget
     (via the harness's run-budget merge, which re-averages latency from the
-    call-weighted total), recomputed cost, summed drops, summed ingest seconds,
-    and merged memory_capacity (per-type counts + totals + bytes)."""
+    call-weighted total), recomputed cost (at `model`'s registered rates),
+    summed drops, summed ingest seconds, and merged memory_capacity (per-type
+    counts + totals + bytes)."""
     budget = H._merge_run_budgets([s.get("llm_budget", {}) for s in summaries])
     drops: dict = {}
     for s in summaries:
@@ -144,7 +145,7 @@ def merge_ingest_summaries(summaries: list[dict]) -> dict:
     }
     return {
         "llm_budget": budget,
-        "cost_usd": H.cost_usd(budget),
+        "cost_usd": H.cost_usd(budget, model),
         "drops": drops,
         "ingest_s": ingest_s,
         "memory_capacity": memory_capacity,
@@ -284,7 +285,7 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
     summaries = [
         json.loads(per_conv_summary_path(args.model, c, args.tag_suffix).read_text()) for c in convs
     ]
-    merged = merge_ingest_summaries(summaries)
+    merged = merge_ingest_summaries(summaries, args.model)
     sha = H.git_sha()
     per_conv = [
         {"conv": c, "n_turns": (s.get("per_conv") or [{}])[0].get("n_turns")}

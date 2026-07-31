@@ -444,7 +444,7 @@ def test_merge_run_budgets_sums_across_runs(tmp_path):
     assert total["generate"]["calls"] == 6
     assert total["generate"]["tokens_in"] == 60 and total["generate"]["tokens_out"] == 18
     # cost of the summed budget == 2x a single run's cost
-    assert repro.cost_usd(total) == round(2 * repro.cost_usd(run1), 6)
+    assert repro.cost_usd(total, "gpt-4o-mini") == round(2 * repro.cost_usd(run1, "gpt-4o-mini"), 6)
 
 
 # ---------------- 7) ingest-completion sentinel: write + verify guard ----------
@@ -629,14 +629,14 @@ def test_parallel_merge_sums_budget_cost_and_capacity():
     p = _load_parallel()
     a = _fake_conv_summary(400, calls=800, tin=1000, tout=500, cost=0.0, per_type={"notes": 400})
     b = _fake_conv_summary(600, calls=1200, tin=2000, tout=800, cost=0.0, per_type={"notes": 600})
-    merged = p.merge_ingest_summaries([a, b])
+    merged = p.merge_ingest_summaries([a, b], "gpt-4o-mini")
     # tokens/calls summed across convs
     assert merged["llm_budget"]["extract"]["calls"] == 2000
     assert merged["llm_budget"]["extract"]["tokens_in"] == 3000
     assert merged["llm_budget"]["extract"]["tokens_out"] == 1300
     # cost recomputed from the SUMMED tokens (not summed per-conv costs) via the
     # harness cost model -> single source of truth, matches sequential --conv all
-    assert merged["cost_usd"] == p.H.cost_usd(merged["llm_budget"])
+    assert merged["cost_usd"] == p.H.cost_usd(merged["llm_budget"], "gpt-4o-mini")
     # ingest seconds = summed compute time; memory per-type counts summed
     assert merged["ingest_s"] == 120.0
     assert merged["memory_capacity"]["per_type"]["notes"] == 1000
@@ -671,7 +671,7 @@ def test_parallel_finalize_writes_combined_summary_and_sentinel(tmp_path, monkey
     assert out_path.name == "gpt-4o-mini_all_ingest_seed1.json"
     assert out_path.exists() and combined["ingest_only"] is True
     # cost summed across the 3 convs via the harness cost model
-    assert combined["cost_usd"] == p.H.cost_usd(combined["llm_budget"])
+    assert combined["cost_usd"] == p.H.cost_usd(combined["llm_budget"], "gpt-4o-mini")
     assert combined["llm_budget"]["extract"]["calls"] == 2400
     # wall clock recorded separately from summed compute time (the speedup evidence)
     assert combined["timing"]["wall_s"] == 90.0 and combined["timing"]["ingest_s"] == 180.0
