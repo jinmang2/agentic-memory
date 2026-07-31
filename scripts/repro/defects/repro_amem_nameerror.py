@@ -86,6 +86,11 @@ def main() -> None:
 
         module = types.ModuleType(name)
         module.__getattr__ = lambda attr: _StubAttr()
+        # An empty __path__ marks the stub as a package, so a submodule import
+        # (`from sklearn.metrics.pairwise import ...`) walks the normal finder and
+        # raises ModuleNotFoundError for the child — which this loop then stubs —
+        # instead of dying on a non-iterable __path__ from __getattr__.
+        module.__path__ = []
         sys.modules[name] = module
 
     sys.path.insert(0, str(path.parent))
