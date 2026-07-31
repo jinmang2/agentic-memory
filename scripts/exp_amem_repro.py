@@ -23,6 +23,7 @@ Examples (see scripts/repro/*.sh):
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import statistics
@@ -227,13 +228,22 @@ def make_roles(
     write_temp: float = 0.7,
     generate_temp: float = 0.7,
     max_tokens: int = 1000,
+    role_temps: dict[str, dict] | None = None,
 ) -> dict[str, RoleConfig]:
     """A-Mem upstream temperatures (test_advanced.py / memory_layer get_completion
     default 0.7): write-path roles (extract=Ps1 note, distill=Ps3 evolution) at
     ``write_temp`` 0.7; ``generate`` (cat1-4 answers) at ``generate_temp`` 0.7;
     cat5 answers override to 0.5 per-call in ``locomo.answer``. ``judge`` stays
     0.0 (deterministic grading, only used in ``ours`` mode). Judge falls back to
-    the main model when judge args are None (today's behavior)."""
+    the main model when judge args are None (today's behavior).
+
+    ``role_temps`` (from the selected ``RunnerConfig``, e.g. nemori's
+    temps/k/store table — precheck §7) maps role -> partial ``RoleConfig``
+    kwargs applied AFTER construction via ``dataclasses.replace`` (``RoleConfig``
+    is a plain, non-frozen dataclass, but replacing several fields at once reads
+    clearer than individual ``roles[r].field = v`` assignments and matches
+    ``exp_locomo_conv0.py``'s ``role_overrides`` shape). ``None`` (amem's
+    default) leaves every role exactly as built above — byte-identical path."""
     judge_cfg = RoleConfig(
         endpoint=judge_endpoint or endpoint,
         model=judge_model or model,
@@ -241,7 +251,7 @@ def make_roles(
         temperature=0.0,
         max_tokens=max_tokens,
     )
-    return {
+    roles = {
         "extract": RoleConfig(
             endpoint=endpoint,
             model=model,
@@ -265,6 +275,9 @@ def make_roles(
             max_tokens=max_tokens,
         ),
     }
+    for role, overrides in (role_temps or {}).items():
+        roles[role] = dataclasses.replace(roles[role], **overrides)
+    return roles
 
 
 def build_memory(
@@ -276,6 +289,7 @@ def build_memory(
     then ``--eval-only`` reload. ``trace_path`` (when given) turns on the
     client's full-I/O trace sink so every LLM call of this conversation is
     appended to the shared run trace."""
+    cfg_entry = get_config(args.config)
     cfg = AgmemConfig(
         profile="lite",
         data_dir=Path(args.data_dir).expanduser() if args.data_dir else None,
@@ -300,8 +314,12 @@ def build_memory(
         # note would still be marked complete. Kept explicit so a default change
         # can't quietly weaken the sentinel guarantee.
         sync_write=True,
+        # nemori's store dict is the audited NEMORI_STORE (scripts/repro/configs.py):
+        # lineage-faithful QdrantVectorStore + PostgresDocStore via slot overrides.
+        # amem's store is None -> no override, same SqliteVec/SqliteDoc lite profile
+        # as before this change (byte-identical path).
+        **(cfg_entry.store or {}),
     )
-    cfg_entry = get_config(args.config)
     mem = AgenticMemory(
         namespace=f"repro-conv{conv_idx}",
         organizers=cfg_entry.factory(),
@@ -427,7 +445,11 @@ def eval_conversations(
                 res = locomo.evaluate(
                     mem,
                     questions,
-                    k=args.k,
+                    # per_type_k (e.g. nemori's {"episodes":10,"semantic":20},
+                    # precheck §7 item 5) replaces the scalar --k when the
+                    # selected config carries one; amem's None falls back to
+                    # the scalar applied uniformly, unchanged from before.
+                    k=cfg_entry.per_type_k or {t: args.k for t in cfg_entry.memory_types},
                     memory_types=cfg_entry.memory_types,
                     keyword_queries=True,
                     judge=args.judge and args.eval_mode == "ours",
@@ -621,8 +643,8 @@ def main() -> None:
     cfg_entry = get_config(args.config)
     if not cfg_entry.run_ready:
         raise SystemExit(
-            f"--config {args.config} is not run-ready (nemori configs need "
-            "temps/k/store threading — see the Track 1 plan)"
+            f"--config {args.config} is not run-ready (temps/k/store threading not "
+            "yet verified for this arm — see scripts/repro/configs.py)"
         )
 
     load_env_local()
@@ -647,6 +669,7 @@ def main() -> None:
         judge_endpoint=judge_spec.endpoint if judge_spec else None,
         judge_model=judge_spec.name if judge_spec else None,
         judge_api_key=judge_api_key,
+        role_temps=cfg_entry.role_temps,
     )
     embedder = SentenceTransformerEmbedder(args.embedder)
 

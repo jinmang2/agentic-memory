@@ -18,12 +18,45 @@ class RunnerConfig:
     name: str
     factory: Callable[[], list]
     memory_types: tuple[str, ...]
-    # run_ready=False = constructible for counting/tests but NOT wired for a real run yet
-    # (exp_locomo_conv0's audited nemori entries also carry per-type k + NEMORI_TEMPS
-    # (:350) + NEMORI_STORE (:360) that stage 1 does not thread — Track 1 reconciles
-    # all six tuple fields and flips these to True).
+    # run_ready=False = constructible for counting/tests but NOT wired for a real run yet.
+    # Kept (not removed) for future arms that land before their threading does — Track 1
+    # only flips the two nemori entries below, which now carry role_temps/per_type_k/store.
     run_ready: bool = True
+    # role -> RoleConfig kwarg overrides, applied over exp_amem_repro.py's make_roles
+    # defaults (None = keep those defaults, e.g. amem's byte-identical path).
+    role_temps: dict[str, dict] | None = None
+    # memory_type -> k, replacing the scalar --k for eval retrieval when set.
+    per_type_k: dict[str, int] | None = None
+    # kwargs merged into AgmemConfig(**...) construction (build_memory) — e.g. slot
+    # overrides for vector_store/doc_store.
+    store: dict | None = None
 
+
+# Nemori "upstream" preset threading — precheck §7 (docs/_internal/plans/
+# 2026-07-31-track1-nemori-fidelity-precheck.md), verified there against
+# exp_locomo_conv0.py's NEMORI_TEMPS (~:350) and NEMORI_STORE (~:360).
+# extract: temperature 0.2 (upstream segmenter.py:63) + max_tokens 4096
+# (upstream segmenter.py:64 — F1, free to fix while threading). distill:
+# temperature 0.7 / max_tokens 2000 (upstream client.py:31-32,
+# orchestrator.py:38-39). generate: temperature 0.0 (upstream search.py:169)
+# — exp_locomo_conv0.py's own make_roles already defaults generate to 0.0, so
+# its NEMORI_TEMPS constant doesn't need this key; exp_amem_repro.py's
+# make_roles defaults generate to A-Mem's 0.7 and must be told explicitly.
+NEMORI_ROLE_TEMPS = {
+    "extract": {"temperature": 0.2, "max_tokens": 4096},
+    "distill": {"temperature": 0.7, "max_tokens": 2000},
+    "generate": {"temperature": 0.0},
+}
+# search_top_k_semantic=20 for the predict-stage retrieval; episodes k=10
+# (upstream search.py:218-219; evaluation/locomo/config.json).
+NEMORI_PER_TYPE_K = {"episodes": 10, "semantic": 20}
+# Lineage-faithful engines (exp_locomo_conv0.py:360-363): Nemori upstream ran
+# on PostgreSQL(tsvector) + Qdrant — both real via embedded builds
+# (pgserver / qdrant local mode). Shaped as {"overrides": {...}} so
+# `AgmemConfig(..., **(cfg_entry.store or {}))` lands on AgmemConfig's actual
+# `overrides: dict[str, str]` slot-override field (config.py), not a bare
+# "vector_store"/"doc_store" kwarg AgmemConfig doesn't have.
+NEMORI_STORE = {"overrides": {"vector_store": "QdrantVectorStore", "doc_store": "PostgresDocStore"}}
 
 CONFIGS: dict[str, RunnerConfig] = {
     c.name: c
@@ -34,13 +67,19 @@ CONFIGS: dict[str, RunnerConfig] = {
             "nemori_upstream",
             lambda: [NemoriOrganizer(fidelity="upstream")],
             ("episodes", "semantic"),
-            run_ready=False,
+            run_ready=True,
+            role_temps=NEMORI_ROLE_TEMPS,
+            per_type_k=NEMORI_PER_TYPE_K,
+            store=NEMORI_STORE,
         ),
         RunnerConfig(
             "nemori_merge085",
             lambda: [NemoriOrganizer(fidelity="upstream", merge_similarity=0.85)],
             ("episodes", "semantic"),
-            run_ready=False,
+            run_ready=True,
+            role_temps=NEMORI_ROLE_TEMPS,
+            per_type_k=NEMORI_PER_TYPE_K,
+            store=NEMORI_STORE,
         ),
     )
 }

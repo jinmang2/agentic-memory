@@ -7,6 +7,8 @@ tests/test_repro_artifacts.py::_FakeCountingLLM."""
 
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -27,9 +29,61 @@ def _amem_canned(role: str, prompt: str) -> str:
     return "stub answer"
 
 
+def _nemori_segment_groups(prompt: str, group_size: int = 4) -> list[dict]:
+    """Deterministic, schema-valid ``BATCH_SEGMENT_SCHEMA`` partition: fixed-size
+    index groups covering every indexed message BATCH_SEGMENT_PROMPT embeds as
+    ``[i] ...`` lines. A canned response has no other way to learn the chunk
+    size, so it is read back out of the prompt text itself."""
+    indices = [int(m) for m in re.findall(r"(?m)^\[(\d+)\]", prompt)]
+    n = (max(indices) + 1) if indices else 1
+    return [
+        {"indices": list(range(start, min(start + group_size, n))), "topic": "conversation"}
+        for start in range(0, n, group_size)
+    ]
+
+
+def _nemori_canned(role: str, prompt: str) -> str:
+    """Schema-valid responses for every structured call in
+    ``agmem.organizers.nemori.stages`` / ``organizer.py``. Merge-decision
+    always returns "new" (no-merge) so write-path counting stays bounded and
+    reproducible — it never triggers the merge-content synthesis call."""
+    if role == "extract":
+        if "Partition this conversation" in prompt:  # BATCH_SEGMENT_PROMPT
+            return json.dumps({"episodes": _nemori_segment_groups(prompt)})
+        if "NEWEST message starts a new episode" in prompt:  # BOUNDARY_PROMPT (v1 preset)
+            return '{"boundary": true, "confidence": 0.9}'
+        return "{}"
+    if role == "distill":
+        if "episodic memory generation expert" in prompt:  # EPISODE_PROMPT (narrate)
+            return (
+                '{"title": "Canned episode", '
+                '"narrative": "A canned narrative of the segment.", '
+                '"timestamp": "2024-01-01T00:00:00"}'
+            )
+        if "describes the SAME event" in prompt:  # MERGE_DECISION_PROMPT — no-merge
+            return '{"decision": "new"}'
+        if "Merge these two episodic memories" in prompt:  # MERGE_CONTENT_PROMPT
+            return (
+                '{"title": "Merged episode", '
+                '"narrative": "A canned merged narrative.", '
+                '"timestamp": "2024-01-01T00:00:00"}'
+            )
+        if "previously known knowledge" in prompt:  # PREDICT_PROMPT
+            return '{"prediction": "A canned prediction of the episode content."}'
+        if "Compare the prediction" in prompt:  # CALIBRATE_PROMPT
+            return '{"facts": ["The user has a canned preference."]}'
+        if "HIGH-VALUE, PERSISTENT knowledge" in prompt:  # DIRECT_EXTRACT_PROMPT (cold start)
+            return '{"facts": ["The user has a canned preference."]}'
+        if "existing similar statements" in prompt:  # INTEGRATE_PROMPT (ThreeWayIntegrator)
+            return '{"decision": "new"}'
+        return '{"facts": []}'
+    return "stub answer"
+
+
 CANNED_RESPONSES: dict[str, Callable[[str, str], str]] = {
     "amem": _amem_canned,
-    # "nemori" / "mem0" / "zep": registered by their track plans, with responses valid
+    "nemori": _nemori_canned,
+    # "mem0" / "zep": registered by their track plans, with responses valid
     # against each organizer's structured-output schemas (else call branching is wrong).
 }
 

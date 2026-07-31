@@ -728,7 +728,30 @@ def test_runner_configs_construct_and_name_arms():
     # and `._merger.similarity`) — see organizer.py:267-380; assert the knob
     # via `.params` rather than the brief's literal `.merge_similarity`.
     assert merged.params["merge_similarity"] == 0.85  # the B-3 enforced arm, live knob
-    assert get_config("nemori_upstream").run_ready is False  # temps/k/store not threaded yet
-    assert get_config("amem").run_ready is True
+    # Track 1: nemori is now run-ready, carrying the exact temps/k/store the
+    # fidelity precheck's §7 table verified against exp_locomo_conv0.py
+    # (NEMORI_TEMPS ~:350, NEMORI_STORE ~:360, k table).
+    nemori_upstream = get_config("nemori_upstream")
+    assert nemori_upstream.run_ready is True
+    assert nemori_upstream.role_temps == {
+        "extract": {"temperature": 0.2, "max_tokens": 4096},
+        "distill": {"temperature": 0.7, "max_tokens": 2000},
+        "generate": {"temperature": 0.0},
+    }
+    assert nemori_upstream.per_type_k == {"episodes": 10, "semantic": 20}
+    assert nemori_upstream.store == {
+        "overrides": {"vector_store": "QdrantVectorStore", "doc_store": "PostgresDocStore"}
+    }
+    nemori_merge085 = get_config("nemori_merge085")
+    assert nemori_merge085.run_ready is True
+    assert nemori_merge085.role_temps == nemori_upstream.role_temps
+    assert nemori_merge085.per_type_k == nemori_upstream.per_type_k
+    assert nemori_merge085.store == nemori_upstream.store
+    amem = get_config("amem")
+    assert amem.run_ready is True
+    # amem's path stays byte-identical: all three new fields None.
+    assert amem.role_temps is None
+    assert amem.per_type_k is None
+    assert amem.store is None
     with _pytest.raises(KeyError):
         get_config("nope")

@@ -48,3 +48,29 @@ def test_unknown_canned_profile_fails_loud(tmp_path):
     cfg = _load_configs().get_config("amem")
     with pytest.raises(KeyError):
         build_counting_memory("nope", cfg.factory, tmp_path, "x", cfg.memory_types)
+
+
+def test_nemori_counting_profile(tmp_path):
+    """The nemori canned profile must be schema-valid against every
+    structured call the upstream-preset write path can reach (segmentation,
+    narration, merge-decision, predict/calibrate, cold-start direct-extract)
+    — a bounded, deterministic ingest that exercises all of them with zero
+    parse failures."""
+    cfg = _load_configs().get_config("nemori_upstream")
+    mem, fake = build_counting_memory(
+        "nemori", cfg.factory, tmp_path, "count-test", cfg.memory_types
+    )
+    msgs = [f"(2021) {'A' if i % 2 == 0 else 'B'}: message number {i}." for i in range(24)]
+    try:
+        for m in msgs:
+            mem.add_message(m, role="user")
+        mem.flush()
+    finally:
+        mem.close()
+    # extract = segmentation calls (BatchPartitioner's window=20 gate fires
+    # once on this 24-message ingest); distill = narrate + merge-decision +
+    # predict/calibrate/direct-extract, all of which route through "distill"
+    # per stages.py / organizer.py.
+    assert fake.calls.get("extract", 0) > 0
+    assert fake.calls.get("distill", 0) > 0
+    assert mem.structured.drops == {}
