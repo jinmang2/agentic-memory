@@ -1,6 +1,11 @@
 import pytest
 
-from agmem.bench.registry import MODEL_REGISTRY, ModelSpec, get_model, registry_cost_usd
+from agmem.bench.registry import (  # noqa: F401
+    MODEL_REGISTRY,
+    ModelSpec,
+    get_model,
+    registry_cost_usd,
+)
 
 
 def test_get_model_known():
@@ -23,8 +28,10 @@ def test_judge_pin_present():
 
 
 def test_cost_usd_uses_the_requested_models_rates():
-    budget = {"extract": {"tokens_in": 1_000_000, "tokens_out": 0},
-              "generate": {"tokens_in": 0, "tokens_out": 1_000_000}}
+    budget = {
+        "extract": {"tokens_in": 1_000_000, "tokens_out": 0},
+        "generate": {"tokens_in": 0, "tokens_out": 1_000_000},
+    }
     assert registry_cost_usd(budget, "gpt-4o-mini") == pytest.approx(0.15 + 0.60)
 
 
@@ -35,5 +42,5 @@ def test_cost_usd_unknown_model_fails_loud():
 
 def test_specs_are_immutable():
     spec = get_model("gpt-4o-mini")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception):  # noqa: B017
         spec.usd_per_1m_in = 0.0  # frozen dataclass

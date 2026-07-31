@@ -21,8 +21,11 @@ class ModelSpec:
     def rates_dict(self) -> dict:
         """Stamp-friendly dict (drop-in for the old COST_RATES stamp shape)."""
         d = asdict(self)
-        return {"model": d["name"], "usd_per_1m_in": d["usd_per_1m_in"],
-                "usd_per_1m_out": d["usd_per_1m_out"]}
+        return {
+            "model": d["name"],
+            "usd_per_1m_in": d["usd_per_1m_in"],
+            "usd_per_1m_out": d["usd_per_1m_out"],
+        }
 
 
 _OPENAI = "https://api.openai.com/v1"
@@ -53,6 +56,4 @@ def registry_cost_usd(merged_budget: dict, model: str) -> float:
     spec = get_model(model)
     tin = sum(s.get("tokens_in", 0) for s in merged_budget.values())
     tout = sum(s.get("tokens_out", 0) for s in merged_budget.values())
-    return round(
-        tin / 1_000_000 * spec.usd_per_1m_in + tout / 1_000_000 * spec.usd_per_1m_out, 6
-    )
+    return round(tin / 1_000_000 * spec.usd_per_1m_in + tout / 1_000_000 * spec.usd_per_1m_out, 6)
