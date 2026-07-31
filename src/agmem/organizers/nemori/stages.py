@@ -20,11 +20,17 @@ cursor-resumed pass with no paper or upstream counterpart) lives in
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, new_id
 from agmem.organizers.base import OrganizerContext
+
+# Same channel as organizer.py's logger — one logical stream for the whole
+# nemori package, matching the repo's per-module logging convention
+# (zep_graph/community.py, ace/organizer.py: logger.debug/info, no new sink).
+logger = logging.getLogger("agmem.organizers.nemori")
 
 
 @dataclass
@@ -394,6 +400,19 @@ class EpisodeMerger:
         query_embedding = ctx.embedder.embed([f"{title}\n{narrative}"])[0]
         hits = ctx.vector_store.search(
             query_embedding, k=self.top_k, memory_type="episodes", namespace=ctx.namespace
+        )
+        # Diagnostics only (round-12 finding 1 follow-up): the 0.85 floor
+        # below was tuned upstream against gemini-embedding-001 and is a
+        # silent discard on other embedders — log every candidate's raw
+        # score BEFORE filtering so a later analysis script can read the
+        # would-be filter rate back off these records, including candidates
+        # this floor drops before the LLM ever sees them.
+        logger.debug(
+            "nemori: merge candidate scores namespace=%s top_k=%s threshold=%s hits=%s",
+            ctx.namespace,
+            self.top_k,
+            self.similarity,
+            hits,
         )
         if self.similarity is not None:
             hits = [(hit_id, s) for hit_id, s in hits if s >= self.similarity]

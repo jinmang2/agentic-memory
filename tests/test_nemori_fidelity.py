@@ -1,3 +1,5 @@
+import logging
+
 from helpers import StubLLM
 
 from agmem import AgenticMemory
@@ -305,6 +307,45 @@ def test_upstream_preset_merge_has_no_similarity_floor():
         )
         assert out is None  # LLM said "new" -> caller takes the plain ADD path
         assert len(llm.calls) == 1  # the low-cosine candidate DID reach the LLM
+    finally:
+        mem.close()
+
+
+def test_merge_candidate_scores_are_logged(caplog):
+    """T1-2: stages.py:395-399 computes each candidate's cosine score and then
+    discards it once the ``similarity`` floor is applied, so arm-B's 0.85
+    filter rate is unexplainable on non-upstream embedders (round-12 gap).
+    merge_or_none must log every candidate's raw score — BEFORE the floor is
+    applied — on the organizer's existing "agmem.organizers.nemori" logger
+    channel (same convention as zep_graph's label-propagation debug log and
+    ace's dedup-skip info log: %s-interpolated message, no new sink). This is
+    diagnostics only: the filtered-out candidate must still be logged even
+    though it never reaches the LLM, and behavior (ops/return value/LLM
+    calls) must be byte-identical to the pre-existing filter test."""
+    llm = StubLLM({"distill": [{"decision": "new"}]})
+    org = NemoriOrganizer(episode_merge="llm", merge_similarity=0.85)
+    mem = make_mem(org, llm)
+    try:
+        low_id = new_id()
+        # Disjoint vocabulary -> FakeEmbedder cosine ~0.0, well below 0.85 ->
+        # filtered OUT of the candidate set (no LLM call) but must still be
+        # logged, since the whole point is explaining the filter rate.
+        _seed_episode(mem, low_id, "banana zebra", "banana zebra quantum flux")
+        with caplog.at_level(logging.DEBUG, logger="agmem.organizers.nemori"):
+            out = org._merger.merge_or_none(
+                "hiking plan", "User plans a hike", "2026-05-01", ["m1"], mem._ctx
+            )
+        # Zero behavior change: same outcome as the pre-existing 0.85-filter path.
+        assert out is None
+        assert llm.calls == []
+
+        score_records = [r for r in caplog.records if "merge candidate" in r.message]
+        assert len(score_records) == 1
+        record = score_records[0]
+        assert record.levelno == logging.DEBUG
+        assert record.name == "agmem.organizers.nemori"
+        logged_ids = [hit_id for hit_id, _score in record.args[-1]]
+        assert low_id in logged_ids  # logged even though the floor filtered it out
     finally:
         mem.close()
 
