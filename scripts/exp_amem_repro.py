@@ -868,7 +868,17 @@ def _stamp(
     ``git_sha`` is kept alongside the canonical ``commit`` because
     ``scripts/repro/aggregate_headline.py`` and the artifacts already on disk
     read it by that name; dropping it would strand results we are not going to
-    re-spend the API budget to regenerate."""
+    re-spend the API budget to regenerate.
+
+    ``k``/``temps`` stamp the selected config's ACTUAL values — ``cfg_entry.
+    per_type_k``/``role_temps`` when the config carries them (nemori's
+    ``{"episodes":10,"semantic":20}`` and its extract/distill/generate temps),
+    falling back to the scalar ``args.k`` and the hardcoded A-Mem write/
+    generate/cat5 dict otherwise. amem carries neither field (both None), so
+    its stamp is byte-identical to before this fallback existed — this is not
+    optional for amem, ``scripts/repro/aggregate_headline.py`` reads both
+    fields by these exact shapes for grouping/reporting."""
+    cfg_entry = get_config(args.config)
     effective_judge_model = judge_model or args.model
     # A stamped `judge_cost_rates` only when the judge actually split from the
     # main model: absent otherwise, so default (no --judge-model) runs keep a
@@ -887,15 +897,15 @@ def _stamp(
         profile="lite",  # pinned by make_memory's AgmemConfig
         endpoint=args.endpoint,
         embedder=args.embedder,
-        k=args.k,
+        k=cfg_entry.per_type_k or args.k,
         eval_mode=args.eval_mode,
-        temps={"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE},
+        temps=cfg_entry.role_temps or {"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE},
         expand_links=args.expand_links,
         conv=args.conv,
         workers=args.workers,
         n_questions=n_questions,
         config=args.config,
-        memory_types=list(get_config(args.config).memory_types),
+        memory_types=list(cfg_entry.memory_types),
         keyword_queries=True,
         eval_only=args.eval_only,
         git_sha=sha,

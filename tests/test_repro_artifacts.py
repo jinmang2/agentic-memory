@@ -755,3 +755,43 @@ def test_runner_configs_construct_and_name_arms():
     assert amem.store is None
     with _pytest.raises(KeyError):
         get_config("nope")
+
+
+def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
+    """_stamp's k/temps must carry the SELECTED config's real values — amem's
+    scalar k / write-generate-cat5 temps stay byte-identical (the fallback
+    path, since amem carries neither per_type_k nor role_temps), while
+    nemori's stamp must carry its per-type k dict and extract/distill/generate
+    role temps instead of the amem-shaped defaults. scripts/repro/
+    aggregate_headline.py reads both fields by these exact shapes for
+    grouping/reporting — a nemori run stamped with amem's shape would silently
+    mis-group there."""
+    repro = _load_repro()
+    spec = repro.get_model("gpt-4o-mini")
+
+    def _args(config):
+        return SimpleNamespace(
+            model="gpt-4o-mini",
+            runs=1,
+            endpoint=None,
+            embedder="all-MiniLM-L6-v2",
+            k=10,
+            eval_mode="wujiang",
+            expand_links="off",
+            conv="0",
+            workers=1,
+            config=config,
+            eval_only=False,
+        )
+
+    amem_stamp = repro._stamp(_args("amem"), spec, None, "t0", "t1", 5)
+    assert amem_stamp["k"] == 10  # unchanged from before this fix — no per_type_k on amem
+    assert amem_stamp["temps"] == {"write": 0.7, "generate": 0.7, "cat5": repro.CAT5_TEMPERATURE}
+
+    nemori_stamp = repro._stamp(_args("nemori_upstream"), spec, None, "t0", "t1", 5)
+    assert nemori_stamp["k"] == {"episodes": 10, "semantic": 20}
+    assert nemori_stamp["temps"] == {
+        "extract": {"temperature": 0.2, "max_tokens": 4096},
+        "distill": {"temperature": 0.7, "max_tokens": 2000},
+        "generate": {"temperature": 0.0},
+    }
