@@ -204,6 +204,10 @@ def make_roles(
     endpoint: str,
     model: str,
     api_key: str,
+    *,
+    judge_endpoint: str | None = None,
+    judge_model: str | None = None,
+    judge_api_key: str | None = None,
     write_temp: float = 0.7,
     generate_temp: float = 0.7,
     max_tokens: int = 1000,
@@ -212,7 +216,15 @@ def make_roles(
     default 0.7): write-path roles (extract=Ps1 note, distill=Ps3 evolution) at
     ``write_temp`` 0.7; ``generate`` (cat1-4 answers) at ``generate_temp`` 0.7;
     cat5 answers override to 0.5 per-call in ``locomo.answer``. ``judge`` stays
-    0.0 (deterministic grading, only used in ``ours`` mode)."""
+    0.0 (deterministic grading, only used in ``ours`` mode). Judge falls back to
+    the main model when judge args are None (today's behavior)."""
+    judge_cfg = RoleConfig(
+        endpoint=judge_endpoint or endpoint,
+        model=judge_model or model,
+        api_key=judge_api_key or api_key,
+        temperature=0.0,
+        max_tokens=max_tokens,
+    )
     return {
         "extract": RoleConfig(
             endpoint=endpoint,
@@ -228,9 +240,7 @@ def make_roles(
             temperature=write_temp,
             max_tokens=max_tokens,
         ),
-        "judge": RoleConfig(
-            endpoint=endpoint, model=model, api_key=api_key, temperature=0.0, max_tokens=max_tokens
-        ),
+        "judge": judge_cfg,
         "generate": RoleConfig(
             endpoint=endpoint,
             model=model,
@@ -546,6 +556,12 @@ def main() -> None:
     ap.add_argument("--eval-mode", choices=["wujiang", "ours"], default="wujiang")
     ap.add_argument("--expand-links", choices=["off", "on"], default="off")
     ap.add_argument("--judge", action="store_true", help="J-score (ours mode only)")
+    ap.add_argument(
+        "--judge-model",
+        default=None,
+        help="pin the judge to a fixed model across arms (default: same as --model; "
+        "the Phase 2 pin is decided at first quote)",
+    )
     ap.add_argument("--runs", type=int, default=1, help="repeat QA for mean±std")
     ap.add_argument(
         "--workers",
@@ -584,6 +600,8 @@ def main() -> None:
     load_env_local()
     spec = get_model(args.model)
     api_key = resolve_api_key(spec)
+    judge_spec = get_model(args.judge_model) if args.judge_model else None
+    judge_api_key = resolve_api_key(judge_spec) if judge_spec else None
 
     conv_indices = list(range(10)) if args.conv == "all" else [int(args.conv)]
     # Fail loud if asked to score a store whose ingest didn't provably finish for
@@ -594,7 +612,14 @@ def main() -> None:
     # downstream reader of args.endpoint (make_roles, _stamp) sees the real value
     # actually used, not the raw (possibly None) CLI arg.
     args.endpoint = args.endpoint or spec.endpoint
-    roles = make_roles(args.endpoint, args.model, api_key)
+    roles = make_roles(
+        args.endpoint,
+        args.model,
+        api_key,
+        judge_endpoint=judge_spec.endpoint if judge_spec else None,
+        judge_model=judge_spec.name if judge_spec else None,
+        judge_api_key=judge_api_key,
+    )
     embedder = SentenceTransformerEmbedder(args.embedder)
 
     OUT.mkdir(parents=True, exist_ok=True)
@@ -616,7 +641,13 @@ def main() -> None:
         )
         summary = {
             "stamp": _stamp(
-                args, spec, sha, utc_started, datetime.now(timezone.utc).isoformat(), None
+                args,
+                spec,
+                sha,
+                utc_started,
+                datetime.now(timezone.utc).isoformat(),
+                None,
+                judge_model=args.judge_model,
             ),
             "ingest_only": True,
             "per_conv": combined.get("per_conv"),
@@ -707,7 +738,15 @@ def main() -> None:
     n_records = write_records_sidecar(OUT / records_name, runs_out)
 
     result = {
-        "stamp": _stamp(args, spec, sha, utc_started, utc_finished, first.get("n_questions")),
+        "stamp": _stamp(
+            args,
+            spec,
+            sha,
+            utc_started,
+            utc_finished,
+            first.get("n_questions"),
+            judge_model=args.judge_model,
+        ),
         "overall": first["overall"],
         "by_category": first["by_category"],
         "per_conv": first.get("per_conv"),
@@ -750,7 +789,13 @@ def main() -> None:
 
 
 def _stamp(
-    args, spec: ModelSpec, sha: str | None, utc_started: str, utc_finished: str, n_questions
+    args,
+    spec: ModelSpec,
+    sha: str | None,
+    utc_started: str,
+    utc_finished: str,
+    n_questions,
+    judge_model: str | None = None,
 ) -> dict:
     """Self-describing config stamp for the summary JSON: model/embedder/k/
     eval-mode/temps/expand + provenance (commit, dataset_path, timestamps) +
@@ -765,9 +810,11 @@ def _stamp(
     ``scripts/repro/aggregate_headline.py`` and the artifacts already on disk
     read it by that name; dropping it would strand results we are not going to
     re-spend the API budget to regenerate."""
+    effective_judge_model = judge_model or args.model
     return bench_stamp.run_stamp(
         None,  # the memory is per-conversation here; the run spans many
         model=args.model,
+        judge_model=effective_judge_model,
         judge=args.eval_mode,
         runs=args.runs,
         dataset="locomo10",

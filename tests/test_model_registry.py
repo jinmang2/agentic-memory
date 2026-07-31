@@ -76,3 +76,21 @@ def test_repro_cost_usd_delegates_to_registry():
     assert H.cost_usd(budget, "gpt-4o-mini") == pytest.approx(2 * 0.15 + 0.60)
     with pytest.raises(KeyError):
         H.cost_usd(budget, "gpt-imaginary")
+
+
+def test_make_roles_judge_split():
+    H = _load_repro()  # same spec_from_file_location loader as the cost test
+    roles = H.make_roles(
+        "https://api.openai.com/v1",
+        "gpt-4o-mini",
+        "k",
+        judge_endpoint="https://api.openai.com/v1",
+        judge_model="gpt-4o-2024-08-06",
+        judge_api_key="jk",
+    )
+    assert roles["judge"].model == "gpt-4o-2024-08-06"
+    assert roles["judge"].api_key == "jk"
+    assert roles["generate"].model == "gpt-4o-mini"  # model under test untouched
+    # default: judge inherits the model under test (behavior identical to today)
+    roles = H.make_roles("e", "m", "k")
+    assert roles["judge"].model == "m"
