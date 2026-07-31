@@ -9,6 +9,7 @@ from agmem.bench.registry import (  # noqa: F401
     ModelSpec,
     get_model,
     registry_cost_usd,
+    registry_cost_usd_split,
 )
 
 _REPRO_PATH = Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
@@ -76,6 +77,107 @@ def test_repro_cost_usd_delegates_to_registry():
     assert H.cost_usd(budget, "gpt-4o-mini") == pytest.approx(2 * 0.15 + 0.60)
     with pytest.raises(KeyError):
         H.cost_usd(budget, "gpt-imaginary")
+
+
+def test_registry_cost_usd_split_prices_judge_role_at_judge_rates():
+    budget = {
+        "judge": {"tokens_in": 1_000_000, "tokens_out": 1_000_000},
+        "generate": {"tokens_in": 1_000_000, "tokens_out": 0},
+    }
+    got = registry_cost_usd_split(budget, "gpt-4o-mini", {"judge": "gpt-4o-2024-08-06"})
+    # generate priced at gpt-4o-mini (0.15/1M in); judge priced at gpt-4o-2024-08-06
+    # (2.50/1M in, 10.00/1M out) -- NOT at gpt-4o-mini's rates.
+    expected = 1.0 * 0.15 + 1.0 * 2.50 + 1.0 * 10.00
+    assert got == pytest.approx(expected)
+
+
+def test_registry_cost_usd_split_no_role_models_equals_single_rate_math():
+    budget = {
+        "judge": {"tokens_in": 1_000_000, "tokens_out": 1_000_000},
+        "generate": {"tokens_in": 1_000_000, "tokens_out": 0},
+    }
+    assert registry_cost_usd_split(budget, "gpt-4o-mini", None) == pytest.approx(
+        registry_cost_usd(budget, "gpt-4o-mini")
+    )
+
+
+def test_registry_cost_usd_split_unknown_judge_model_fails_loud():
+    budget = {"judge": {"tokens_in": 1, "tokens_out": 1}}
+    with pytest.raises(KeyError):
+        registry_cost_usd_split(budget, "gpt-4o-mini", {"judge": "gpt-imaginary"})
+
+
+def test_repro_cost_usd_splits_judge_rates_when_judge_model_set():
+    H = _load_repro()
+    budget = {
+        "judge": {"tokens_in": 1_000_000, "tokens_out": 1_000_000},
+        "generate": {"tokens_in": 1_000_000, "tokens_out": 0},
+    }
+    got = H.cost_usd(budget, "gpt-4o-mini", judge_model="gpt-4o-2024-08-06")
+    expected = 1.0 * 0.15 + 1.0 * 2.50 + 1.0 * 10.00
+    assert got == pytest.approx(expected)
+
+
+def test_repro_cost_usd_judge_model_none_equals_old_single_rate_math():
+    H = _load_repro()
+    budget = {
+        "judge": {"tokens_in": 1_000_000, "tokens_out": 1_000_000},
+        "generate": {"tokens_in": 1_000_000, "tokens_out": 0},
+    }
+    assert H.cost_usd(budget, "gpt-4o-mini", judge_model=None) == pytest.approx(
+        registry_cost_usd(budget, "gpt-4o-mini")
+    )
+    # equal-to-main judge_model behaves the same as None (no split)
+    assert H.cost_usd(budget, "gpt-4o-mini", judge_model="gpt-4o-mini") == pytest.approx(
+        registry_cost_usd(budget, "gpt-4o-mini")
+    )
+
+
+def test_repro_cost_usd_unknown_judge_model_fails_loud():
+    H = _load_repro()
+    budget = {"judge": {"tokens_in": 1, "tokens_out": 1}}
+    with pytest.raises(KeyError):
+        H.cost_usd(budget, "gpt-4o-mini", judge_model="gpt-imaginary")
+
+
+def _stamp_args(**overrides):
+    """Minimal argparse.Namespace covering every field H._stamp reads off `args`."""
+    import argparse
+
+    base = {
+        "model": "gpt-4o-mini",
+        "eval_mode": "wujiang",
+        "runs": 1,
+        "endpoint": "https://api.openai.com/v1",
+        "embedder": "all-MiniLM-L6-v2",
+        "k": 5,
+        "expand_links": "off",
+        "conv": 0,
+        "workers": 1,
+        "config": "amem",
+        "eval_only": False,
+    }
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_stamp_omits_judge_cost_rates_when_judge_model_matches_main():
+    H = _load_repro()
+    spec = get_model("gpt-4o-mini")
+    stamp = H._stamp(_stamp_args(), spec, "deadbeef", "t0", "t1", 5, judge_model=None)
+    assert "judge_cost_rates" not in stamp
+    stamp = H._stamp(_stamp_args(), spec, "deadbeef", "t0", "t1", 5, judge_model="gpt-4o-mini")
+    assert "judge_cost_rates" not in stamp
+
+
+def test_stamp_records_judge_cost_rates_when_judge_model_splits():
+    H = _load_repro()
+    spec = get_model("gpt-4o-mini")
+    stamp = H._stamp(
+        _stamp_args(), spec, "deadbeef", "t0", "t1", 5, judge_model="gpt-4o-2024-08-06"
+    )
+    assert stamp["judge_cost_rates"] == get_model("gpt-4o-2024-08-06").rates_dict()
+    assert stamp["cost_rates"] == spec.rates_dict()  # main rates untouched
 
 
 def test_make_roles_judge_split():

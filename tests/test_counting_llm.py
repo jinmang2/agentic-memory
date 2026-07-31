@@ -26,7 +26,7 @@ def _load_configs():
     return mod
 
 
-def test_amem_ingest_counts_two_calls_per_turn(tmp_path):
+def test_amem_ingest_counts_extract_per_turn_distill_after_first(tmp_path):
     cfg = _load_configs().get_config("amem")
     mem, fake = build_counting_memory("amem", cfg.factory, tmp_path, "count-test", cfg.memory_types)
     msgs = ["(2021) A: I moved to Berlin.", "(2021) B: Nice!", "(2021) A: New job too."]

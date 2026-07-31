@@ -2,7 +2,11 @@
 over a LoCoMo conv subset with the CountingLLM (zero API calls), price the counted
 calls with per-role token means calibrated from a REAL prior summary artifact, and
 emit the quote JSON the user approves before any spend. A role with no calibration
-data fails loud — an uncalibrated guess presented as a quote is how budgets die."""
+data fails loud — an uncalibrated guess presented as a quote is how budgets die.
+
+IMPORTANT: this quote counts INGEST (write-path: extract/distill) calls only — it
+does not count eval (generate/judge) calls, so the printed and written cost is a
+FLOOR on the full experiment's cost, not the total."""
 
 from __future__ import annotations
 
@@ -135,6 +139,11 @@ def print_quote_table(quote: dict) -> None:
     print(f"{'total':<12}{quote['calls_total']:>10}")
     print(f"tokens_in_est={quote['tokens_in_est']:,}  tokens_out_est={quote['tokens_out_est']:,}")
     print(f"cost_usd_est=${quote['cost_usd_est']:.4f}  (rates: {quote['rates']})")
+    print(
+        "NOTE: this is an INGEST-ONLY estimate (write-path extract/distill calls); "
+        "it does not count eval (generate/judge) calls, so it is a FLOOR on the "
+        "full experiment's cost, not the total."
+    )
 
 
 def main() -> None:

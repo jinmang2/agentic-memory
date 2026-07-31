@@ -145,6 +145,8 @@ def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
     }
     return {
         "llm_budget": budget,
+        # judge_model omitted (defaults to None): ingest only issues extract/distill
+        # calls, never a "judge" role, so there is nothing to split-price here.
         "cost_usd": H.cost_usd(budget, model),
         "drops": drops,
         "ingest_s": ingest_s,

@@ -41,7 +41,7 @@ from agmem import AgenticMemory
 from agmem._env import load_env_local
 from agmem.bench import locomo
 from agmem.bench import stamp as bench_stamp
-from agmem.bench.registry import ModelSpec, get_model, registry_cost_usd
+from agmem.bench.registry import ModelSpec, get_model, registry_cost_usd_split
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
@@ -155,9 +155,17 @@ def dir_size_bytes(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def cost_usd(merged_budget: dict, model: str) -> float:
-    """USD cost at `model`'s registered rates — loud KeyError on unregistered models."""
-    return registry_cost_usd(merged_budget, model)
+def cost_usd(merged_budget: dict, model: str, judge_model: str | None = None) -> float:
+    """USD cost at `model`'s registered rates — loud KeyError on unregistered models.
+
+    When `judge_model` is set and differs from `model` (a split ``--judge-model``),
+    the "judge" role's tokens are priced at `judge_model`'s rates instead of
+    `model`'s — a split judge can be many times pricier per token than the model
+    under test (e.g. gpt-4o-2024-08-06 output is 16.7x gpt-4o-mini's), and pricing
+    it at the main model's rates silently undercounts. ``judge_model=None`` (or
+    equal to `model`) reproduces the old single-rate math exactly."""
+    role_models = {"judge": judge_model} if judge_model and judge_model != model else None
+    return registry_cost_usd_split(merged_budget, model, role_models)
 
 
 def resolve_api_key(spec: ModelSpec) -> str:
@@ -676,7 +684,9 @@ def main() -> None:
             "ingest_only": True,
             "per_conv": combined.get("per_conv"),
             "llm_budget": combined.get("llm_budget"),
-            "cost_usd": cost_usd(combined.get("llm_budget", {}), args.model),
+            "cost_usd": cost_usd(
+                combined.get("llm_budget", {}), args.model, judge_model=args.judge_model
+            ),
             "drops": combined.get("drops"),
             "timing": {"ingest_s": combined.get("ingest_s"), "total_s": combined.get("ingest_s")},
             "memory_capacity": combined.get("memory_capacity"),
@@ -775,7 +785,7 @@ def main() -> None:
         "by_category": first["by_category"],
         "per_conv": first.get("per_conv"),
         "llm_budget": budget,
-        "cost_usd": cost_usd(budget, args.model),
+        "cost_usd": cost_usd(budget, args.model, judge_model=args.judge_model),
         "drops": merged_drops,
         "timing": {
             "ingest_s": first.get("ingest_s"),
@@ -790,7 +800,9 @@ def main() -> None:
                 "overall": r["overall"],
                 "run_seconds": r["run_seconds"],
                 "llm_budget": r.get("llm_budget", {}),
-                "cost_usd": cost_usd(r.get("llm_budget", {}), args.model),
+                "cost_usd": cost_usd(
+                    r.get("llm_budget", {}), args.model, judge_model=args.judge_model
+                ),
             }
             for r in runs_out
         ],
@@ -835,6 +847,12 @@ def _stamp(
     read it by that name; dropping it would strand results we are not going to
     re-spend the API budget to regenerate."""
     effective_judge_model = judge_model or args.model
+    # A stamped `judge_cost_rates` only when the judge actually split from the
+    # main model: absent otherwise, so default (no --judge-model) runs keep a
+    # byte-identical stamp to before this field existed.
+    extra_rates = {}
+    if judge_model and judge_model != args.model:
+        extra_rates["judge_cost_rates"] = get_model(judge_model).rates_dict()
     return bench_stamp.run_stamp(
         None,  # the memory is per-conversation here; the run spans many
         model=args.model,
@@ -862,6 +880,7 @@ def _stamp(
         utc_finished=utc_finished,
         cost_rates=spec.rates_dict(),
         cat5_seed="md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
+        **extra_rates,
     )
 
 

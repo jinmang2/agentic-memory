@@ -53,7 +53,25 @@ def get_model(name: str) -> ModelSpec:
 
 def registry_cost_usd(merged_budget: dict, model: str) -> float:
     """USD from summed per-role token counts at `model`'s registered rates."""
+    return registry_cost_usd_split(merged_budget, model)
+
+
+def registry_cost_usd_split(
+    merged_budget: dict, model: str, role_models: dict[str, str] | None = None
+) -> float:
+    """USD from per-role token counts, pricing each role at its own model's rates.
+
+    Roles named in `role_models` (e.g. ``{"judge": "gpt-4o-2024-08-06"}``) are
+    priced at that override model's registered rates; every other role prices at
+    `model`'s rates. ``role_models=None`` (or empty) reproduces
+    ``registry_cost_usd`` exactly — every role at `model`'s rates — which is what
+    a caller with no split judge wants."""
+    role_models = role_models or {}
     spec = get_model(model)
-    tin = sum(s.get("tokens_in", 0) for s in merged_budget.values())
-    tout = sum(s.get("tokens_out", 0) for s in merged_budget.values())
-    return round(tin / 1_000_000 * spec.usd_per_1m_in + tout / 1_000_000 * spec.usd_per_1m_out, 6)
+    override_specs = {role: get_model(m) for role, m in role_models.items()}
+    total = 0.0
+    for role, s in merged_budget.items():
+        rs = override_specs.get(role, spec)
+        total += s.get("tokens_in", 0) / 1_000_000 * rs.usd_per_1m_in
+        total += s.get("tokens_out", 0) / 1_000_000 * rs.usd_per_1m_out
+    return round(total, 6)
