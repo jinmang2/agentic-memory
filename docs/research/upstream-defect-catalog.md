@@ -3,8 +3,8 @@
 > Provenance: compiled 2026-07-30 by a read-only sweep of `docs/` (fidelity rounds 1-12,
 > `docs/16-abstraction-study.md`, method research docs, `write-path-critics.md`); recovered
 > from the compiling agent's transcript and persisted during the 2026-07-30 spec review.
-> This is the evidence base for `docs/17-defect-ledger.md` (spec:
-> `docs/superpowers/specs/2026-07-30-portfolio-defect-ledger-design.md` §1).
+> This is the evidence base for `docs/17-defect-ledger.md`, which carries the
+> tier definitions and the per-entry schema.
 
 Scope: every item is a defect in an **upstream artifact** (paper text, official repo, or official eval script). Our own regressions (round-6 A1/B1/B2/B3, round-7 R1–R5, round-9 L1–L5) are excluded. All doc paths absolute; upstream `file:line` as recorded in the docs.
 

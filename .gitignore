@@ -33,3 +33,6 @@ nohup.out
 results/repro/*.llm-trace.jsonl
 results/repro/*.memory.jsonl
 results/repro/stores/
+
+# Internal planning docs (specs/plans/handoffs) stay local; history keeps the old ones.
+docs/_internal/
