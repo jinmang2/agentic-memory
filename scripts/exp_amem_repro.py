@@ -31,6 +31,12 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+# scripts/repro is an implicit namespace package (no __init__.py); this import
+# resolves because Python puts this script's own directory (scripts/) on
+# sys.path — both for `python scripts/exp_amem_repro.py` and for the test
+# harness's spec_from_file_location loader, which inserts the same directory.
+from repro.configs import get_config
+
 from agmem import AgenticMemory
 from agmem._env import load_env_local
 from agmem.bench import locomo
@@ -39,7 +45,6 @@ from agmem.bench.registry import ModelSpec, get_model, registry_cost_usd
 from agmem.config import AgmemConfig
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
-from agmem.organizers.amem import AMemOrganizer
 from agmem.stores.sqlite_doc import episode_to_dict
 
 DATA = Path.home() / ".agmem/datasets/locomo10.json"
@@ -48,6 +53,9 @@ OUT = Path(__file__).resolve().parent.parent / "results" / "repro"
 # A-Mem answer channel: notes-only dense retrieval with LLM keyword queries
 # (WujiangXu test_advanced.py generate_query_llm), matching exp_locomo_conv0's
 # `amem` config. cat5 answers at 0.5 (upstream temperature_c5).
+# Kept as the amem default for any external importer of this module; the
+# runner itself reads memory_types from the selected RunnerConfig
+# (scripts/repro/configs.py) via --config, not from this constant.
 MEMORY_TYPES = ("notes",)
 CAT5_TEMPERATURE = 0.5
 
@@ -285,9 +293,10 @@ def build_memory(
         # can't quietly weaken the sentinel guarantee.
         sync_write=True,
     )
+    cfg_entry = get_config(args.config)
     mem = AgenticMemory(
         namespace=f"repro-conv{conv_idx}",
-        organizers=[AMemOrganizer()],
+        organizers=cfg_entry.factory(),
         embedder=embedder,
         config=cfg,
     )
@@ -378,6 +387,7 @@ def eval_conversations(
     ingest_s = 0.0
     eval_s = 0.0
     snapshot_counts: dict[str, int] = {}
+    cfg_entry = get_config(args.config)
     # Snapshot the memory of every conversation to one JSONL (truncate per call
     # so a re-run of the same tag overwrites rather than appends stale state).
     mem_file = memory_path.open("w", encoding="utf-8") if memory_path else None
@@ -410,7 +420,7 @@ def eval_conversations(
                     mem,
                     questions,
                     k=args.k,
-                    memory_types=MEMORY_TYPES,
+                    memory_types=cfg_entry.memory_types,
                     keyword_queries=True,
                     judge=args.judge and args.eval_mode == "ours",
                     eval_mode=args.eval_mode,
@@ -586,6 +596,9 @@ def main() -> None:
         "concurrent workers never clobber the shared sentinel mid-run.",
     )
     ap.add_argument("--eval-only", action="store_true")
+    ap.add_argument(
+        "--config", default="amem", help="organizer config from scripts/repro/configs.py"
+    )
     args = ap.parse_args()
     if args.workers < 1:
         ap.error("--workers must be >= 1")
@@ -596,6 +609,13 @@ def main() -> None:
         ap.error("--eval-only requires --data-dir (nothing to reload otherwise)")
     if args.ingest_only and args.eval_only:
         ap.error("--ingest-only and --eval-only are mutually exclusive")
+
+    cfg_entry = get_config(args.config)
+    if not cfg_entry.run_ready:
+        raise SystemExit(
+            f"--config {args.config} is not run-ready (nemori configs need "
+            "temps/k/store threading — see the Track 1 plan)"
+        )
 
     load_env_local()
     spec = get_model(args.model)
@@ -625,6 +645,10 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "stores").mkdir(parents=True, exist_ok=True)
     model_safe = args.model.replace("/", "-").replace(":", "-")
+    # Existing artifact names stay stable for the amem default; only a
+    # non-default --config perturbs the filename.
+    if args.config != "amem":
+        model_safe = f"{model_safe}_{args.config}"
     conv_tag = "all" if args.conv == "all" else f"conv{args.conv}"
 
     utc_started = datetime.now(timezone.utc).isoformat()
@@ -829,7 +853,8 @@ def _stamp(
         conv=args.conv,
         workers=args.workers,
         n_questions=n_questions,
-        memory_types=list(MEMORY_TYPES),
+        config=args.config,
+        memory_types=list(get_config(args.config).memory_types),
         keyword_queries=True,
         eval_only=args.eval_only,
         git_sha=sha,

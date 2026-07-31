@@ -22,6 +22,7 @@ from agmem.llm.structured import StructuredCaller
 from agmem.organizers.amem import AMemOrganizer
 
 _REPRO_PATH = Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
+_CONFIGS_PATH = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "configs.py"
 
 
 def _load_repro():
@@ -29,6 +30,19 @@ def _load_repro():
         sys.path.insert(0, str(_REPRO_PATH.parent))
     spec = _ilu.spec_from_file_location("exp_amem_repro", _REPRO_PATH)
     mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_configs():
+    spec = _ilu.spec_from_file_location("repro_configs", _CONFIGS_PATH)
+    mod = _ilu.module_from_spec(spec)
+    # configs.py's RunnerConfig is a frozen dataclass under `from __future__
+    # import annotations`; dataclasses resolves deferred annotations via
+    # sys.modules[cls.__module__], so the module must be registered there
+    # BEFORE exec_module runs the class body (unlike _load_repro, which has
+    # no dataclasses of its own and never needed this).
+    sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -728,3 +742,24 @@ def test_dataset_fingerprint_is_content_addressed(tmp_path):
     assert dataset_fingerprint(a) == dataset_fingerprint(a)
     assert dataset_fingerprint(a) != dataset_fingerprint(b)
     assert dataset_fingerprint(tmp_path / "missing.json") == "unknown"
+
+
+def test_runner_configs_construct_and_name_arms():
+    cfgmod = _load_configs()
+    CONFIGS, get_config = cfgmod.CONFIGS, cfgmod.get_config
+    import pytest as _pytest
+
+    assert set(CONFIGS) >= {"amem", "nemori_upstream", "nemori_merge085"}
+    amem = get_config("amem")
+    assert amem.memory_types == ("notes",)
+    orgs = amem.factory()
+    assert type(orgs[0]).__name__ == "AMemOrganizer"
+    merged = get_config("nemori_merge085").factory()[0]
+    # NemoriOrganizer has no `.merge_similarity` attribute (only `.params[...]`
+    # and `._merger.similarity`) — see organizer.py:267-380; assert the knob
+    # via `.params` rather than the brief's literal `.merge_similarity`.
+    assert merged.params["merge_similarity"] == 0.85  # the B-3 enforced arm, live knob
+    assert get_config("nemori_upstream").run_ready is False  # temps/k/store not threaded yet
+    assert get_config("amem").run_ready is True
+    with _pytest.raises(KeyError):
+        get_config("nope")
