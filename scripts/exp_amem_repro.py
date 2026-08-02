@@ -451,7 +451,10 @@ def eval_conversations(
                     # the scalar applied uniformly, unchanged from before.
                     k=cfg_entry.per_type_k or {t: args.k for t in cfg_entry.memory_types},
                     memory_types=cfg_entry.memory_types,
-                    keyword_queries=True,
+                    # nemori's published read path is raw-question dense retrieval, not
+                    # A-Mem's LLM keyword rewrite — cfg_entry.keyword_queries is False
+                    # for both nemori configs, True (unchanged) for amem.
+                    keyword_queries=cfg_entry.keyword_queries,
                     judge=args.judge and args.eval_mode == "ours",
                     eval_mode=args.eval_mode,
                     cat5_temperature=CAT5_TEMPERATURE,
@@ -877,7 +880,12 @@ def _stamp(
     generate/cat5 dict otherwise. amem carries neither field (both None), so
     its stamp is byte-identical to before this fallback existed — this is not
     optional for amem, ``scripts/repro/aggregate_headline.py`` reads both
-    fields by these exact shapes for grouping/reporting."""
+    fields by these exact shapes for grouping/reporting.
+
+    ``keyword_queries`` likewise stamps ``cfg_entry.keyword_queries`` (True for
+    amem's LLM keyword-rewrite read path, False for nemori's raw-question dense
+    retrieval) — the only field distinguishing a correct nemori artifact from
+    one that accidentally inherited amem's query rewrite (fix round 2)."""
     cfg_entry = get_config(args.config)
     effective_judge_model = judge_model or args.model
     # A stamped `judge_cost_rates` only when the judge actually split from the
@@ -906,7 +914,7 @@ def _stamp(
         n_questions=n_questions,
         config=args.config,
         memory_types=list(cfg_entry.memory_types),
-        keyword_queries=True,
+        keyword_queries=cfg_entry.keyword_queries,
         eval_only=args.eval_only,
         git_sha=sha,
         utc_started=utc_started,

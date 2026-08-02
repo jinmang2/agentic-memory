@@ -30,6 +30,15 @@ class RunnerConfig:
     # kwargs merged into AgmemConfig(**...) construction (build_memory) — e.g. slot
     # overrides for vector_store/doc_store.
     store: dict | None = None
+    # exp_locomo_conv0.py known-table's 4th tuple field: whether the read path
+    # rewrites the raw question into LLM-generated keywords before retrieval
+    # (A-Mem's own read-path mechanism, True there) or searches the raw
+    # question (Nemori's published read path — 0 extra LLM calls, False).
+    # Default True keeps amem's existing behavior; both nemori entries set it
+    # False below so a nemori eval does not silently inherit A-Mem's query
+    # rewrite (an extra LLM call and a protocol deviation from the claim under
+    # verification).
+    keyword_queries: bool = True
 
 
 # Nemori "upstream" preset threading — precheck §7 (docs/_internal/plans/
@@ -71,6 +80,7 @@ CONFIGS: dict[str, RunnerConfig] = {
             role_temps=NEMORI_ROLE_TEMPS,
             per_type_k=NEMORI_PER_TYPE_K,
             store=NEMORI_STORE,
+            keyword_queries=False,
         ),
         RunnerConfig(
             "nemori_merge085",
@@ -80,6 +90,7 @@ CONFIGS: dict[str, RunnerConfig] = {
             role_temps=NEMORI_ROLE_TEMPS,
             per_type_k=NEMORI_PER_TYPE_K,
             store=NEMORI_STORE,
+            keyword_queries=False,
         ),
     )
 }

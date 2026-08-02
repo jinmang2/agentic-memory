@@ -742,17 +742,24 @@ def test_runner_configs_construct_and_name_arms():
     assert nemori_upstream.store == {
         "overrides": {"vector_store": "QdrantVectorStore", "doc_store": "PostgresDocStore"}
     }
+    # Fix round 2: Nemori's published read path is 0-LLM raw-question dense
+    # retrieval (exp_locomo_conv0.py known-table 4th field, False for both
+    # nemori entries) — A-Mem's LLM keyword-rewrite query must not leak in.
+    assert nemori_upstream.keyword_queries is False
     nemori_merge085 = get_config("nemori_merge085")
     assert nemori_merge085.run_ready is True
     assert nemori_merge085.role_temps == nemori_upstream.role_temps
     assert nemori_merge085.per_type_k == nemori_upstream.per_type_k
     assert nemori_merge085.store == nemori_upstream.store
+    assert nemori_merge085.keyword_queries is False
     amem = get_config("amem")
     assert amem.run_ready is True
-    # amem's path stays byte-identical: all three new fields None.
+    # amem's path stays byte-identical: all three Track-1 fields None, and
+    # keyword_queries keeps its True default (amem's LLM keyword-rewrite).
     assert amem.role_temps is None
     assert amem.per_type_k is None
     assert amem.store is None
+    assert amem.keyword_queries is True
     with _pytest.raises(KeyError):
         get_config("nope")
 
@@ -787,6 +794,7 @@ def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
     amem_stamp = repro._stamp(_args("amem"), spec, None, "t0", "t1", 5)
     assert amem_stamp["k"] == 10  # unchanged from before this fix — no per_type_k on amem
     assert amem_stamp["temps"] == {"write": 0.7, "generate": 0.7, "cat5": repro.CAT5_TEMPERATURE}
+    assert amem_stamp["keyword_queries"] is True  # unchanged — amem's LLM query rewrite
 
     nemori_stamp = repro._stamp(_args("nemori_upstream"), spec, None, "t0", "t1", 5)
     assert nemori_stamp["k"] == {"episodes": 10, "semantic": 20}
@@ -795,3 +803,6 @@ def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
         "distill": {"temperature": 0.7, "max_tokens": 2000},
         "generate": {"temperature": 0.0},
     }
+    # Fix round 2: nemori must NOT inherit amem's LLM keyword-rewrite query —
+    # its published read path is raw-question dense retrieval (0 extra calls).
+    assert nemori_stamp["keyword_queries"] is False
