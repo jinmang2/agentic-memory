@@ -1,0 +1,187 @@
+{
+  "nemori-armA_merge-scores-c1": {
+    "n": 188,
+    "min": 0.504,
+    "max": 0.94,
+    "mean": 0.803,
+    "median": 0.816,
+    "pass_0.85": 63,
+    "pass_rate": 33.5
+  },
+  "nemori-armA_merge-scores-c2": {
+    "n": 417,
+    "min": 0.459,
+    "max": 0.897,
+    "mean": 0.745,
+    "median": 0.757,
+    "pass_0.85": 28,
+    "pass_rate": 6.7
+  },
+  "nemori-armA_merge-scores-c3": {
+    "n": 410,
+    "min": 0.457,
+    "max": 0.931,
+    "mean": 0.747,
+    "median": 0.761,
+    "pass_0.85": 39,
+    "pass_rate": 9.5
+  },
+  "nemori-armA_merge-scores-c4": {
+    "n": 406,
+    "min": 0.399,
+    "max": 0.907,
+    "mean": 0.669,
+    "median": 0.684,
+    "pass_0.85": 5,
+    "pass_rate": 1.2
+  },
+  "nemori-armA_merge-scores-c5": {
+    "n": 377,
+    "min": 0.452,
+    "max": 0.944,
+    "mean": 0.753,
+    "median": 0.777,
+    "pass_0.85": 39,
+    "pass_rate": 10.3
+  },
+  "nemori-armA_merge-scores-c6": {
+    "n": 509,
+    "min": 0.335,
+    "max": 0.925,
+    "mean": 0.679,
+    "median": 0.699,
+    "pass_0.85": 5,
+    "pass_rate": 1.0
+  },
+  "nemori-armA_merge-scores-c7": {
+    "n": 405,
+    "min": 0.377,
+    "max": 0.899,
+    "mean": 0.719,
+    "median": 0.726,
+    "pass_0.85": 17,
+    "pass_rate": 4.2
+  },
+  "nemori-armA_merge-scores-c8": {
+    "n": 338,
+    "min": 0.393,
+    "max": 0.886,
+    "mean": 0.694,
+    "median": 0.704,
+    "pass_0.85": 9,
+    "pass_rate": 2.7
+  },
+  "nemori-armA_merge-scores-c9": {
+    "n": 377,
+    "min": 0.499,
+    "max": 0.889,
+    "mean": 0.738,
+    "median": 0.752,
+    "pass_0.85": 13,
+    "pass_rate": 3.4
+  },
+  "nemori-armA_merge-scores": {
+    "n": 241,
+    "min": 0.529,
+    "max": 0.89,
+    "mean": 0.749,
+    "median": 0.757,
+    "pass_0.85": 25,
+    "pass_rate": 10.4
+  },
+  "nemori-armB_merge-scores-c0": {
+    "n": 297,
+    "min": 0.58,
+    "max": 0.931,
+    "mean": 0.769,
+    "median": 0.775,
+    "pass_0.85": 65,
+    "pass_rate": 21.9
+  },
+  "nemori-armB_merge-scores-c1": {
+    "n": 236,
+    "min": 0.508,
+    "max": 0.933,
+    "mean": 0.817,
+    "median": 0.832,
+    "pass_0.85": 100,
+    "pass_rate": 42.4
+  },
+  "nemori-armB_merge-scores-c2": {
+    "n": 517,
+    "min": 0.46,
+    "max": 0.942,
+    "mean": 0.765,
+    "median": 0.778,
+    "pass_0.85": 121,
+    "pass_rate": 23.4
+  },
+  "nemori-armB_merge-scores-c3": {
+    "n": 506,
+    "min": 0.46,
+    "max": 0.94,
+    "mean": 0.774,
+    "median": 0.789,
+    "pass_0.85": 132,
+    "pass_rate": 26.1
+  },
+  "nemori-armB_merge-scores-c4": {
+    "n": 500,
+    "min": 0.431,
+    "max": 0.885,
+    "mean": 0.714,
+    "median": 0.708,
+    "pass_0.85": 99,
+    "pass_rate": 19.8
+  },
+  "nemori-armB_merge-scores-c5": {
+    "n": 449,
+    "min": 0.416,
+    "max": 0.934,
+    "mean": 0.783,
+    "median": 0.819,
+    "pass_0.85": 156,
+    "pass_rate": 34.7
+  },
+  "nemori-armB_merge-scores-c6": {
+    "n": 573,
+    "min": 0.293,
+    "max": 0.928,
+    "mean": 0.707,
+    "median": 0.712,
+    "pass_0.85": 111,
+    "pass_rate": 19.4
+  },
+  "nemori-armB_merge-scores-c7": {
+    "n": 518,
+    "min": 0.419,
+    "max": 0.903,
+    "mean": 0.74,
+    "median": 0.749,
+    "pass_0.85": 104,
+    "pass_rate": 20.1
+  },
+  "nemori-armB_merge-scores-c8": {
+    "n": 374,
+    "min": 0.457,
+    "max": 0.918,
+    "mean": 0.738,
+    "median": 0.754,
+    "pass_0.85": 75,
+    "pass_rate": 20.1
+  },
+  "nemori-armB_merge-scores-c9": {
+    "n": 445,
+    "min": 0.437,
+    "max": 0.895,
+    "mean": 0.768,
+    "median": 0.779,
+    "pass_0.85": 91,
+    "pass_rate": 20.4
+  },
+  "_aggregate": {
+    "n": 8083,
+    "pass_0.85": 1297,
+    "pass_rate": 16.0
+  }
+}
