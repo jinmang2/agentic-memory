@@ -17,6 +17,11 @@ class ModelSpec:
     api_key_env: str
     usd_per_1m_in: float
     usd_per_1m_out: float
+    # Some newer Chat Completions models (e.g. gpt-5.6-luna) reject `max_tokens`
+    # outright (400 "Unsupported parameter") and require `max_completion_tokens`
+    # instead. Defaulting to "max_tokens" keeps every existing positional
+    # ModelSpec(...) construction (this file is the only caller) byte-identical.
+    max_tokens_key: str = "max_tokens"
 
     def rates_dict(self) -> dict:
         """Stamp-friendly dict (drop-in for the old COST_RATES stamp shape)."""
@@ -37,6 +42,16 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         # track's quote actually needs them — seed list stays honest about what's wired.
         ModelSpec("gpt-4o-mini", _OPENAI, "OPENAI_API_KEY", 0.15, 0.60),
         ModelSpec("gpt-4o-2024-08-06", _OPENAI, "OPENAI_API_KEY", 2.50, 10.00),
+        # Track 1 model axis (user-approved 2026-08-03): list prices verified 2026-07-31
+        # via web sweep (pricepertoken/openrouter) at Luna's post-2026-07-30 cut.
+        ModelSpec(
+            "gpt-5.6-luna",
+            _OPENAI,
+            "OPENAI_API_KEY",
+            0.20,
+            1.20,
+            max_tokens_key="max_completion_tokens",
+        ),
     )
 }
 

@@ -34,6 +34,11 @@ class RoleConfig:
     api_key: str = "not-needed"  # local servers ignore it
     temperature: float | None = 0.1
     max_tokens: int | None = 1024
+    # Some newer Chat Completions models (e.g. gpt-5.6-luna) reject `max_tokens`
+    # outright and require `max_completion_tokens` instead — this names which
+    # kwarg key `max_tokens` is sent under (docs/agmem.bench.registry.ModelSpec
+    # is the source of truth per-model; this field is what the client reads).
+    max_tokens_key: str = "max_tokens"
     extra_body: dict[str, Any] = field(default_factory=dict)
 
 
@@ -98,7 +103,7 @@ class LLMClient:
         if cfg.temperature is not None:
             kwargs["temperature"] = cfg.temperature
         if cfg.max_tokens is not None:
-            kwargs["max_tokens"] = cfg.max_tokens
+            kwargs[cfg.max_tokens_key] = cfg.max_tokens
         if cfg.extra_body:
             kwargs["extra_body"] = cfg.extra_body
         kwargs.update(overrides)

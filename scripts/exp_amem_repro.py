@@ -229,6 +229,7 @@ def make_roles(
     generate_temp: float = 0.7,
     max_tokens: int = 1000,
     role_temps: dict[str, dict] | None = None,
+    max_tokens_key: str = "max_tokens",
 ) -> dict[str, RoleConfig]:
     """A-Mem upstream temperatures (test_advanced.py / memory_layer get_completion
     default 0.7): write-path roles (extract=Ps1 note, distill=Ps3 evolution) at
@@ -243,13 +244,20 @@ def make_roles(
     is a plain, non-frozen dataclass, but replacing several fields at once reads
     clearer than individual ``roles[r].field = v`` assignments and matches
     ``exp_locomo_conv0.py``'s ``role_overrides`` shape). ``None`` (amem's
-    default) leaves every role exactly as built above — byte-identical path."""
+    default) leaves every role exactly as built above — byte-identical path.
+
+    ``max_tokens_key`` (from the model's registered ``ModelSpec.max_tokens_key``,
+    e.g. luna's ``"max_completion_tokens"``) is applied to every role built here,
+    including the judge — the caller passes the JUDGE model's own key when a
+    split ``--judge-model`` is set, since the two models can differ. Default
+    ``"max_tokens"`` is byte-identical to before this parameter existed."""
     judge_cfg = RoleConfig(
         endpoint=judge_endpoint or endpoint,
         model=judge_model or model,
         api_key=judge_api_key or api_key,
         temperature=0.0,
         max_tokens=max_tokens,
+        max_tokens_key=max_tokens_key,
     )
     roles = {
         "extract": RoleConfig(
@@ -258,6 +266,7 @@ def make_roles(
             api_key=api_key,
             temperature=write_temp,
             max_tokens=max_tokens,
+            max_tokens_key=max_tokens_key,
         ),
         "distill": RoleConfig(
             endpoint=endpoint,
@@ -265,6 +274,7 @@ def make_roles(
             api_key=api_key,
             temperature=write_temp,
             max_tokens=max_tokens,
+            max_tokens_key=max_tokens_key,
         ),
         "judge": judge_cfg,
         "generate": RoleConfig(
@@ -273,6 +283,7 @@ def make_roles(
             api_key=api_key,
             temperature=generate_temp,
             max_tokens=max_tokens,
+            max_tokens_key=max_tokens_key,
         ),
     }
     for role, overrides in (role_temps or {}).items():
@@ -665,6 +676,15 @@ def main() -> None:
     # downstream reader of args.endpoint (make_roles, _stamp) sees the real value
     # actually used, not the raw (possibly None) CLI arg.
     args.endpoint = args.endpoint or spec.endpoint
+    # make_roles applies one max_tokens_key uniformly to every role it builds
+    # (including judge) — when a split --judge-model needs a DIFFERENT key than
+    # the main model (e.g. main=gpt-4o-mini "max_tokens", judge=luna
+    # "max_completion_tokens"), override just the judge role afterward via the
+    # existing role_temps per-role mechanism. `dict(v)` copies so this never
+    # mutates cfg_entry's own role_temps dict.
+    role_temps = {k: dict(v) for k, v in (cfg_entry.role_temps or {}).items()}
+    if judge_spec is not None:
+        role_temps.setdefault("judge", {})["max_tokens_key"] = judge_spec.max_tokens_key
     roles = make_roles(
         args.endpoint,
         args.model,
@@ -672,7 +692,8 @@ def main() -> None:
         judge_endpoint=judge_spec.endpoint if judge_spec else None,
         judge_model=judge_spec.name if judge_spec else None,
         judge_api_key=judge_api_key,
-        role_temps=cfg_entry.role_temps,
+        role_temps=role_temps or None,
+        max_tokens_key=spec.max_tokens_key,
     )
     embedder = SentenceTransformerEmbedder(args.embedder)
 

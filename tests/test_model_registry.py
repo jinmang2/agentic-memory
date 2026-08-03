@@ -180,6 +180,33 @@ def test_stamp_records_judge_cost_rates_when_judge_model_splits():
     assert stamp["cost_rates"] == spec.rates_dict()  # main rates untouched
 
 
+def test_luna_uses_max_completion_tokens_key():
+    spec = get_model("gpt-5.6-luna")
+    assert spec.max_tokens_key == "max_completion_tokens"
+
+
+def test_default_entries_use_max_tokens_key():
+    for name in ("gpt-4o-mini", "gpt-4o-2024-08-06"):
+        assert get_model(name).max_tokens_key == "max_tokens"
+
+
+def test_make_roles_forwards_max_tokens_key():
+    H = _load_repro()
+    roles = H.make_roles(
+        "https://api.openai.com/v1",
+        "gpt-5.6-luna",
+        "k",
+        max_tokens_key="max_completion_tokens",
+    )
+    assert roles["extract"].max_tokens_key == "max_completion_tokens"
+    assert roles["distill"].max_tokens_key == "max_completion_tokens"
+    assert roles["generate"].max_tokens_key == "max_completion_tokens"
+    assert roles["judge"].max_tokens_key == "max_completion_tokens"
+    # default: byte-identical to today's behavior
+    default_roles = H.make_roles("e", "m", "k")
+    assert default_roles["generate"].max_tokens_key == "max_tokens"
+
+
 def test_make_roles_judge_split():
     H = _load_repro()  # same spec_from_file_location loader as the cost test
     roles = H.make_roles(
