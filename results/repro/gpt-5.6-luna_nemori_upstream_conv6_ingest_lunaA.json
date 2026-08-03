@@ -1,0 +1,105 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "394fe2bd0ab4f297d1671905ed43af8458933d11",
+    "model": "gpt-5.6-luna",
+    "judge": "wujiang",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-03T13:25:12+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-5.6-luna",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "all-MiniLM-L6-v2",
+    "k": {
+      "episodes": 10,
+      "semantic": 20
+    },
+    "eval_mode": "wujiang",
+    "temps": {
+      "fixed_sampling": true,
+      "model": "gpt-5.6-luna"
+    },
+    "expand_links": "off",
+    "conv": "6",
+    "workers": 1,
+    "n_questions": null,
+    "config": "nemori_upstream",
+    "memory_types": [
+      "episodes",
+      "semantic"
+    ],
+    "keyword_queries": false,
+    "eval_only": false,
+    "git_sha": "394fe2bd0ab4f297d1671905ed43af8458933d11",
+    "utc_started": "2026-08-03T03:54:50.185453+00:00",
+    "utc_finished": "2026-08-03T04:25:12.437498+00:00",
+    "cost_rates": {
+      "model": "gpt-5.6-luna",
+      "usd_per_1m_in": 0.2,
+      "usd_per_1m_out": 1.2
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 6,
+      "n_turns": 689
+    }
+  ],
+  "llm_budget": {
+    "extract/segment": {
+      "calls": 34,
+      "tokens_in": 46407,
+      "tokens_out": 8738,
+      "errors": 0,
+      "latency_ms_total": 113532.79999999999,
+      "latency_ms_avg": 3339.2
+    },
+    "distill/narrate": {
+      "calls": 135,
+      "tokens_in": 76259,
+      "tokens_out": 39757,
+      "errors": 0,
+      "latency_ms_total": 451305.0,
+      "latency_ms_avg": 3343.0
+    },
+    "distill/predict_calibrate": {
+      "calls": 266,
+      "tokens_in": 146415,
+      "tokens_out": 68496,
+      "errors": 0,
+      "latency_ms_total": 944007.4,
+      "latency_ms_avg": 3548.9
+    },
+    "distill/merge": {
+      "calls": 152,
+      "tokens_in": 108417,
+      "tokens_out": 15575,
+      "errors": 0,
+      "latency_ms_total": 265665.6,
+      "latency_ms_avg": 1747.8
+    }
+  },
+  "cost_usd": 0.234579,
+  "drops": {},
+  "timing": {
+    "ingest_s": 1818.5,
+    "total_s": 1818.5
+  },
+  "memory_capacity": {
+    "per_type": {
+      "semantic": 281,
+      "episodes": 135
+    },
+    "total_items": 416,
+    "memory_jsonl_bytes": 491013,
+    "store_dir_bytes": 387380109
+  },
+  "llm_trace_file": "gpt-5.6-luna_nemori_upstream_conv6_ingest_lunaA.llm-trace.jsonl",
+  "memory_file": "gpt-5.6-luna_nemori_upstream_conv6_ingest_lunaA.memory.jsonl"
+}
