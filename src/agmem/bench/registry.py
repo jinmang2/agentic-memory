@@ -22,6 +22,13 @@ class ModelSpec:
     # instead. Defaulting to "max_tokens" keeps every existing positional
     # ModelSpec(...) construction (this file is the only caller) byte-identical.
     max_tokens_key: str = "max_tokens"
+    # Some newer Chat Completions models (e.g. gpt-5.6-luna) reject any
+    # non-default `temperature` outright (400 "Unsupported value: 'temperature'
+    # does not support 0... Only the default (1) value is supported") — the
+    # `temperature` field must be omitted from the request entirely, not just
+    # set to 1. Defaulting to False keeps every existing ModelSpec(...)
+    # construction byte-identical.
+    fixed_sampling: bool = False
 
     def rates_dict(self) -> dict:
         """Stamp-friendly dict (drop-in for the old COST_RATES stamp shape)."""
@@ -51,6 +58,7 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
             0.20,
             1.20,
             max_tokens_key="max_completion_tokens",
+            fixed_sampling=True,
         ),
     )
 }

@@ -230,6 +230,8 @@ def make_roles(
     max_tokens: int = 1000,
     role_temps: dict[str, dict] | None = None,
     max_tokens_key: str = "max_tokens",
+    fixed_sampling: bool = False,
+    judge_fixed_sampling: bool | None = None,
 ) -> dict[str, RoleConfig]:
     """A-Mem upstream temperatures (test_advanced.py / memory_layer get_completion
     default 0.7): write-path roles (extract=Ps1 note, distill=Ps3 evolution) at
@@ -250,7 +252,23 @@ def make_roles(
     e.g. luna's ``"max_completion_tokens"``) is applied to every role built here,
     including the judge — the caller passes the JUDGE model's own key when a
     split ``--judge-model`` is set, since the two models can differ. Default
-    ``"max_tokens"`` is byte-identical to before this parameter existed."""
+    ``"max_tokens"`` is byte-identical to before this parameter existed.
+
+    ``fixed_sampling`` (from the main model's ``ModelSpec.fixed_sampling``, e.g.
+    luna rejecting any non-default ``temperature``) forces ``temperature=None``
+    on the main-model roles (extract/distill/generate) — the RoleConfig
+    ``temperature=None`` -> omit path (client.py) then drops the parameter from
+    the request entirely instead of sending a value the API rejects. This wins
+    over any ``temperature`` entry arriving via ``role_temps`` for those roles
+    (applied AFTER the role_temps loop below) — a fixed-sampling model cannot
+    honor a configured write/generate temperature no matter where it came from
+    — while non-``temperature`` role_temps entries (e.g. ``max_tokens``) are
+    untouched. ``judge_fixed_sampling`` governs the judge role the same way and
+    defaults to ``fixed_sampling`` (``None`` -> inherit) so a judge that falls
+    back to the main model (no split ``--judge-model``) also inherits its
+    fixed-sampling behavior, matching the existing model/endpoint/api_key
+    fallback. Default ``False`` is byte-identical to before this parameter
+    existed."""
     judge_cfg = RoleConfig(
         endpoint=judge_endpoint or endpoint,
         model=judge_model or model,
@@ -288,6 +306,12 @@ def make_roles(
     }
     for role, overrides in (role_temps or {}).items():
         roles[role] = dataclasses.replace(roles[role], **overrides)
+    if fixed_sampling:
+        for role in ("extract", "distill", "generate"):
+            roles[role] = dataclasses.replace(roles[role], temperature=None)
+    effective_judge_fixed = fixed_sampling if judge_fixed_sampling is None else judge_fixed_sampling
+    if effective_judge_fixed:
+        roles["judge"] = dataclasses.replace(roles["judge"], temperature=None)
     return roles
 
 
@@ -694,6 +718,8 @@ def main() -> None:
         judge_api_key=judge_api_key,
         role_temps=role_temps or None,
         max_tokens_key=spec.max_tokens_key,
+        fixed_sampling=spec.fixed_sampling,
+        judge_fixed_sampling=judge_spec.fixed_sampling if judge_spec else None,
     )
     embedder = SentenceTransformerEmbedder(args.embedder)
 
@@ -906,7 +932,14 @@ def _stamp(
     ``keyword_queries`` likewise stamps ``cfg_entry.keyword_queries`` (True for
     amem's LLM keyword-rewrite read path, False for nemori's raw-question dense
     retrieval) — the only field distinguishing a correct nemori artifact from
-    one that accidentally inherited amem's query rewrite (fix round 2)."""
+    one that accidentally inherited amem's query rewrite (fix round 2).
+
+    When ``spec.fixed_sampling`` is set (e.g. luna), the configured write/
+    generate/cat5 temps were never actually sent (make_roles forces
+    ``temperature=None`` for such models — see its docstring) so stamping them
+    would misrepresent the request that was made. ``temps`` records that
+    reality instead: ``{"fixed_sampling": True, "model": spec.name}``. Every
+    non-fixed-sampling model's stamp is unchanged."""
     cfg_entry = get_config(args.config)
     effective_judge_model = judge_model or args.model
     # A stamped `judge_cost_rates` only when the judge actually split from the
@@ -928,7 +961,11 @@ def _stamp(
         embedder=args.embedder,
         k=cfg_entry.per_type_k or args.k,
         eval_mode=args.eval_mode,
-        temps=cfg_entry.role_temps or {"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE},
+        temps=(
+            {"fixed_sampling": True, "model": spec.name}
+            if spec.fixed_sampling
+            else cfg_entry.role_temps or {"write": 0.7, "generate": 0.7, "cat5": CAT5_TEMPERATURE}
+        ),
         expand_links=args.expand_links,
         conv=args.conv,
         workers=args.workers,

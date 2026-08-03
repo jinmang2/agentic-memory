@@ -190,6 +190,15 @@ def test_default_entries_use_max_tokens_key():
         assert get_model(name).max_tokens_key == "max_tokens"
 
 
+def test_luna_has_fixed_sampling():
+    assert get_model("gpt-5.6-luna").fixed_sampling is True
+
+
+def test_default_entries_have_fixed_sampling_false():
+    for name in ("gpt-4o-mini", "gpt-4o-2024-08-06"):
+        assert get_model(name).fixed_sampling is False
+
+
 def test_make_roles_forwards_max_tokens_key():
     H = _load_repro()
     roles = H.make_roles(
@@ -223,3 +232,95 @@ def test_make_roles_judge_split():
     # default: judge inherits the model under test (behavior identical to today)
     roles = H.make_roles("e", "m", "k")
     assert roles["judge"].model == "m"
+
+
+def test_make_roles_fixed_sampling_omits_temperature_but_keeps_max_tokens():
+    H = _load_repro()
+    roles = H.make_roles(
+        "https://api.openai.com/v1",
+        "gpt-5.6-luna",
+        "k",
+        role_temps={
+            "extract": {"temperature": 0.2, "max_tokens": 4096},
+            "distill": {"temperature": 0.7, "max_tokens": 2000},
+            "generate": {"temperature": 0.0},
+        },
+        max_tokens=1000,
+        max_tokens_key="max_completion_tokens",
+        fixed_sampling=True,
+    )
+    for role in ("extract", "distill", "generate", "judge"):
+        assert roles[role].temperature is None
+    # max_tokens (from role_temps or the default) still applies — only
+    # temperature is stripped.
+    assert roles["extract"].max_tokens == 4096
+    assert roles["distill"].max_tokens == 2000
+    assert roles["generate"].max_tokens == 1000
+    assert roles["judge"].max_tokens == 1000
+    assert roles["extract"].max_tokens_key == "max_completion_tokens"
+
+
+def test_make_roles_fixed_sampling_false_is_byte_identical_default():
+    H = _load_repro()
+    roles = H.make_roles(
+        "https://api.openai.com/v1",
+        "gpt-4o-mini",
+        "k",
+        role_temps={"extract": {"temperature": 0.2, "max_tokens": 4096}},
+    )
+    assert roles["extract"].temperature == 0.2
+    assert roles["distill"].temperature == 0.7
+    assert roles["generate"].temperature == 0.7
+    assert roles["judge"].temperature == 0.0
+
+
+def test_make_roles_judge_fixed_sampling_inherits_main_by_default():
+    H = _load_repro()
+    # no split judge model, main model is fixed-sampling -> judge inherits
+    roles = H.make_roles("e", "gpt-5.6-luna", "k", fixed_sampling=True)
+    assert roles["judge"].temperature is None
+    # non-fixed-sampling main model -> judge stays deterministic (0.0)
+    roles = H.make_roles("e", "gpt-4o-mini", "k", fixed_sampling=False)
+    assert roles["judge"].temperature == 0.0
+
+
+def test_make_roles_judge_fixed_sampling_explicit_overrides_main():
+    H = _load_repro()
+    # main model is NOT fixed-sampling but a split judge model IS
+    roles = H.make_roles(
+        "e",
+        "gpt-4o-mini",
+        "k",
+        judge_model="gpt-5.6-luna",
+        fixed_sampling=False,
+        judge_fixed_sampling=True,
+    )
+    assert roles["judge"].temperature is None
+    assert roles["extract"].temperature == 0.7  # main-model roles untouched
+    # inverse: main model IS fixed-sampling but judge is a normal split model
+    roles = H.make_roles(
+        "e",
+        "gpt-5.6-luna",
+        "k",
+        judge_model="gpt-4o-mini",
+        fixed_sampling=True,
+        judge_fixed_sampling=False,
+    )
+    assert roles["judge"].temperature == 0.0
+    assert roles["extract"].temperature is None
+
+
+def test_stamp_temps_records_fixed_sampling_reality_for_luna():
+    H = _load_repro()
+    spec = get_model("gpt-5.6-luna")
+    stamp = H._stamp(
+        _stamp_args(model="gpt-5.6-luna"), spec, "deadbeef", "t0", "t1", 5, judge_model=None
+    )
+    assert stamp["temps"] == {"fixed_sampling": True, "model": "gpt-5.6-luna"}
+
+
+def test_stamp_temps_unchanged_for_default_model():
+    H = _load_repro()
+    spec = get_model("gpt-4o-mini")
+    stamp = H._stamp(_stamp_args(), spec, "deadbeef", "t0", "t1", 5, judge_model=None)
+    assert stamp["temps"] == {"write": 0.7, "generate": 0.7, "cat5": H.CAT5_TEMPERATURE}
