@@ -18,7 +18,8 @@ from agmem.core.types import utcnow
 
 
 class OpType(str, Enum):
-    """The mutation kinds every organizer's output is normalized into."""
+    """The mutation kinds every organizer's output is normalized into (plus
+    NOOP, which records a decision that deliberately mutated nothing)."""
 
     ADD = "ADD"
     UPDATE = "UPDATE"
@@ -27,6 +28,7 @@ class OpType(str, Enum):
     INVALIDATE = "INVALIDATE"  # bi-temporal: never physically remove
     LINK = "LINK"
     TAG = "TAG"
+    NOOP = "NOOP"  # judged, no change — the only op that mutates nothing (see _apply_one)
 
 
 @dataclass

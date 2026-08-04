@@ -720,6 +720,18 @@ class AgenticMemory:
                 # let a stale community keep answering `community_of_node` and so
                 # steer the next incremental extension.
                 self.graph_store.remove_community(op.target_id)
+        elif op.op == OpType.NOOP:
+            # Deliberately nothing. A NOOP records that a methodology's write path
+            # CONSIDERED an item and decided against changing it — Mem0's `NONE`
+            # event (`main.py:326-327` @ v0.1.94), which upstream does not even
+            # return to its caller, so "judged, unchanged" and "never judged" are
+            # indistinguishable there. Ours are distinguishable because the
+            # decision is a log row (`_apply_ops` appends before applying, so the
+            # row lands whatever this branch does). Written as an explicit branch
+            # rather than left to fall off the end of the chain: an op type nobody
+            # handles and an op type handled by doing nothing look identical in the
+            # store and opposite in review.
+            return
 
     def _apply_graph(self, target_type: str, target_id: str, data: dict) -> None:
         """Mirror an applied ``entities``/``facts`` item into the graph store.

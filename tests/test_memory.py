@@ -361,3 +361,66 @@ def test_invalidated_fact_renders_date_range(mem):
     )
     rendered = mem.search("Alice Paris", memory_types=["facts"]).render()
     assert "Date range: 2024-01-01 - 2025-06-01" in rendered
+
+
+def test_noop_op_is_logged_but_changes_nothing(mem):
+    """Mem0's fourth event (`NONE`) becomes a log row, not a side-channel counter.
+
+    Upstream never returns it to the caller (`main.py:326-327` @ v0.1.94), so
+    "judged and left alone" is indistinguishable there from "never judged". The
+    whole point of routing it through the evolution log is that ours are
+    distinguishable — which only holds if the op logs while touching nothing.
+    """
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id="m1",
+                payload={"id": "m1", "content": "user likes pizza"},
+            )
+        ],
+        actor="t",
+    )
+    before = [dict(d) for d in mem.doc_store.list_items("semantic", namespace=mem.namespace)]
+    log_before = mem.doc_store.count()
+
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.NOOP,
+                target_type="semantic",
+                target_id="m1",
+                payload={"text": "user likes pizza"},
+            )
+        ],
+        actor="t",
+    )
+    after = [dict(d) for d in mem.doc_store.list_items("semantic", namespace=mem.namespace)]
+
+    assert after == before  # no store effect at all
+    assert mem.doc_store.count() == log_before + 1  # but the judgement is on the record
+    assert mem.doc_store.tail(1)[0].op is OpType.NOOP
+
+
+def test_noop_leaves_the_item_servable(mem):
+    """A NOOP must not disturb the vector row either — the failure mode this
+    guards is an implementation that "handles" NOOP by falling through to the
+    DELETE branch's vector cleanup, which the store snapshot alone would not
+    catch (the doc row would still be there)."""
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="semantic",
+                target_id="m1",
+                payload={"id": "m1", "content": "user likes pizza"},
+            )
+        ],
+        actor="t",
+    )
+    mem._apply_ops(
+        [MemoryOp(op=OpType.NOOP, target_type="semantic", target_id="m1", payload={})],
+        actor="t",
+    )
+    assert "user likes pizza" in mem.search("pizza", memory_types=["semantic"]).render()
