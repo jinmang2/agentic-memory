@@ -15,6 +15,7 @@ import json
 import logging
 import re
 import threading
+import time
 from typing import Any
 
 from agmem.llm.client import LLMClient
@@ -59,12 +60,38 @@ class StructuredCaller:
     """Wraps `LLMClient` with the retry/repair/drop defense chain described
     in the module docstring; `call()` is the only public entry point."""
 
-    def __init__(self, client: LLMClient, use_guided_json: bool = True) -> None:
+    def __init__(
+        self,
+        client: LLMClient,
+        use_guided_json: bool = True,
+        transport_retries: int = 2,
+    ) -> None:
         """`use_guided_json=False` skips the `guided_json` extra_body layer
-        entirely (e.g. for endpoints that reject unknown fields outright)."""
+        entirely (e.g. for endpoints that reject unknown fields outright).
+
+        `transport_retries` is the budget for CONNECTION failures — timeouts,
+        DNS blips, resets — and is deliberately separate from `call`'s
+        `max_retries`, which exists for malformed model REPLIES. They are
+        different failures with different fixes: a malformed reply earns a
+        correction turn appended to the conversation, while a transport failure
+        produced no reply at all and simply needs the same request sent again.
+
+        Sized from a real incident (2026-08-04): on a flaky link a single blip
+        anywhere in a ~400-call conversation dropped one structured call, which
+        cost the entire conversation's ingest — the organizer lost that piece of
+        write-path work, the conversation failed its clean-ingest check, and
+        every call already paid for was re-spent. Two retries with backoff turn
+        that into a pause. Set to 0 to restore the previous drop-immediately
+        behavior.
+        """
         self.client = client
         self.use_guided_json = use_guided_json
+        self.transport_retries = transport_retries
         self.drops: dict[str, int] = {}
+        # Transport failures that were RECOVERED by a retry. Not drops — no work
+        # was lost — but a run over a degrading link should be able to say so
+        # rather than look pristine.
+        self.transport_recoveries: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def _drop(self, role: str, prompt: str, last_output: str) -> None:
@@ -104,13 +131,29 @@ class StructuredCaller:
         budget_key = f"{role}/{phase}" if phase else None
 
         last_output = ""
-        for attempt in range(max_retries + 1):
+        transport_left = self.transport_retries
+        attempt = 0
+        while attempt <= max_retries:
             try:
                 last_output = self.client.chat(role, messages, budget_key=budget_key, **overrides)
             except Exception as exc:  # endpoint/transport error
                 logger.warning("LLM call failed (role=%s, attempt=%s): %s", role, attempt, exc)
-                if self.use_guided_json and attempt == 0:
-                    overrides = {}  # endpoint may reject guided_json — retry without
+                if self.use_guided_json and overrides:
+                    # The endpoint may be rejecting guided_json rather than being
+                    # unreachable. Try once without it before spending a
+                    # transport retry, as this has always done.
+                    overrides = {}
+                    continue
+                if transport_left > 0:
+                    # No reply came back, so there is nothing for the model to
+                    # correct: re-send the SAME messages after a backoff, and do
+                    # NOT consume `attempt` (the schema budget). Appending a
+                    # correction turn here would blame the model for a network
+                    # fault and change the prompt under test.
+                    transport_left -= 1
+                    time.sleep(2.0 ** (self.transport_retries - transport_left))
+                    with self._lock:
+                        self.transport_recoveries[role] = self.transport_recoveries.get(role, 0) + 1
                     continue
                 break
             parsed = coerce_to_schema(extract_json(last_output), schema)
@@ -126,5 +169,6 @@ class StructuredCaller:
                     ),
                 }
             )
+            attempt += 1  # a malformed REPLY is what the schema budget pays for
         self._drop(role, prompt, last_output)
         return None
