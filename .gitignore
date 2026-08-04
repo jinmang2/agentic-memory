@@ -35,6 +35,14 @@ results/repro/*.llm-trace.jsonl
 results/repro/*.memory.jsonl
 results/repro/stores/
 
+# The evolution-log dump joins them for the same reason. It carries the full
+# payload of every op, so it duplicates the snapshot's content and grows with
+# the run (12MB for one 10-conversation arm). The NUMBERS the op-structure
+# claims are actually read from — the `op_counts` block, keyed "OP:target_type"
+# — live in the committed summary JSON, so nothing citable depends on this file
+# being in git.
+results/repro/*.ops.jsonl
+
 # Per-question `.records.jsonl` joined this list on 2026-08-04. It used to be
 # committed as a "small" artifact and the eight A-Mem-campaign files still are —
 # tracked files are unaffected by a new ignore rule, and un-committing them would
