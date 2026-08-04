@@ -217,6 +217,63 @@ def dump_memory_snapshot(mem: AgenticMemory, conv_idx: int, out) -> dict[str, in
     return counts
 
 
+def dump_op_log(mem: AgenticMemory, conv_idx: int, out, page: int = 5000) -> dict[str, int]:
+    """Append one conversation's evolution log to the open `out` handle — one
+    JSON line per op, in `seq` order — and return per-op counts keyed
+    ``f"{op}:{target_type}"``.
+
+    Same contract as `dump_memory_snapshot` (open handle in, counts out), so the
+    caller loop is copyable. It exists because the snapshot cannot answer the
+    question a write-path comparison actually asks: the snapshot holds FINAL
+    items, so an UPDATE leaves no evidence it happened, a DELETEd item is absent
+    by construction rather than visibly removed, and a NOOP — a methodology
+    considering an item and deciding against changing it — has no representation
+    at all. Those four proportions are Track 2's second claim, and without this
+    they would be measured from nothing.
+
+    Applies to every methodology, not just Mem0, so it lives in the shared runner.
+    It also satisfies the full-artifact-capture rule: ops are not re-derivable
+    from a rerun without spending the run again.
+
+    Paged rather than one `ops_since(0)` call: that method caps at its `limit`
+    (default 10_000) and returns silently short. A Mem0 conversation emits up to
+    ~10 ops per decision call over ~200 adds, which is close enough to that cap
+    that a silent truncation is a live risk — and it would understate exactly the
+    counts the claim rests on.
+    """
+    counts: dict[str, int] = {}
+    seq = 0
+    while True:
+        batch = mem.doc_store.ops_since(seq, limit=page)
+        if not batch:
+            break
+        # `seq` is deliberately both the loop variable and the outer cursor: after
+        # the loop it holds the last row read, which is where the next page starts.
+        for seq, op in batch:
+            key = f"{op.op.value}:{op.target_type}"
+            counts[key] = counts.get(key, 0) + 1
+            out.write(
+                json.dumps(
+                    {
+                        "conv": conv_idx,
+                        "seq": seq,
+                        "op": op.op.value,
+                        "target_type": op.target_type,
+                        "target_id": op.target_id,
+                        "actor": op.actor,
+                        "t_transaction": op.t_transaction,
+                        "payload": op.payload,
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                )
+                + "\n"
+            )
+        if len(batch) < page:
+            break
+    return counts
+
+
 def make_roles(
     endpoint: str,
     model: str,
@@ -448,10 +505,17 @@ def eval_conversations(
     ingest_s = 0.0
     eval_s = 0.0
     snapshot_counts: dict[str, int] = {}
+    op_counts: dict[str, int] = {}
     cfg_entry = get_config(args.config)
     # Snapshot the memory of every conversation to one JSONL (truncate per call
     # so a re-run of the same tag overwrites rather than appends stale state).
     mem_file = memory_path.open("w", encoding="utf-8") if memory_path else None
+    # The evolution log rides alongside the snapshot, same lifetime and same
+    # truncate-per-run rule. Sibling path rather than a new CLI flag: an op log
+    # that a run could be configured to skip is an op log that some run will be
+    # missing when its numbers are questioned.
+    op_path = memory_path.with_suffix(".ops.jsonl") if memory_path else None
+    op_file = op_path.open("w", encoding="utf-8") if op_path else None
     try:
         for idx in conv_indices:
             sample = samples[idx]
@@ -465,6 +529,9 @@ def eval_conversations(
                 if mem_file is not None:
                     for mtype, c in dump_memory_snapshot(mem, idx, mem_file).items():
                         snapshot_counts[mtype] = snapshot_counts.get(mtype, 0) + c
+                if op_file is not None:
+                    for key, c in dump_op_log(mem, idx, op_file).items():
+                        op_counts[key] = op_counts.get(key, 0) + c
                 if args.ingest_only:
                     print(
                         f"[conv{idx}] ingested {n_turns} turns, "
@@ -513,6 +580,8 @@ def eval_conversations(
     finally:
         if mem_file is not None:
             mem_file.close()
+        if op_file is not None:
+            op_file.close()
 
     memory_capacity = None
     if memory_path is not None:
@@ -533,6 +602,7 @@ def eval_conversations(
             "drops": merged_drops,
             "ingest_s": round(ingest_s, 1),
             "memory_capacity": memory_capacity,
+            "op_counts": op_counts or None,
         }
 
     combined = micro_average([r for r in per_conv if "overall" in r])
@@ -547,6 +617,11 @@ def eval_conversations(
     combined["ingest_s"] = round(ingest_s, 1)
     combined["eval_s"] = round(eval_s, 1)
     combined["memory_capacity"] = memory_capacity
+    # Per-op counts keyed "OP:target_type", summed over conversations. Sits
+    # beside memory_capacity because they answer complementary questions: what
+    # the memory ENDED as, and what the write path DID to get there. The second
+    # is the only one that can show an UPDATE, a DELETE, or a NOOP.
+    combined["op_counts"] = op_counts or None
     # carried internally to the sidecar writer in main(); NOT inlined into the
     # summary JSON (which selects a lean set of keys).
     combined["records"] = all_records
@@ -585,6 +660,16 @@ def _merge_budget(merged_budget: dict, merged_drops: dict, mem: AgenticMemory) -
     if mem.structured is not None:
         for role, n in mem.structured.drops.items():
             merged_drops[role] = merged_drops.get(role, 0) + n
+    # Organizer-level discards land in the SAME block as structured-output drops,
+    # namespaced by organizer so the two never collide. Both are work that was
+    # paid for and thrown away — a response the caller could not parse, or one it
+    # parsed and then could not apply (Mem0's empty-text entries and hallucinated
+    # ids) — and a quote that counts only the first kind under-reports the waste.
+    # `getattr(..., None) or {}` so organizers without the attribute are untouched.
+    for org in mem.organizers:
+        for reason, n in (getattr(org, "discarded", None) or {}).items():
+            key = f"{org.name}/{reason}"
+            merged_drops[key] = merged_drops.get(key, 0) + n
 
 
 def _merge_run_budgets(budgets: list[dict]) -> dict:
@@ -763,8 +848,10 @@ def main() -> None:
             "drops": combined.get("drops"),
             "timing": {"ingest_s": combined.get("ingest_s"), "total_s": combined.get("ingest_s")},
             "memory_capacity": combined.get("memory_capacity"),
+            "op_counts": combined.get("op_counts"),
             "llm_trace_file": trace_path.name,
             "memory_file": memory_path.name,
+            "op_log_file": memory_path.with_suffix(".ops.jsonl").name,
         }
         # Mark the store COMPLETE for exactly the convs just ingested so a later
         # --eval-only (or the phase scripts) can trust it — a crashed ingest never
@@ -784,6 +871,7 @@ def main() -> None:
         print(f"[done] wrote {out_path}", flush=True)
         print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
         print(f"[done] wrote {memory_path} (memory snapshot)", flush=True)
+        print(f"[done] wrote {memory_path.with_suffix('.ops.jsonl')} (evolution log)", flush=True)
         return
 
     tag = (
@@ -866,6 +954,7 @@ def main() -> None:
             "total_s": total_s,
         },
         "memory_capacity": first.get("memory_capacity"),
+        "op_counts": first.get("op_counts"),
         "run_summary": run_summary,
         "runs": [
             {
@@ -879,11 +968,13 @@ def main() -> None:
             }
             for r in runs_out
         ],
-        # five-artifact pointers (docs/14 §Artifacts): summary + records are
-        # git-committed; the heavy trace + memory snapshot stay durable on disk.
+        # artifact pointers (docs/14 §Artifacts): the summary is git-committed;
+        # the heavy trace, memory snapshot, per-question records and evolution
+        # log stay durable on disk.
         "records_file": records_name,
         "llm_trace_file": trace_path.name,
         "memory_file": memory_path.name,
+        "op_log_file": memory_path.with_suffix(".ops.jsonl").name,
     }
 
     out_path = OUT / f"{tag}.json"
@@ -892,6 +983,7 @@ def main() -> None:
     print(f"[done] wrote {OUT / records_name} ({n_records} question records)", flush=True)
     print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
     print(f"[done] wrote {memory_path} (memory snapshot)", flush=True)
+    print(f"[done] wrote {memory_path.with_suffix('.ops.jsonl')} (evolution log)", flush=True)
     print(f"[cost] ~${result['cost_usd']} ({spec.name} rates in stamp)", flush=True)
     if run_summary:
         print(f"[mean±std] {run_summary}", flush=True)

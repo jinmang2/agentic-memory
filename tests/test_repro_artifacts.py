@@ -338,11 +338,16 @@ def test_concurrent_eval_matches_sequential(tmp_path):
 # ---------------- 6) budget merge: latency is call-weighted, cost sums ---------
 
 
-def _fake_mem(summary: dict, drops: dict | None = None):
+def _fake_mem(summary: dict, drops: dict | None = None, organizers=()):
     """A stand-in exposing just what _merge_budget touches: a budget with a
-    summary() and an optional structured.drops."""
+    summary(), an optional structured.drops, and the organizer list it folds
+    per-organizer `discarded` counters out of."""
     structured = None if drops is None else SimpleNamespace(drops=drops)
-    return SimpleNamespace(budget=SimpleNamespace(summary=lambda: summary), structured=structured)
+    return SimpleNamespace(
+        budget=SimpleNamespace(summary=lambda: summary),
+        structured=structured,
+        organizers=list(organizers),
+    )
 
 
 def test_merge_budget_latency_is_call_weighted_not_last(tmp_path):
@@ -806,3 +811,123 @@ def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
     # Fix round 2: nemori must NOT inherit amem's LLM keyword-rewrite query —
     # its published read path is raw-question dense retrieval (0 extra calls).
     assert nemori_stamp["keyword_queries"] is False
+
+
+def test_mem0_config_fields_are_all_threaded():
+    """Every RunnerConfig field decided, none left to a default that would
+    silently inherit A-Mem's read protocol (the defect Track 1 fixed at 7d9b64e)."""
+    cfg = _load_configs().get_config("mem0_v0194")
+    assert cfg.memory_types == ("semantic",)
+    assert cfg.keyword_queries is False  # upstream searches the raw question
+    assert cfg.per_type_k == {"semantic": 30}  # Makefile --top_k 30, not the class default 10
+    assert cfg.role_temps["distill"]["max_tokens"] == 2000  # BaseLlmConfig default
+    assert cfg.role_temps["generate"]["temperature"] == 0.0  # harness answer call
+    assert cfg.run_ready is True
+    org = cfg.factory()[0]
+    assert type(org).__name__ == "Mem0Organizer"
+    assert org.batch_size == 2  # paper-harness shape (add.py:46)
+    assert org.top_k == 5  # upstream's hardcoded limit=5
+
+
+def test_op_log_artifact_captures_every_op_including_noop(tmp_path):
+    """The evolution log becomes a durable artifact.
+
+    Track 2's op-structure claim (ADD/UPDATE/DELETE/NOOP proportions) is not
+    measurable from the memory snapshot: the snapshot holds final items, so an
+    UPDATE is invisible, a DELETEd item is absent by construction, and a NOOP
+    leaves no trace at all. Without this dump the headline would be measured
+    from nothing.
+    """
+    from agmem.core.ops import MemoryOp, OpType
+
+    H = _load_repro()
+    mem = AgenticMemory(namespace="ops", organizers=["passthrough"], embedder=FakeEmbedder(dim=64))
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id="a",
+                    payload={"id": "a", "content": "x"},
+                ),
+                MemoryOp(op=OpType.NOOP, target_type="semantic", target_id="a", payload={}),
+            ],
+            actor="mem0",
+        )
+        out = tmp_path / "ops.jsonl"
+        with out.open("w", encoding="utf-8") as fh:
+            counts = H.dump_op_log(mem, 0, fh)
+    finally:
+        mem.close()
+
+    lines = [json.loads(ln) for ln in out.read_text(encoding="utf-8").splitlines()]
+    assert [ln["op"] for ln in lines] == ["ADD", "NOOP"]
+    assert lines[0]["conv"] == 0 and lines[0]["actor"] == "mem0" and "seq" in lines[0]
+    assert lines[0]["target_type"] == "semantic" and lines[0]["target_id"] == "a"
+    assert "t_transaction" in lines[0] and lines[0]["payload"]["content"] == "x"
+    assert counts == {"ADD:semantic": 1, "NOOP:semantic": 1}
+
+
+def test_op_log_pages_past_the_ops_since_limit(tmp_path):
+    """`ops_since` caps at `limit` rows per call (default 10_000).
+
+    A Mem0 conversation emits up to ~10 ops per decision call over ~200 adds, so
+    a single unpaged read is within one order of magnitude of that cap — and a
+    silent truncation here would understate exactly the counts the claim rests
+    on. Verified against a small explicit limit rather than by generating 10k
+    ops, so the test stays fast while still exercising the paging loop.
+    """
+    from agmem.core.ops import MemoryOp, OpType
+
+    H = _load_repro()
+    mem = AgenticMemory(namespace="ops", organizers=["passthrough"], embedder=FakeEmbedder(dim=64))
+    try:
+        mem._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type="semantic",
+                    target_id=f"i{i}",
+                    payload={"id": f"i{i}", "content": "x"},
+                )
+                for i in range(25)
+            ],
+            actor="mem0",
+        )
+        out = tmp_path / "ops.jsonl"
+        with out.open("w", encoding="utf-8") as fh:
+            counts = H.dump_op_log(mem, 0, fh, page=4)
+    finally:
+        mem.close()
+
+    assert counts == {"ADD:semantic": 25}
+    assert len(out.read_text(encoding="utf-8").splitlines()) == 25
+
+
+def test_organizer_discards_are_folded_into_the_drops_block():
+    """An organizer's `discarded` counters belong beside structured-output drops:
+    both are work that was paid for and thrown away, and a quote that ignores
+    them under-reports waste."""
+    H = _load_repro()
+    mem = AgenticMemory(namespace="d", organizers=["mem0"], embedder=FakeEmbedder(dim=64))
+    try:
+        mem.organizers[0].discarded = {"hallucinated_id": 2, "empty_text": 1}
+        merged_budget: dict = {}
+        merged_drops: dict = {}
+        H._merge_budget(merged_budget, merged_drops, mem)
+    finally:
+        mem.close()
+    assert merged_drops["mem0/hallucinated_id"] == 2
+    assert merged_drops["mem0/empty_text"] == 1
+
+
+def test_organizer_without_discarded_is_unaffected():
+    H = _load_repro()
+    mem = AgenticMemory(namespace="d", organizers=["passthrough"], embedder=FakeEmbedder(dim=64))
+    try:
+        merged_drops: dict = {}
+        H._merge_budget({}, merged_drops, mem)
+    finally:
+        mem.close()
+    assert merged_drops == {}
