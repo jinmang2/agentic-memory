@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from agmem.organizers.amem import AMemOrganizer
+from agmem.organizers.mem0 import Mem0Organizer
 from agmem.organizers.nemori import NemoriOrganizer
 
 
@@ -67,6 +68,36 @@ NEMORI_PER_TYPE_K = {"episodes": 10, "semantic": 20}
 # "vector_store"/"doc_store" kwarg AgmemConfig doesn't have.
 NEMORI_STORE = {"overrides": {"vector_store": "QdrantVectorStore", "doc_store": "PostgresDocStore"}}
 
+# Mem0 v0.1.94 threading. Every value below was read off the pinned clone
+# (~/.agmem/upstream/mem0), not off the study document.
+# temperature 0.1 / max_tokens 2000 are BaseLlmConfig's defaults
+# (mem0/configs/llms/base.py:17,19 @ v0.1.94) and both phases inherit them. Our
+# RoleConfig already defaults temperature to 0.1 but max_tokens far lower, and a
+# truncated decision response is a silent fidelity break: the response lists
+# EVERY candidate back, including the NONE rows, so it is the longest output in
+# the write path. generate 0.0 is the harness answer call
+# (evaluation/src/memzero/search.py:114 @ evaluation-archive); exp_amem_repro's
+# make_roles defaults generate to A-Mem's 0.7, so it must be set explicitly —
+# the same trap Nemori's entry documents.
+MEM0_ROLE_TEMPS = {
+    "extract": {"temperature": 0.1, "max_tokens": 2000},
+    "distill": {"temperature": 0.1, "max_tokens": 2000},
+    "generate": {"temperature": 0.0},
+}
+# The published operating point: `make run-mem0-search` passes --top_k 30 and
+# run_experiments.py:29 defaults to 30. The trap worth naming (study M0-C11):
+# MemorySearch.__init__ defaults to **10**, so anyone calling the class directly
+# instead of through the Makefile silently halves k. We pin 30 and footnote it,
+# because each arm of the 4-way table runs its own lineage-faithful read k
+# (Nemori 10/20, A-Mem 10) — symmetry across arms is not the goal, fidelity is.
+MEM0_PER_TYPE_K = {"semantic": 30}
+# Qdrant is the OSS default vector provider (mem0/vector_stores/configs.py
+# `provider` default "qdrant" @ v0.1.94); the history db is plain SQLite
+# (configs/base.py:42 history_db_path), which is already our doc-store default,
+# so only the vector slot is overridden. Same {"overrides": {...}} shape as
+# NEMORI_STORE for the same reason.
+MEM0_STORE = {"overrides": {"vector_store": "QdrantVectorStore"}}
+
 CONFIGS: dict[str, RunnerConfig] = {
     c.name: c
     for c in (
@@ -90,6 +121,26 @@ CONFIGS: dict[str, RunnerConfig] = {
             role_temps=NEMORI_ROLE_TEMPS,
             per_type_k=NEMORI_PER_TYPE_K,
             store=NEMORI_STORE,
+            keyword_queries=False,
+        ),
+        # Track 2. batch_size=2 is the PAPER-HARNESS shape, not a library
+        # default: upstream's add() batches nothing and its harness passes two
+        # messages per call (evaluation/src/memzero/add.py:46 @
+        # evaluation-archive). Mechanism lives in the organizer, policy here.
+        # keyword_queries=False because the harness searches with the RAW
+        # question — answer_question hands `question` straight to search_memory
+        # (search.py:90-96) and Mem0's read path has no query rewrite anywhere.
+        # Inheriting A-Mem's LLM keyword rewrite would add a call upstream never
+        # makes and change the retrieval protocol under test; that is exactly the
+        # defect Track 1 fixed at 7d9b64e.
+        RunnerConfig(
+            "mem0_v0194",
+            lambda: [Mem0Organizer(batch_size=2)],
+            ("semantic",),
+            run_ready=True,
+            role_temps=MEM0_ROLE_TEMPS,
+            per_type_k=MEM0_PER_TYPE_K,
+            store=MEM0_STORE,
             keyword_queries=False,
         ),
     )

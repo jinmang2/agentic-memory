@@ -74,3 +74,60 @@ def test_nemori_counting_profile(tmp_path):
     assert fake.calls.get("extract", 0) > 0
     assert fake.calls.get("distill", 0) > 0
     assert mem.structured.drops == {}
+
+
+def test_mem0_ingest_counts_two_calls_per_add(tmp_path):
+    """The structural claim under verification: exactly 2 LLM calls per add(),
+    independent of how many facts extraction returned."""
+    cfg = _load_configs().get_config("mem0_v0194")
+    mem, fake = build_counting_memory("mem0", cfg.factory, tmp_path, "count-test", cfg.memory_types)
+    msgs = [
+        "(2023) A: I moved to Berlin.",
+        "(2023) B: Nice!",
+        "(2023) A: New job too.",
+        "(2023) B: Congrats!",
+    ]
+    try:
+        for m in msgs:
+            mem.add_message(m, role="user")
+        mem.flush()
+    finally:
+        mem.close()
+    # batch_size=2 -> 4 messages = 2 adds = 2 extract + 2 distill
+    assert fake.calls["extract"] == 2
+    assert fake.calls["distill"] == 2
+    assert mem.structured.drops == {}  # canned responses are schema-valid
+
+
+def test_mem0_odd_tail_is_flushed_not_stranded(tmp_path):
+    cfg = _load_configs().get_config("mem0_v0194")
+    mem, fake = build_counting_memory("mem0", cfg.factory, tmp_path, "count-test", cfg.memory_types)
+    try:
+        for m in ["(2023) A: one.", "(2023) B: two.", "(2023) A: three."]:
+            mem.add_message(m, role="user")
+        mem.flush()
+    finally:
+        mem.close()
+    # 3 messages at batch_size=2 -> 2 adds, the second issued by flush()
+    assert fake.calls["extract"] == 2
+    assert fake.calls["distill"] == 2
+
+
+def test_mem0_canned_profile_grows_the_store_so_retrieval_keeps_branching(tmp_path):
+    """Always-ADD is what keeps counting deterministic AND realistic.
+
+    A profile that answered NONE would leave the store empty, so every later
+    decision prompt would show zero candidates — the retrieval branch would
+    never be exercised and the quote would price a shape the real run does not
+    have. Call count is unaffected either way, which is why always-ADD is safe.
+    """
+    cfg = _load_configs().get_config("mem0_v0194")
+    mem, _ = build_counting_memory("mem0", cfg.factory, tmp_path, "count-test", cfg.memory_types)
+    try:
+        for i in range(6):
+            mem.add_message(f"(2023) A: message {i}.", role="user")
+        mem.flush()
+        n = len(mem.doc_store.list_items("semantic", namespace="count-test"))
+    finally:
+        mem.close()
+    assert n == 3  # one ADD per add(), 6 messages at batch_size=2

@@ -80,11 +80,40 @@ def _nemori_canned(role: str, prompt: str) -> str:
     return "stub answer"
 
 
+def _mem0_canned(role: str, prompt: str) -> str:
+    """Schema-valid responses for the two `v0.1.94` write-path calls.
+
+    Always ADD, for the same reason nemori's profile always answers "new": it
+    keeps counting deterministic while still GROWING the store, so per-fact
+    retrieval and the decision prompt both scale the way a real run's do. Event
+    mix cannot change the call count — the decision call is unconditional and
+    batched — so this over-counts nothing and under-counts nothing at the call
+    level, which is exactly the structural claim being quoted.
+
+    Branching is on prompt substrings because ``CountingLLM`` joins every
+    message including the system one, and Mem0 is the only organizer here whose
+    first-phase prompt rides entirely in the system message (house pattern from
+    ``_nemori_canned``).
+    """
+    if role == "extract":  # FACT_RETRIEVAL_PROMPT rides in the system message
+        if "Personal Information Organizer" in prompt:
+            return '{"facts": ["A canned fact about the user."]}'
+        return '{"facts": []}'
+    if role == "distill":
+        if "smart memory manager" in prompt:
+            return (
+                '{"memory": [{"id": "0", "text": "A canned fact about the user.", "event": "ADD"}]}'
+            )
+        return '{"memory": []}'
+    return "stub answer"
+
+
 CANNED_RESPONSES: dict[str, Callable[[str, str], str]] = {
     "amem": _amem_canned,
     "nemori": _nemori_canned,
-    # "mem0" / "zep": registered by their track plans, with responses valid
-    # against each organizer's structured-output schemas (else call branching is wrong).
+    "mem0": _mem0_canned,
+    # "zep": registered by its track plan, with responses valid against the
+    # organizer's structured-output schemas (else call branching is wrong).
 }
 
 

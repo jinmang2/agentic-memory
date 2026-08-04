@@ -44,6 +44,7 @@ CONFIG_TO_CANNED: dict[str, str] = {
     "amem": "amem",
     "nemori_upstream": "nemori",
     "nemori_merge085": "nemori",
+    "mem0_v0194": "mem0",
 }
 
 
