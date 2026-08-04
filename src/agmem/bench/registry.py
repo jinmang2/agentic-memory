@@ -60,6 +60,14 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
             max_tokens_key="max_completion_tokens",
             fixed_sampling=True,
         ),
+        # Embedding models. They live in the same registry because they are
+        # priced the same way and quoted in the same table — a run that folds its
+        # embedder spend in under an `embed` role prices it through
+        # `registry_cost_usd_split({"embed": "text-embedding-3-small"})`, exactly
+        # as a split --judge-model is priced. Output rate is a hard 0.0:
+        # embeddings have no completion tokens, and pricing `embed` at a chat
+        # model's rates would overstate it 7.5x. List price verified 2026-08-04.
+        ModelSpec("text-embedding-3-small", _OPENAI, "OPENAI_API_KEY", 0.02, 0.0),
     )
 }
 

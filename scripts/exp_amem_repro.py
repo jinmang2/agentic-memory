@@ -44,6 +44,7 @@ from agmem.bench import locomo
 from agmem.bench import stamp as bench_stamp
 from agmem.bench.registry import ModelSpec, get_model, registry_cost_usd_split
 from agmem.config import AgmemConfig
+from agmem.embed.api_embedder import APIEmbedder
 from agmem.embed.st_embedder import SentenceTransformerEmbedder
 from agmem.llm.client import RoleConfig
 from agmem.stores.sqlite_doc import episode_to_dict
@@ -156,7 +157,12 @@ def dir_size_bytes(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def cost_usd(merged_budget: dict, model: str, judge_model: str | None = None) -> float:
+def cost_usd(
+    merged_budget: dict,
+    model: str,
+    judge_model: str | None = None,
+    embed_model: str | None = None,
+) -> float:
     """USD cost at `model`'s registered rates — loud KeyError on unregistered models.
 
     When `judge_model` is set and differs from `model` (a split ``--judge-model``),
@@ -164,9 +170,69 @@ def cost_usd(merged_budget: dict, model: str, judge_model: str | None = None) ->
     `model`'s — a split judge can be many times pricier per token than the model
     under test (e.g. gpt-4o-2024-08-06 output is 16.7x gpt-4o-mini's), and pricing
     it at the main model's rates silently undercounts. ``judge_model=None`` (or
-    equal to `model`) reproduces the old single-rate math exactly."""
-    role_models = {"judge": judge_model} if judge_model and judge_model != model else None
-    return registry_cost_usd_split(merged_budget, model, role_models)
+    equal to `model`) reproduces the old single-rate math exactly.
+
+    ``embed_model`` does the same for the ``embed`` role a paid embedder folds in
+    (`fold_embed_budget`). It is a much bigger multiple in the other direction —
+    text-embedding-3-small is 7.5x CHEAPER per input token than gpt-4o-mini — so
+    leaving it at the chat model's rates would overstate the embedder's share of
+    a run that exists to decide whether a hosted embedder is worth paying for.
+    """
+    role_models = {}
+    if judge_model and judge_model != model:
+        role_models["judge"] = judge_model
+    if embed_model and embed_model != model:
+        role_models["embed"] = embed_model
+    return registry_cost_usd_split(merged_budget, model, role_models or None)
+
+
+def build_embedder(name: str, client=None):
+    """The `--embedder` name resolved to an embedder instance.
+
+    A name registered in ``APIEmbedder.NATIVE_DIMS`` is a HOSTED model and gets
+    `APIEmbedder`; anything else is a sentence-transformers model id. Without
+    this split, ``--embedder text-embedding-3-small`` would be handed to
+    sentence-transformers, which would try to fetch it from HuggingFace and fail
+    with an error naming neither the real cause nor the fix.
+
+    The key is resolved here, BEFORE the run starts, so a missing credential
+    fails in the first second rather than after the ingest has spent money on
+    LLM calls. `client` is a test injection point.
+    """
+    if name not in APIEmbedder.NATIVE_DIMS:
+        return SentenceTransformerEmbedder(name)
+    spec = get_model(name)  # also asserts the model is priced before it can spend
+    return APIEmbedder(
+        model_name=name,
+        api_key=None if client is not None else resolve_api_key(spec),
+        endpoint=spec.endpoint,
+        client=client,
+    )
+
+
+def embed_model_name(embedder) -> str | None:
+    """The registry model name to price the ``embed`` role at, or None for a
+    free embedder. `APIEmbedder` is the only one whose `name` is a registry key;
+    a sentence-transformers `name` is a HuggingFace id and would raise a loud
+    KeyError in `get_model` if passed through, which is why this checks the type
+    rather than trying and catching."""
+    return embedder.name if isinstance(embedder, APIEmbedder) else None
+
+
+def fold_embed_budget(merged_budget: dict, embedder) -> None:
+    """Add a paid embedder's spend to `merged_budget` under an ``embed`` role.
+
+    No-op for the free embedders, which have no ``budget_row``. Folding into the
+    same dict rather than a parallel block means the embedder's calls appear in
+    every place a run already reports cost — summary, stamp, quote — instead of
+    being a line someone has to remember to add.
+    """
+    row = getattr(embedder, "budget_row", None)
+    if not callable(row):
+        return
+    stats = row()
+    if stats.get("calls"):
+        merged_budget["embed"] = stats
 
 
 def resolve_api_key(spec: ModelSpec) -> str:
@@ -806,7 +872,7 @@ def main() -> None:
         fixed_sampling=spec.fixed_sampling,
         judge_fixed_sampling=judge_spec.fixed_sampling if judge_spec else None,
     )
-    embedder = SentenceTransformerEmbedder(args.embedder)
+    embedder = build_embedder(args.embedder)
 
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "stores").mkdir(parents=True, exist_ok=True)
@@ -829,6 +895,10 @@ def main() -> None:
         combined = eval_conversations(
             args, embedder, roles, conv_indices, trace_path=trace_path, memory_path=memory_path
         )
+        # A paid embedder's spend joins the same budget as the LLM roles, before
+        # anything reads it — so cost_usd, the stamp and the printed total all see
+        # one number rather than each needing to remember the embedder exists.
+        fold_embed_budget(combined.setdefault("llm_budget", {}), embedder)
         summary = {
             "stamp": _stamp(
                 args,
@@ -843,7 +913,10 @@ def main() -> None:
             "per_conv": combined.get("per_conv"),
             "llm_budget": combined.get("llm_budget"),
             "cost_usd": cost_usd(
-                combined.get("llm_budget", {}), args.model, judge_model=args.judge_model
+                combined.get("llm_budget", {}),
+                args.model,
+                judge_model=args.judge_model,
+                embed_model=embed_model_name(embedder),
             ),
             "drops": combined.get("drops"),
             "timing": {"ingest_s": combined.get("ingest_s"), "total_s": combined.get("ingest_s")},
@@ -922,6 +995,10 @@ def main() -> None:
     # run re-issues the answer calls), not just run 1 — every credit is recorded.
     # Per-run budget + cost also land in each `runs[]` entry so nothing is lost.
     budget = _merge_run_budgets([r.get("llm_budget", {}) for r in runs_out])
+    # Folded once at the campaign level, not per run: the embedder instance is
+    # shared across every conv AND every --runs pass, so its counters are already
+    # the campaign total and adding them per run would multiply them by N.
+    fold_embed_budget(budget, embedder)
     merged_drops: dict = {}
     for r in runs_out:
         for role, n in (r.get("drops") or {}).items():
@@ -946,7 +1023,9 @@ def main() -> None:
         "by_category": first["by_category"],
         "per_conv": first.get("per_conv"),
         "llm_budget": budget,
-        "cost_usd": cost_usd(budget, args.model, judge_model=args.judge_model),
+        "cost_usd": cost_usd(
+            budget, args.model, judge_model=args.judge_model, embed_model=embed_model_name(embedder)
+        ),
         "drops": merged_drops,
         "timing": {
             "ingest_s": first.get("ingest_s"),
