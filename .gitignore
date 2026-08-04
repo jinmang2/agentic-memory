@@ -59,5 +59,13 @@ results/repro/*.records.jsonl
 results/repro/*.rewriteon
 results/repro/*.partial[0-9]
 
+# results/repro/aside/ is where a DISCARDED run's artifacts go instead of being
+# deleted. A run that failed its clean-ingest bar still has forensic value — it
+# shows which calls died and how far it got — and the never-delete rule covers
+# it exactly as it covers a successful run's trace. Moving them here rather than
+# `rm`-ing them is the correction to a 2026-08-04 slip where two failed
+# conversations' traces were deleted outright.
+results/repro/aside/
+
 # Internal planning docs (specs/plans/handoffs) stay local; history keeps the old ones.
 docs/_internal/
