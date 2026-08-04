@@ -651,7 +651,11 @@ def test_parallel_finalize_writes_combined_summary_and_sentinel(tmp_path, monkey
         (sd / "db.sqlite").write_text("x")
 
     args = SimpleNamespace(
-        model="gpt-4o-mini", data_dir=str(data_dir), tag_suffix="_seed1", workers=3
+        model="gpt-4o-mini",
+        data_dir=str(data_dir),
+        tag_suffix="_seed1",
+        workers=3,
+        config="amem",
     )
     out_path, sentinel, combined = p.finalize_combined(args, convs, wall_s=90.0)
 
@@ -931,3 +935,68 @@ def test_organizer_without_discarded_is_unaffected():
     finally:
         mem.close()
     assert merged_drops == {}
+
+
+def test_conv_is_done_rejects_a_conv_that_dropped_structured_output(tmp_path, monkeypatch):
+    """A finished-but-degraded ingest must not count as done.
+
+    Discovered live on 2026-08-04: under memory pressure the box started failing
+    DNS, one conversation crashed outright and another COMPLETED while losing 15
+    structured-output calls (`drops={"extract":3,"distill":12}`). The second is
+    the dangerous one — it wrote every artifact, so an existence check accepted
+    it, and its capacity (185 semantic / 84 episodes) silently entered a
+    comparison whose baseline arm has zero drops in all ten conversations. A
+    partial ingest is a wrong measurement, not a cheap one.
+    """
+    P = _load_parallel()
+    sd = tmp_path / "repro-conv3"
+    sd.mkdir()
+    (sd / "x").write_text("store")
+    monkeypatch.setattr(P.H, "OUT", tmp_path)
+
+    sp = tmp_path / f"{P._model_safe('gpt-4o-mini')}_conv3_ingest_t_c3.json"
+    clean = {"drops": {}, "llm_budget": {"extract": {"calls": 5, "errors": 0}}}
+    sp.write_text(json.dumps(clean))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is True
+
+    sp.write_text(json.dumps({**clean, "drops": {"extract": 3, "distill": 12}}))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is False
+
+    sp.write_text(json.dumps({"drops": {}, "llm_budget": {"extract": {"calls": 5, "errors": 2}}}))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is False
+
+
+def test_worker_command_passes_the_config_through():
+    """Without this the driver is A-Mem-only: every conv would silently ingest
+    with the default `amem` organizer while the caller asked for nemori."""
+    P = _load_parallel()
+    args = SimpleNamespace(
+        model="gpt-4o-mini",
+        endpoint="e",
+        embedder="text-embedding-3-small",
+        expand_links="off",
+        data_dir="/tmp/x",
+        tag_suffix="_t",
+        config="nemori_upstream",
+    )
+    cmd = P.worker_cmd(args, 3)
+    assert "--config" in cmd
+    assert cmd[cmd.index("--config") + 1] == "nemori_upstream"
+    assert cmd[cmd.index("--embedder") + 1] == "text-embedding-3-small"
+
+
+def test_artifact_names_carry_the_config_segment_like_the_harness():
+    """The orchestrator must compute the SAME filenames the harness writes.
+
+    exp_amem_repro appends a non-default --config to the model part of every
+    artifact name. An orchestrator that omitted it would look for files nobody
+    wrote: conv_is_done would answer False for conversations that were already
+    ingested, so a resume or retry would re-ingest and RE-PAY for all of them,
+    and the merge step would then fail on missing files.
+    """
+    P = _load_parallel()
+    assert P._model_safe("gpt-4o-mini") == "gpt-4o-mini"  # amem default unperturbed
+    assert P._model_safe("gpt-4o-mini", "amem") == "gpt-4o-mini"
+    assert P._model_safe("gpt-4o-mini", "nemori_upstream") == "gpt-4o-mini_nemori_upstream"
+    p = P.per_conv_summary_path("gpt-4o-mini", 3, "_e3sA", "nemori_upstream")
+    assert p.name == "gpt-4o-mini_nemori_upstream_conv3_ingest_e3sA_c3.json"

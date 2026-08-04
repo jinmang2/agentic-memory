@@ -29,13 +29,29 @@ start at 4, raise if no 429s. Defense in depth: the OpenAI SDK already retries
 and this orchestrator additionally retries a whole failed conversation up to
 ``--retries`` times (wiping its partial store first, since re-ingesting a
 populated store would duplicate notes). ``--stagger`` spreads worker startup so
-they do not all hit the API on the same tick. RAM: each worker loads torch +
-the embedder (~1 GB RSS), so peak ≈ ``workers × 1 GB``.
+they do not all hit the API on the same tick.
+
+RAM — and why ``--workers`` is not purely a rate-limit knob: a local
+sentence-transformers embedder loads torch per worker (~1 GB RSS), and a config
+whose store overrides bring up embedded engines (Nemori's Postgres + Qdrant)
+adds a server process per conversation on top. On 2026-08-04 three concurrent
+Nemori workers on a 4-core/8 GB WSL2 host drove swap to 5 GB, and the host
+started failing DNS: one conversation died outright and another finished having
+silently dropped 15 structured-output calls. Size ``--workers`` against the
+HOST, not just the rate limit, and treat the clean-ingest check in
+``conv_is_done`` as the backstop rather than the plan. A hosted ``--embedder``
+(APIEmbedder) removes the torch share but not the store-engine share.
 
 Usage (mirrors the sequential ingest, add --workers):
     uv run python scripts/repro/ingest_parallel.py \\
         --data-dir results/repro/stores/full_all_seed1 \\
         --convs all --workers 4 --tag-suffix _seed1
+
+    # a non-amem methodology (artifact names gain the config segment):
+    uv run python scripts/repro/ingest_parallel.py \\
+        --config nemori_upstream --embedder text-embedding-3-small \\
+        --data-dir results/repro/stores/nemori-armA-e3s \\
+        --convs all --workers 1 --tag-suffix _e3sA
 """
 
 from __future__ import annotations
@@ -87,9 +103,20 @@ def parse_convs(spec: str) -> list[int]:
     return sorted(out)
 
 
-def _model_safe(model: str) -> str:
-    """Match the harness's output-tag sanitization (exp_amem_repro.main)."""
-    return model.replace("/", "-").replace(":", "-")
+def _model_safe(model: str, config: str = "amem") -> str:
+    """Match the harness's output-tag sanitization AND its config segment
+    (exp_amem_repro.main): a non-default --config is appended to the model part
+    of every artifact name, while `amem` leaves names untouched.
+
+    Missing the config half is not cosmetic. Every path this orchestrator
+    computes — the completion check, the per-conv summaries it merges, the
+    combined summary it writes — would point at a filename the harness never
+    wrote. `conv_is_done` would answer False for conversations that WERE
+    ingested, so a resumed or retried run would silently re-ingest and re-pay
+    for all of them, and the merge step would then fail on files that do not
+    exist."""
+    safe = model.replace("/", "-").replace(":", "-")
+    return safe if config == "amem" else f"{safe}_{config}"
 
 
 def store_dir_for(data_dir: str, conv: int) -> Path:
@@ -98,21 +125,77 @@ def store_dir_for(data_dir: str, conv: int) -> Path:
     return Path(data_dir).expanduser() / f"repro-conv{conv}"
 
 
-def per_conv_summary_path(model: str, conv: int, tag_suffix: str) -> Path:
+def per_conv_summary_path(model: str, conv: int, tag_suffix: str, config: str = "amem") -> Path:
     """Per-conv ingest summary the worker writes (tag ``<model>_conv{i}_ingest<sfx>_c{i}``).
     Its EXISTENCE is the completion signal: the harness writes it only after the
     conv's ingest + snapshot fully finish, so a present summary ⟹ that conv's
     store is complete."""
-    return H.OUT / f"{_model_safe(model)}_conv{conv}_ingest{tag_suffix}_c{conv}.json"
+    return H.OUT / f"{_model_safe(model, config)}_conv{conv}_ingest{tag_suffix}_c{conv}.json"
 
 
-def conv_is_done(model: str, data_dir: str, conv: int, tag_suffix: str) -> bool:
-    """A conversation counts as already-ingested iff its per-conv summary exists
-    AND its store dir is non-empty — the pair rules out both a crashed worker
-    (summary missing) and a summary orphaned from its store."""
-    sp = per_conv_summary_path(model, conv, tag_suffix)
+def conv_is_done(
+    model: str, data_dir: str, conv: int, tag_suffix: str, config: str = "amem"
+) -> bool:
+    """A conversation counts as already-ingested iff its per-conv summary exists,
+    its store dir is non-empty, AND that summary reports a CLEAN ingest.
+
+    The first two rule out a crashed worker (summary missing) and a summary
+    orphaned from its store. The third rules out the failure mode that motivated
+    it, found live on 2026-08-04: under memory pressure the host began failing
+    DNS, and while one conversation crashed outright — caught by the existence
+    check — another RAN TO COMPLETION while losing 15 structured-output calls to
+    connection errors. It wrote every artifact, so it looked finished, and its
+    memory capacity then differed from a clean ingest of the same conversation
+    for a reason that had nothing to do with the variable under study.
+
+    An ingest that silently dropped work is a wrong measurement, not a cheap
+    one, so it is treated as not-done and retried on a clean store. The bar is
+    the one every conversation of the comparison baseline already meets: zero
+    drops, zero LLM errors.
+    """
+    sp = per_conv_summary_path(model, conv, tag_suffix, config)
     sd = store_dir_for(data_dir, conv)
-    return sp.exists() and sd.exists() and any(sd.rglob("*"))
+    if not (sp.exists() and sd.exists() and any(sd.rglob("*"))):
+        return False
+    try:
+        summary = json.loads(sp.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False  # unreadable/truncated summary — not done, re-ingest cleanly
+    if any((summary.get("drops") or {}).values()):
+        return False
+    return not any(s.get("errors", 0) for s in (summary.get("llm_budget") or {}).values())
+
+
+def worker_cmd(args, conv: int) -> list[str]:
+    """The subprocess command for one conversation's ingest.
+
+    Split out of ``_run_one`` so the flag list is testable without spawning
+    anything — ``--config`` in particular, whose absence made this orchestrator
+    silently A-Mem-only: every conversation would ingest with the default `amem`
+    organizer no matter which methodology the caller asked for, and the run would
+    look perfectly successful."""
+    return [
+        sys.executable,
+        str(_SCRIPTS / "exp_amem_repro.py"),
+        "--conv",
+        str(conv),
+        "--ingest-only",
+        "--no-sentinel",
+        "--config",
+        args.config,
+        "--data-dir",
+        args.data_dir,
+        "--tag-suffix",
+        f"{args.tag_suffix}_c{conv}",
+        "--model",
+        args.model,
+        "--endpoint",
+        args.endpoint,
+        "--embedder",
+        args.embedder,
+        "--expand-links",
+        args.expand_links,
+    ]
 
 
 def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
@@ -159,35 +242,18 @@ def _run_one(args, conv: int) -> tuple[int, bool, str]:
     (conv, ok, note). Skips instantly if already done; wipes a partial store
     before each (re)attempt so re-ingest is clean (locomo.ingest is not
     idempotent — re-ingesting a populated store would duplicate notes)."""
-    if conv_is_done(args.model, args.data_dir, conv, args.tag_suffix):
+    if conv_is_done(args.model, args.data_dir, conv, args.tag_suffix, args.config):
         return conv, True, "skipped (already complete)"
     sd = store_dir_for(args.data_dir, conv)
-    cmd = [
-        sys.executable,
-        str(_SCRIPTS / "exp_amem_repro.py"),
-        "--conv",
-        str(conv),
-        "--ingest-only",
-        "--no-sentinel",
-        "--data-dir",
-        args.data_dir,
-        "--tag-suffix",
-        f"{args.tag_suffix}_c{conv}",
-        "--model",
-        args.model,
-        "--endpoint",
-        args.endpoint,
-        "--embedder",
-        args.embedder,
-        "--expand-links",
-        args.expand_links,
-    ]
+    cmd = worker_cmd(args, conv)
     last = ""
     for attempt in range(1, args.retries + 2):  # 1 initial + args.retries retries
         if sd.exists():
             shutil.rmtree(sd)  # partial/crashed store -> clean slate
         proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode == 0 and conv_is_done(args.model, args.data_dir, conv, args.tag_suffix):
+        if proc.returncode == 0 and conv_is_done(
+            args.model, args.data_dir, conv, args.tag_suffix, args.config
+        ):
             note = "ok" if attempt == 1 else f"ok (attempt {attempt})"
             return conv, True, note
         last = (proc.stderr or proc.stdout or "").strip().splitlines()[-1:] or [""]
@@ -227,6 +293,11 @@ def main() -> None:
     ap.add_argument("--model", default="gpt-4o-mini")
     ap.add_argument("--endpoint", default="https://api.openai.com/v1")
     ap.add_argument("--embedder", default="all-MiniLM-L6-v2")
+    ap.add_argument(
+        "--config",
+        default="amem",
+        help="organizer config from scripts/repro/configs.py (default amem)",
+    )
     ap.add_argument("--expand-links", choices=["off", "on"], default="off")
     ap.add_argument("--tag-suffix", default="", help="e.g. _seed1 (matches the sequential path)")
     args = ap.parse_args()
@@ -285,7 +356,8 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
     ``--conv all --ingest-only`` emits, so ``--eval-only`` and the headline
     aggregator are unchanged. Returns (summary_path, sentinel_path, combined_dict)."""
     summaries = [
-        json.loads(per_conv_summary_path(args.model, c, args.tag_suffix).read_text()) for c in convs
+        json.loads(per_conv_summary_path(args.model, c, args.tag_suffix, args.config).read_text())
+        for c in convs
     ]
     merged = merge_ingest_summaries(summaries, args.model)
     sha = H.git_sha()
@@ -318,10 +390,10 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
         },
         "memory_capacity": merged["memory_capacity"],
         "per_conv_summaries": [
-            per_conv_summary_path(args.model, c, args.tag_suffix).name for c in convs
+            per_conv_summary_path(args.model, c, args.tag_suffix, args.config).name for c in convs
         ],
     }
-    out_path = H.OUT / f"{_model_safe(args.model)}_all_ingest{args.tag_suffix}.json"
+    out_path = H.OUT / f"{_model_safe(args.model, args.config)}_all_ingest{args.tag_suffix}.json"
     out_path.write_text(json.dumps(combined, indent=2, ensure_ascii=False))
     sentinel = H.write_ingest_sentinel(args.data_dir, convs, per_conv, sha)
     return out_path, sentinel, combined
