@@ -1,0 +1,5 @@
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=1 (≈1 in-flight API calls) | data-dir=results/repro/stores/nemori-armA-e3s
+[parallel-ingest] conv1: skipped (already complete)
+[parallel-ingest] conv0: skipped (already complete)
+[parallel-ingest] conv2: FAILED after 3 attempts: openai.APIConnectionError: Connection error.
+[parallel-ingest] conv3: FAILED after 3 attempts: openai.APIConnectionError: Connection error.

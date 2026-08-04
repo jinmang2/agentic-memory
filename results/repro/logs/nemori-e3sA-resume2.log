@@ -1,0 +1,8 @@
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=1 (≈1 in-flight API calls) | data-dir=results/repro/stores/nemori-armA-e3s
+[parallel-ingest] conv0: skipped (already complete)
+[parallel-ingest] conv1: skipped (already complete)
+[parallel-ingest] conv2: ok
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: FAILED after 3 attempts: openai.APITimeoutError: Request timed out.

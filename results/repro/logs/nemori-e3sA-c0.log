@@ -1,0 +1,7 @@
+[conv0] ingested 419 turns, notes persisted under results/repro/stores/nemori-armA-e3s
+[ingest-only] done (conv0); reload with --eval-only
+[done] wrote results/repro/stores/nemori-armA-e3s/.ingest_complete.json (ingest-completion sentinel)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.memory.ops.jsonl (evolution log)
