@@ -28,11 +28,28 @@ nohup.out
 # Heavy run artifacts (docs/14 §Artifacts): the full LLM I/O trace and the
 # per-item memory snapshot can be very large on full runs, and the persisted
 # stores are binary DB dirs. They are DURABLE on disk (never deleted, so nothing
-# is lost) but NOT git-committed, to avoid repo bloat. The SMALL artifacts —
-# summary `.json` and `.records.jsonl` — ARE committed and are not matched here.
+# is lost) but NOT git-committed, to avoid repo bloat. The summary `.json` — the
+# artifact every published number is read from — IS committed and is not matched
+# here.
 results/repro/*.llm-trace.jsonl
 results/repro/*.memory.jsonl
 results/repro/stores/
+
+# Per-question `.records.jsonl` joined this list on 2026-08-04. It used to be
+# committed as a "small" artifact and the eight A-Mem-campaign files still are —
+# tracked files are unaffected by a new ignore rule, and un-committing them would
+# rewrite history for no gain. But "small" stopped being true: A-Mem's are ~19MB
+# each while Track 1 Nemori's are ~46MB, and committing that track's six would
+# have taken the repo from 141MB to over 400MB with a per-track increment after
+# it. Same standing rule as the traces above — durable on disk, not in git.
+results/repro/*.records.jsonl
+
+# Set-aside copies from re-runs (`mv artifact artifact.rewriteon` before letting
+# a run overwrite it, `.partialN` for a superseded attempt). Hand-made, not
+# harness-produced; they are prior editions of the artifacts above, kept on disk
+# under the same never-delete rule.
+results/repro/*.rewriteon
+results/repro/*.partial[0-9]
 
 # Internal planning docs (specs/plans/handoffs) stay local; history keeps the old ones.
 docs/_internal/
