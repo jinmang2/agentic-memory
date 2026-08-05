@@ -1,0 +1,23 @@
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=1 (≈1 in-flight API calls) | data-dir=results/repro/stores/nemori-armB-e3s
+[parallel-ingest] conv0: ok
+[parallel-ingest] conv1: ok
+[parallel-ingest] conv2: ok (attempt 2)
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: ok
+[parallel-ingest] conv7: ok (attempt 2)
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=1 (≈1 in-flight API calls) | data-dir=results/repro/stores/nemori-armB-e3s
+[parallel-ingest] conv5: skipped (already complete)
+[parallel-ingest] conv0: skipped (already complete)
+[parallel-ingest] conv2: skipped (already complete)
+[parallel-ingest] conv4: skipped (already complete)
+[parallel-ingest] conv1: skipped (already complete)
+[parallel-ingest] conv7: skipped (already complete)
+[parallel-ingest] conv6: skipped (already complete)
+[parallel-ingest] conv3: skipped (already complete)
+[parallel-ingest] conv8: ok
+[parallel-ingest] conv9: ok
+[parallel-ingest] DONE 10 convs in 1866.8s wall (vs 10141.1s sequential compute ≈ 5.4x faster); cost $0.693429
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_nemori_merge085_all_ingest_e3sB.json (combined ingest summary)
+[done] wrote results/repro/stores/nemori-armB-e3s/.ingest_complete.json (ingest-completion sentinel)

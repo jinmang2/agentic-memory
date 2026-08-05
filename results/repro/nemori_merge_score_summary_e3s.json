@@ -1,0 +1,73 @@
+{
+ "embedder": "text-embedding-3-small",
+ "arm": "nemori_merge085 (armB)",
+ "n_candidates": 4536,
+ "median": 0.7425,
+ "mean": 0.7334,
+ "max": 0.9254,
+ "min": 0.3992,
+ "pass_0_85": 188,
+ "pass_rate_pct": 4.14,
+ "per_conv": {
+  "0": {
+   "n": 244,
+   "median": 0.7517,
+   "pass_0_85": 7,
+   "pass_rate_pct": 2.87
+  },
+  "1": {
+   "n": 186,
+   "median": 0.8027,
+   "pass_0_85": 38,
+   "pass_rate_pct": 20.43
+  },
+  "2": {
+   "n": 855,
+   "median": 0.7397,
+   "pass_0_85": 25,
+   "pass_rate_pct": 2.92
+  },
+  "3": {
+   "n": 402,
+   "median": 0.7656,
+   "pass_0_85": 22,
+   "pass_rate_pct": 5.47
+  },
+  "4": {
+   "n": 413,
+   "median": 0.7186,
+   "pass_0_85": 6,
+   "pass_rate_pct": 1.45
+  },
+  "5": {
+   "n": 376,
+   "median": 0.7702,
+   "pass_0_85": 39,
+   "pass_rate_pct": 10.37
+  },
+  "6": {
+   "n": 507,
+   "median": 0.6945,
+   "pass_0_85": 10,
+   "pass_rate_pct": 1.97
+  },
+  "7": {
+   "n": 833,
+   "median": 0.735,
+   "pass_0_85": 12,
+   "pass_rate_pct": 1.44
+  },
+  "8": {
+   "n": 333,
+   "median": 0.7402,
+   "pass_0_85": 11,
+   "pass_rate_pct": 3.3
+  },
+  "9": {
+   "n": 387,
+   "median": 0.7704,
+   "pass_0_85": 18,
+   "pass_rate_pct": 4.65
+  }
+ }
+}

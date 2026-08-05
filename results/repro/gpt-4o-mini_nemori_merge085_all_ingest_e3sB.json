@@ -1,0 +1,185 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "4e8b7ede8aee2e40233ce1a394a3fcf1c4968519",
+    "model": "gpt-4o-mini",
+    "judge": "wujiang",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-05T10:05:29+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": {
+      "episodes": 10,
+      "semantic": 20
+    },
+    "eval_mode": "wujiang",
+    "temps": {
+      "extract": {
+        "temperature": 0.2,
+        "max_tokens": 4096
+      },
+      "distill": {
+        "temperature": 0.7,
+        "max_tokens": 2000
+      },
+      "generate": {
+        "temperature": 0.0
+      }
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "workers": 1,
+    "n_questions": null,
+    "config": "nemori_merge085",
+    "memory_types": [
+      "episodes",
+      "semantic"
+    ],
+    "keyword_queries": false,
+    "eval_only": false,
+    "git_sha": "4e8b7ede8aee2e40233ce1a394a3fcf1c4968519",
+    "utc_started": "2026-08-05T00:53:39.262972+00:00",
+    "utc_finished": "2026-08-05T01:05:29.414146+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
+    "parallel_ingest": {
+      "workers": 1,
+      "convs": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "wall_s": 1866.8
+    }
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 0,
+      "n_turns": 419
+    },
+    {
+      "conv": 1,
+      "n_turns": 369
+    },
+    {
+      "conv": 2,
+      "n_turns": 663
+    },
+    {
+      "conv": 3,
+      "n_turns": 629
+    },
+    {
+      "conv": 4,
+      "n_turns": 680
+    },
+    {
+      "conv": 5,
+      "n_turns": 675
+    },
+    {
+      "conv": 6,
+      "n_turns": 689
+    },
+    {
+      "conv": 7,
+      "n_turns": 681
+    },
+    {
+      "conv": 8,
+      "n_turns": 509
+    },
+    {
+      "conv": 9,
+      "n_turns": 568
+    }
+  ],
+  "llm_budget": {
+    "extract/segment": {
+      "calls": 290,
+      "tokens_in": 403628,
+      "tokens_out": 33143,
+      "errors": 0,
+      "latency_ms_total": 612165.8,
+      "latency_ms_avg": 2110.9
+    },
+    "distill/narrate": {
+      "calls": 785,
+      "tokens_in": 558858,
+      "tokens_out": 176716,
+      "errors": 0,
+      "latency_ms_total": 2622756.5,
+      "latency_ms_avg": 3341.1
+    },
+    "distill/predict_calibrate": {
+      "calls": 1554,
+      "tokens_in": 1064650,
+      "tokens_out": 219610,
+      "errors": 0,
+      "latency_ms_total": 3628354.8,
+      "latency_ms_avg": 2334.8
+    },
+    "distill/merge": {
+      "calls": 130,
+      "tokens_in": 65960,
+      "tokens_out": 10107,
+      "errors": 0,
+      "latency_ms_total": 204792.49999999994,
+      "latency_ms_avg": 1575.3
+    },
+    "embed": {
+      "calls": 9982,
+      "tokens_in": 771463,
+      "tokens_out": 0,
+      "errors": 0,
+      "latency_ms_total": 0.0,
+      "latency_ms_avg": 0.0
+    }
+  },
+  "cost_usd": 0.693429,
+  "drops": {},
+  "timing": {
+    "ingest_s": 10141.1,
+    "wall_s": 1866.8,
+    "total_s": 10141.1
+  },
+  "memory_capacity": {
+    "per_type": {
+      "semantic": 1745,
+      "episodes": 785
+    },
+    "total_items": 2530,
+    "memory_jsonl_bytes": 3368774,
+    "store_dir_bytes": 544164354
+  },
+  "per_conv_summaries": [
+    "gpt-4o-mini_nemori_merge085_conv0_ingest_e3sB_c0.json",
+    "gpt-4o-mini_nemori_merge085_conv1_ingest_e3sB_c1.json",
+    "gpt-4o-mini_nemori_merge085_conv2_ingest_e3sB_c2.json",
+    "gpt-4o-mini_nemori_merge085_conv3_ingest_e3sB_c3.json",
+    "gpt-4o-mini_nemori_merge085_conv4_ingest_e3sB_c4.json",
+    "gpt-4o-mini_nemori_merge085_conv5_ingest_e3sB_c5.json",
+    "gpt-4o-mini_nemori_merge085_conv6_ingest_e3sB_c6.json",
+    "gpt-4o-mini_nemori_merge085_conv7_ingest_e3sB_c7.json",
+    "gpt-4o-mini_nemori_merge085_conv8_ingest_e3sB_c8.json",
+    "gpt-4o-mini_nemori_merge085_conv9_ingest_e3sB_c9.json"
+  ]
+}
