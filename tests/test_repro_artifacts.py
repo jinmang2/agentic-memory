@@ -1000,3 +1000,63 @@ def test_artifact_names_carry_the_config_segment_like_the_harness():
     assert P._model_safe("gpt-4o-mini", "nemori_upstream") == "gpt-4o-mini_nemori_upstream"
     p = P.per_conv_summary_path("gpt-4o-mini", 3, "_e3sA", "nemori_upstream")
     assert p.name == "gpt-4o-mini_nemori_upstream_conv3_ingest_e3sA_c3.json"
+
+
+def test_worker_log_path_is_per_conv_and_under_the_durable_logs_dir():
+    P = _load_parallel()
+    p = P.worker_log_path("gpt-4o-mini", 3, "_e3sB", "nemori_merge085")
+    assert p.parent.name == "logs"  # docs/14 keeps results/repro/logs/ git-tracked
+    assert p.name == "gpt-4o-mini_nemori_merge085_conv3_ingest_e3sB_c3.log"
+
+
+def test_worker_output_is_persisted_not_discarded(tmp_path, monkeypatch):
+    """The worker's stdout carries the ONLY copy of some measurements.
+
+    Nemori logs its merge-candidate similarity scores on an INFO channel
+    (`organizers/nemori/stages.py`), and that distribution is what quantifies
+    whether the 0.85 threshold is embedder-relative — the design risk the Track 1
+    precheck refused to ship without a mitigation. `subprocess.run(...,
+    capture_output=True)` collected it and then dropped everything but the last
+    line of a FAILURE, so a successful run threw the whole channel away and the
+    standing instruction to persist it was silently unmet.
+    """
+    P = _load_parallel()
+    monkeypatch.setattr(P.H, "OUT", tmp_path)
+    (tmp_path / "logs").mkdir()
+
+    captured = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = "nemori: merge candidate scores namespace=x threshold=0.85 hits=[0.91, 0.72]\n"
+        stderr = ""
+
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        return _Proc()
+
+    monkeypatch.setattr(P.subprocess, "run", fake_run)
+    monkeypatch.setattr(P, "conv_is_done", lambda *a, **k: "call" not in captured or True)
+    calls = {"n": 0}
+
+    def done(*a, **k):
+        calls["n"] += 1
+        return calls["n"] > 1  # not done before the run, done after
+
+    monkeypatch.setattr(P, "conv_is_done", done)
+    args = SimpleNamespace(
+        model="gpt-4o-mini",
+        endpoint="e",
+        embedder="text-embedding-3-small",
+        expand_links="off",
+        data_dir=str(tmp_path / "store"),
+        tag_suffix="_e3sB",
+        config="nemori_merge085",
+        retries=0,
+    )
+    (tmp_path / "store" / "repro-conv3").mkdir(parents=True)
+    conv, ok, note = P._run_one(args, 3)
+    assert ok
+    log = P.worker_log_path("gpt-4o-mini", 3, "_e3sB", "nemori_merge085")
+    assert log.exists(), "worker output must be written to a durable log"
+    assert "merge candidate scores" in log.read_text()

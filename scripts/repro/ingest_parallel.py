@@ -58,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import shutil
 import subprocess
 import sys
@@ -73,6 +74,8 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 import exp_amem_repro as H  # noqa: E402
+
+logger = logging.getLogger(__name__)
 
 
 def parse_convs(spec: str) -> list[int]:
@@ -166,6 +169,17 @@ def conv_is_done(
     return not any(s.get("errors", 0) for s in (summary.get("llm_budget") or {}).values())
 
 
+def worker_log_path(model: str, conv: int, tag_suffix: str, config: str = "amem") -> Path:
+    """Where one worker's stdout+stderr is persisted.
+
+    Under ``results/repro/logs/``, which docs/14 deliberately keeps git-tracked
+    (the .gitignore un-ignores it despite the global ``*.log``), because a run's
+    driver output is part of the durable record rather than console noise."""
+    return (
+        H.OUT / "logs" / f"{_model_safe(model, config)}_conv{conv}_ingest{tag_suffix}_c{conv}.log"
+    )
+
+
 def worker_cmd(args, conv: int) -> list[str]:
     """The subprocess command for one conversation's ingest.
 
@@ -251,6 +265,24 @@ def _run_one(args, conv: int) -> tuple[int, bool, str]:
         if sd.exists():
             shutil.rmtree(sd)  # partial/crashed store -> clean slate
         proc = subprocess.run(cmd, capture_output=True, text=True)
+        # Persist the worker's output BEFORE deciding success/failure. It is not
+        # console noise: Nemori logs its merge-candidate similarity scores on an
+        # INFO channel (organizers/nemori/stages.py), and that distribution is
+        # the only evidence for whether the 0.85 merge threshold is
+        # embedder-relative — the design risk the Track 1 precheck refused to
+        # ship without a mitigation. This used to keep the last line of a
+        # FAILURE and drop everything else, so a SUCCESSFUL conversation threw
+        # the whole channel away. Appended per attempt so a retry does not erase
+        # what the previous attempt recorded.
+        log_path = worker_log_path(args.model, conv, args.tag_suffix, args.config)
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            with log_path.open("a", encoding="utf-8") as fh:
+                fh.write(f"===== attempt {attempt} =====\n")
+                fh.write(proc.stdout or "")
+                fh.write(proc.stderr or "")
+        except OSError:
+            logger.exception("failed to persist worker log for conv%s", conv)
         if proc.returncode == 0 and conv_is_done(
             args.model, args.data_dir, conv, args.tag_suffix, args.config
         ):
