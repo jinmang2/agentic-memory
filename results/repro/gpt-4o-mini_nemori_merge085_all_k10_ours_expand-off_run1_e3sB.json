@@ -1,0 +1,628 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "ee6613a229cc7ac1a164cfce6d308b1d5f91b292",
+    "model": "gpt-4o-mini",
+    "judge": "ours",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-05T14:02:24+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": {
+      "episodes": 10,
+      "semantic": 20
+    },
+    "eval_mode": "ours",
+    "temps": {
+      "extract": {
+        "temperature": 0.2,
+        "max_tokens": 4096
+      },
+      "distill": {
+        "temperature": 0.7,
+        "max_tokens": 2000
+      },
+      "generate": {
+        "temperature": 0.0
+      }
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "workers": 4,
+    "n_questions": 1986,
+    "config": "nemori_merge085",
+    "memory_types": [
+      "episodes",
+      "semantic"
+    ],
+    "keyword_queries": false,
+    "eval_only": true,
+    "git_sha": "ee6613a229cc7ac1a164cfce6d308b1d5f91b292",
+    "utc_started": "2026-08-05T04:47:07.537999+00:00",
+    "utc_finished": "2026-08-05T05:02:23.550170+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "overall": {
+    "f1": 45.79,
+    "n": 1986,
+    "bleu1": 40.68,
+    "j_score": 65.78,
+    "j_n": 1540
+  },
+  "by_category": {
+    "adversarial": {
+      "f1": 38.69,
+      "n": 446,
+      "bleu1": 34.45
+    },
+    "multi-hop": {
+      "f1": 40.56,
+      "n": 282,
+      "bleu1": 32.53,
+      "j_score": 65.25,
+      "j_n": 282
+    },
+    "open-domain": {
+      "f1": 18.09,
+      "n": 96,
+      "bleu1": 15.3,
+      "j_score": 27.08,
+      "j_n": 96
+    },
+    "single-hop": {
+      "f1": 53.98,
+      "n": 841,
+      "bleu1": 49.18,
+      "j_score": 73.6,
+      "j_n": 841
+    },
+    "temporal": {
+      "f1": 47.06,
+      "n": 321,
+      "bleu1": 41.85,
+      "j_score": 57.32,
+      "j_n": 321
+    }
+  },
+  "per_conv": [
+    {
+      "conv": 0,
+      "overall": {
+        "f1": 43.47,
+        "n": 199,
+        "bleu1": 38.26,
+        "j_score": 63.16,
+        "j_n": 152
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 46.98,
+          "n": 47,
+          "bleu1": 43.18
+        },
+        "multi-hop": {
+          "f1": 30.7,
+          "n": 32,
+          "bleu1": 24.04,
+          "j_score": 53.12,
+          "j_n": 32
+        },
+        "open-domain": {
+          "f1": 35.13,
+          "n": 13,
+          "bleu1": 28.72,
+          "j_score": 46.15,
+          "j_n": 13
+        },
+        "single-hop": {
+          "f1": 46.17,
+          "n": 70,
+          "bleu1": 41.38,
+          "j_score": 70.0,
+          "j_n": 70
+        },
+        "temporal": {
+          "f1": 47.88,
+          "n": 37,
+          "bleu1": 41.77,
+          "j_score": 64.86,
+          "j_n": 37
+        }
+      }
+    },
+    {
+      "conv": 1,
+      "overall": {
+        "f1": 41.81,
+        "n": 105,
+        "bleu1": 37.21,
+        "j_score": 59.26,
+        "j_n": 81
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 28.5,
+          "n": 24,
+          "bleu1": 23.45
+        },
+        "multi-hop": {
+          "f1": 49.27,
+          "n": 11,
+          "bleu1": 40.58,
+          "j_score": 63.64,
+          "j_n": 11
+        },
+        "single-hop": {
+          "f1": 41.46,
+          "n": 44,
+          "bleu1": 37.14,
+          "j_score": 61.36,
+          "j_n": 44
+        },
+        "temporal": {
+          "f1": 51.54,
+          "n": 26,
+          "bleu1": 48.6,
+          "j_score": 53.85,
+          "j_n": 26
+        }
+      }
+    },
+    {
+      "conv": 2,
+      "overall": {
+        "f1": 49.13,
+        "n": 193,
+        "bleu1": 44.25,
+        "j_score": 69.08,
+        "j_n": 152
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 38.14,
+          "n": 41,
+          "bleu1": 34.81
+        },
+        "multi-hop": {
+          "f1": 48.33,
+          "n": 31,
+          "bleu1": 44.53,
+          "j_score": 61.29,
+          "j_n": 31
+        },
+        "open-domain": {
+          "f1": 29.34,
+          "n": 8,
+          "bleu1": 27.65,
+          "j_score": 25.0,
+          "j_n": 8
+        },
+        "single-hop": {
+          "f1": 57.34,
+          "n": 86,
+          "bleu1": 52.0,
+          "j_score": 80.23,
+          "j_n": 86
+        },
+        "temporal": {
+          "f1": 46.44,
+          "n": 27,
+          "bleu1": 38.47,
+          "j_score": 55.56,
+          "j_n": 27
+        }
+      }
+    },
+    {
+      "conv": 3,
+      "overall": {
+        "f1": 41.02,
+        "n": 260,
+        "bleu1": 36.41,
+        "j_score": 65.33,
+        "j_n": 199
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 37.77,
+          "n": 61,
+          "bleu1": 33.77
+        },
+        "multi-hop": {
+          "f1": 27.34,
+          "n": 37,
+          "bleu1": 20.66,
+          "j_score": 54.05,
+          "j_n": 37
+        },
+        "open-domain": {
+          "f1": 0.0,
+          "n": 11,
+          "bleu1": 0.0,
+          "j_score": 9.09,
+          "j_n": 11
+        },
+        "single-hop": {
+          "f1": 53.58,
+          "n": 111,
+          "bleu1": 48.46,
+          "j_score": 75.68,
+          "j_n": 111
+        },
+        "temporal": {
+          "f1": 35.07,
+          "n": 40,
+          "bleu1": 31.6,
+          "j_score": 62.5,
+          "j_n": 40
+        }
+      }
+    },
+    {
+      "conv": 4,
+      "overall": {
+        "f1": 42.21,
+        "n": 242,
+        "bleu1": 37.58,
+        "j_score": 62.36,
+        "j_n": 178
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 36.68,
+          "n": 64,
+          "bleu1": 32.71
+        },
+        "multi-hop": {
+          "f1": 37.33,
+          "n": 31,
+          "bleu1": 27.11,
+          "j_score": 61.29,
+          "j_n": 31
+        },
+        "open-domain": {
+          "f1": 8.33,
+          "n": 14,
+          "bleu1": 5.73,
+          "j_score": 21.43,
+          "j_n": 14
+        },
+        "single-hop": {
+          "f1": 48.64,
+          "n": 107,
+          "bleu1": 44.57,
+          "j_score": 70.09,
+          "j_n": 107
+        },
+        "temporal": {
+          "f1": 53.46,
+          "n": 26,
+          "bleu1": 50.48,
+          "j_score": 53.85,
+          "j_n": 26
+        }
+      }
+    },
+    {
+      "conv": 5,
+      "overall": {
+        "f1": 49.48,
+        "n": 158,
+        "bleu1": 43.41,
+        "j_score": 68.29,
+        "j_n": 123
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 42.24,
+          "n": 35,
+          "bleu1": 37.23
+        },
+        "multi-hop": {
+          "f1": 40.47,
+          "n": 30,
+          "bleu1": 32.12,
+          "j_score": 73.33,
+          "j_n": 30
+        },
+        "open-domain": {
+          "f1": 0.0,
+          "n": 7,
+          "bleu1": 0.0,
+          "j_score": 0.0,
+          "j_n": 7
+        },
+        "single-hop": {
+          "f1": 62.23,
+          "n": 62,
+          "bleu1": 56.75,
+          "j_score": 75.81,
+          "j_n": 62
+        },
+        "temporal": {
+          "f1": 52.81,
+          "n": 24,
+          "bleu1": 44.73,
+          "j_score": 62.5,
+          "j_n": 24
+        }
+      }
+    },
+    {
+      "conv": 6,
+      "overall": {
+        "f1": 56.17,
+        "n": 190,
+        "bleu1": 52.0,
+        "j_score": 74.67,
+        "j_n": 150
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 52.05,
+          "n": 40,
+          "bleu1": 48.18
+        },
+        "multi-hop": {
+          "f1": 61.67,
+          "n": 20,
+          "bleu1": 53.56,
+          "j_score": 90.0,
+          "j_n": 20
+        },
+        "open-domain": {
+          "f1": 2.94,
+          "n": 13,
+          "bleu1": 1.37,
+          "j_score": 23.08,
+          "j_n": 13
+        },
+        "single-hop": {
+          "f1": 69.49,
+          "n": 83,
+          "bleu1": 64.96,
+          "j_score": 89.16,
+          "j_n": 83
+        },
+        "temporal": {
+          "f1": 45.62,
+          "n": 34,
+          "bleu1": 43.28,
+          "j_score": 50.0,
+          "j_n": 34
+        }
+      }
+    },
+    {
+      "conv": 7,
+      "overall": {
+        "f1": 46.9,
+        "n": 239,
+        "bleu1": 41.6,
+        "j_score": 66.49,
+        "j_n": 191
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 34.69,
+          "n": 48,
+          "bleu1": 31.69
+        },
+        "multi-hop": {
+          "f1": 47.01,
+          "n": 21,
+          "bleu1": 39.61,
+          "j_score": 66.67,
+          "j_n": 21
+        },
+        "open-domain": {
+          "f1": 25.83,
+          "n": 10,
+          "bleu1": 19.07,
+          "j_score": 30.0,
+          "j_n": 10
+        },
+        "single-hop": {
+          "f1": 55.94,
+          "n": 118,
+          "bleu1": 50.27,
+          "j_score": 72.88,
+          "j_n": 118
+        },
+        "temporal": {
+          "f1": 40.41,
+          "n": 42,
+          "bleu1": 34.92,
+          "j_score": 57.14,
+          "j_n": 42
+        }
+      }
+    },
+    {
+      "conv": 8,
+      "overall": {
+        "f1": 46.32,
+        "n": 196,
+        "bleu1": 39.31,
+        "j_score": 63.46,
+        "j_n": 156
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 34.26,
+          "n": 40,
+          "bleu1": 28.34
+        },
+        "multi-hop": {
+          "f1": 42.93,
+          "n": 37,
+          "bleu1": 30.82,
+          "j_score": 70.27,
+          "j_n": 37
+        },
+        "open-domain": {
+          "f1": 33.23,
+          "n": 13,
+          "bleu1": 29.64,
+          "j_score": 46.15,
+          "j_n": 13
+        },
+        "single-hop": {
+          "f1": 54.03,
+          "n": 73,
+          "bleu1": 49.18,
+          "j_score": 68.49,
+          "j_n": 73
+        },
+        "temporal": {
+          "f1": 52.85,
+          "n": 33,
+          "bleu1": 44.14,
+          "j_score": 51.52,
+          "j_n": 33
+        }
+      }
+    },
+    {
+      "conv": 9,
+      "overall": {
+        "f1": 42.89,
+        "n": 204,
+        "bleu1": 38.19,
+        "j_score": 63.92,
+        "j_n": 158
+      },
+      "by_category": {
+        "adversarial": {
+          "f1": 33.75,
+          "n": 46,
+          "bleu1": 28.45
+        },
+        "multi-hop": {
+          "f1": 38.23,
+          "n": 32,
+          "bleu1": 30.21,
+          "j_score": 68.75,
+          "j_n": 32
+        },
+        "open-domain": {
+          "f1": 28.57,
+          "n": 7,
+          "bleu1": 28.57,
+          "j_score": 28.57,
+          "j_n": 7
+        },
+        "single-hop": {
+          "f1": 46.93,
+          "n": 87,
+          "bleu1": 43.41,
+          "j_score": 66.67,
+          "j_n": 87
+        },
+        "temporal": {
+          "f1": 52.8,
+          "n": 32,
+          "bleu1": 48.12,
+          "j_score": 59.38,
+          "j_n": 32
+        }
+      }
+    }
+  ],
+  "llm_budget": {
+    "generate": {
+      "calls": 1986,
+      "tokens_in": 7096994,
+      "tokens_out": 12530,
+      "errors": 0,
+      "latency_ms_total": 1651913.6000000003,
+      "latency_ms_avg": 831.8
+    },
+    "judge": {
+      "calls": 1540,
+      "tokens_in": 286470,
+      "tokens_out": 10780,
+      "errors": 0,
+      "latency_ms_total": 1129075.6,
+      "latency_ms_avg": 733.2
+    },
+    "embed": {
+      "calls": 1986,
+      "tokens_in": 24069,
+      "tokens_out": 0,
+      "latency_ms_avg": 287.3,
+      "errors": 0
+    }
+  },
+  "cost_usd": 1.121987,
+  "drops": {},
+  "timing": {
+    "ingest_s": 0.0,
+    "eval_s": 908.1,
+    "total_s": 916.0
+  },
+  "memory_capacity": {
+    "per_type": {
+      "semantic": 1745,
+      "episodes": 785
+    },
+    "total_items": 2530,
+    "memory_jsonl_bytes": 3368774,
+    "store_dir_bytes": 544366521
+  },
+  "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:episodes": 763,
+    "ADD:semantic": 1745,
+    "MERGE:episodes": 22,
+    "INVALIDATE:episodes": 22
+  },
+  "run_summary": {},
+  "runs": [
+    {
+      "run": 1,
+      "overall": {
+        "f1": 45.79,
+        "n": 1986,
+        "bleu1": 40.68,
+        "j_score": 65.78,
+        "j_n": 1540
+      },
+      "run_seconds": 916.0,
+      "llm_budget": {
+        "generate": {
+          "calls": 1986,
+          "tokens_in": 7096994,
+          "tokens_out": 12530,
+          "errors": 0,
+          "latency_ms_total": 1651913.6000000003,
+          "latency_ms_avg": 831.8
+        },
+        "judge": {
+          "calls": 1540,
+          "tokens_in": 286470,
+          "tokens_out": 10780,
+          "errors": 0,
+          "latency_ms_total": 1129075.6,
+          "latency_ms_avg": 733.2
+        }
+      },
+      "cost_usd": 1.121506
+    }
+  ],
+  "records_file": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.records.jsonl",
+  "llm_trace_file": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.memory.jsonl",
+  "op_log_file": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.memory.ops.jsonl"
+}
