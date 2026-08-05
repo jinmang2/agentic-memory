@@ -1,0 +1,7 @@
+===== attempt 1 =====
+[conv0] ingested 419 turns, notes persisted under results/repro/stores/amem-e3s
+[ingest-only] done (conv0); reload with --eval-only
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest_e3s_c0.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest_e3s_c0.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest_e3s_c0.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_conv0_ingest_e3s_c0.memory.ops.jsonl (evolution log)

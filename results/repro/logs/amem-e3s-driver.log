@@ -1,0 +1,14 @@
+[parallel-ingest] 10 convs [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] | workers=2 (≈2 in-flight API calls) | data-dir=results/repro/stores/amem-e3s
+[parallel-ingest] conv1: ok
+[parallel-ingest] conv0: ok
+[parallel-ingest] conv3: ok
+[parallel-ingest] conv2: ok
+[parallel-ingest] conv4: ok
+[parallel-ingest] conv5: ok
+[parallel-ingest] conv6: ok
+[parallel-ingest] conv7: ok
+[parallel-ingest] conv8: ok
+[parallel-ingest] conv9: ok
+[parallel-ingest] DONE 10 convs in 25499.1s wall (vs 49595.7s sequential compute ≈ 1.9x faster); cost $2.814497
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_all_ingest_e3s.json (combined ingest summary)
+[done] wrote results/repro/stores/amem-e3s/.ingest_complete.json (ingest-completion sentinel)

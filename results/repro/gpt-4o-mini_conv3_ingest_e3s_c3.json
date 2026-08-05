@@ -1,0 +1,100 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "2becf90c7efe8e3c3c58545f24c32894693dd21e",
+    "model": "gpt-4o-mini",
+    "judge": "wujiang",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-05T16:14:20+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": 10,
+    "eval_mode": "wujiang",
+    "temps": {
+      "write": 0.7,
+      "generate": 0.7,
+      "cat5": 0.5
+    },
+    "expand_links": "off",
+    "conv": "3",
+    "workers": 1,
+    "n_questions": null,
+    "config": "amem",
+    "memory_types": [
+      "notes"
+    ],
+    "keyword_queries": true,
+    "eval_only": false,
+    "git_sha": "2becf90c7efe8e3c3c58545f24c32894693dd21e",
+    "utc_started": "2026-08-05T06:00:36.110100+00:00",
+    "utc_finished": "2026-08-05T07:14:20.416010+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 3,
+      "n_turns": 629
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 629,
+      "tokens_in": 92024,
+      "tokens_out": 36670,
+      "errors": 0,
+      "latency_ms_total": 868523.2,
+      "latency_ms_avg": 1380.8
+    },
+    "distill": {
+      "calls": 628,
+      "tokens_in": 685011,
+      "tokens_out": 167452,
+      "errors": 0,
+      "latency_ms_total": 2542834.8,
+      "latency_ms_avg": 4049.1
+    },
+    "embed": {
+      "calls": 3423,
+      "tokens_in": 258837,
+      "tokens_out": 0,
+      "latency_ms_avg": 283.1,
+      "errors": 0
+    }
+  },
+  "cost_usd": 0.244205,
+  "drops": {},
+  "timing": {
+    "ingest_s": 4424.4,
+    "total_s": 4424.4
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 629,
+      "notes": 629
+    },
+    "total_items": 1258,
+    "memory_jsonl_bytes": 1061479,
+    "store_dir_bytes": 59229968
+  },
+  "op_counts": {
+    "ADD:episodic": 629,
+    "ADD:notes": 629,
+    "LINK:notes": 628,
+    "UPDATE:notes": 1536
+  },
+  "llm_trace_file": "gpt-4o-mini_conv3_ingest_e3s_c3.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_conv3_ingest_e3s_c3.memory.jsonl",
+  "op_log_file": "gpt-4o-mini_conv3_ingest_e3s_c3.memory.ops.jsonl"
+}
