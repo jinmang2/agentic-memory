@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import logging
 import os
 import statistics
 import subprocess
@@ -147,6 +148,33 @@ def verify_ingest_sentinel(data_dir: str, conv_indices: list[int]) -> None:
             f"requested {conv_indices} (missing {missing}). Re-ingest the missing "
             f"conversations before --eval-only."
         )
+
+
+def configure_logging(level: str = "INFO") -> None:
+    """Route the library's own diagnostics to stderr at `level`.
+
+    This script configured logging NOWHERE, so Python's default WARNING root
+    level silently dropped every `logger.info` the library emits. That is not a
+    cosmetic loss: Nemori logs each merge candidate's raw similarity score at
+    INFO *before* the 0.85 floor is applied (`organizers/nemori/stages.py`), and
+    that distribution is the only evidence for whether the floor — tuned upstream
+    against `gemini-embedding-001` — is a silent discard on a different embedder.
+    The call site's own comment asserts "a run at the library's default logging
+    config captures this at INFO"; it did not, and a run could finish looking
+    perfectly successful having recorded none of it.
+
+    Scoped to the ``agmem`` logger rather than the root: root-level INFO would
+    bury the channel under httpx/openai per-request chatter. Idempotent, because
+    the test harness imports this module more than once per process and
+    duplicate handlers would double every line.
+    """
+    logger = logging.getLogger("agmem")
+    logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    if not any(getattr(h, "_agmem_repro", False) for h in logger.handlers):
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
+        handler._agmem_repro = True  # marker so a re-import does not stack handlers
+        logger.addHandler(handler)
 
 
 def dir_size_bytes(path: Path) -> int:
@@ -818,7 +846,14 @@ def main() -> None:
     ap.add_argument(
         "--config", default="amem", help="organizer config from scripts/repro/configs.py"
     )
+    ap.add_argument(
+        "--log-level",
+        default="INFO",
+        help="level for the agmem log channel (default INFO — Nemori's merge-candidate "
+        "scores and other write-path diagnostics ride on it; the driver persists it)",
+    )
     args = ap.parse_args()
+    configure_logging(args.log_level)
     if args.workers < 1:
         ap.error("--workers must be >= 1")
 

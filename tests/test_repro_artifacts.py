@@ -1060,3 +1060,51 @@ def test_worker_output_is_persisted_not_discarded(tmp_path, monkeypatch):
     log = P.worker_log_path("gpt-4o-mini", 3, "_e3sB", "nemori_merge085")
     assert log.exists(), "worker output must be written to a durable log"
     assert "merge candidate scores" in log.read_text()
+
+
+def test_runner_configures_the_agmem_log_channel_so_info_diagnostics_survive():
+    """A `logger.info` in the library reaches the driver's captured output.
+
+    `exp_amem_repro` configured logging NOWHERE, so Python's default WARNING
+    root level silently dropped every INFO record — including Nemori's
+    merge-candidate scores, whose call site asserts in a comment that "a run at
+    the library's default logging config captures this at INFO". It did not.
+    The scores were the only evidence for whether the 0.85 threshold is
+    embedder-relative, and a run could complete looking perfectly successful
+    while recording none of them.
+    """
+    import logging as _logging
+
+    H = _load_repro()
+    agmem_logger = _logging.getLogger("agmem")
+    prev_level, prev_handlers = agmem_logger.level, list(agmem_logger.handlers)
+    try:
+        agmem_logger.handlers.clear()
+        agmem_logger.setLevel(_logging.NOTSET)
+        H.configure_logging("INFO")
+        assert agmem_logger.level == _logging.INFO
+        assert agmem_logger.handlers, "a handler must be attached, not just a level"
+        # scoped to agmem: turning the ROOT logger to INFO would flood the
+        # captured log with httpx/openai per-request chatter
+        assert _logging.getLogger().level != _logging.INFO or prev_level == _logging.INFO
+    finally:
+        agmem_logger.handlers[:] = prev_handlers
+        agmem_logger.setLevel(prev_level)
+
+
+def test_configure_logging_is_idempotent():
+    """The runner may be imported more than once in one process (the test
+    harness does exactly that); duplicate handlers would double every line."""
+    import logging as _logging
+
+    H = _load_repro()
+    agmem_logger = _logging.getLogger("agmem")
+    prev_level, prev_handlers = agmem_logger.level, list(agmem_logger.handlers)
+    try:
+        agmem_logger.handlers.clear()
+        H.configure_logging("INFO")
+        H.configure_logging("INFO")
+        assert len(agmem_logger.handlers) == 1
+    finally:
+        agmem_logger.handlers[:] = prev_handlers
+        agmem_logger.setLevel(prev_level)
