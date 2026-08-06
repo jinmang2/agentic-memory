@@ -1,6 +1,6 @@
 # The defect ledger — what the source papers' own code does
 
-This repository reimplements nine upstream artifacts: the eight memory methodologies listed in the README plus A-MAC's admission policy. Doing that faithfully required reading each paper against its official repository line by line, and the recurring outcome was not a transcription difficulty but a factual one — **the paper and the code frequently describe different systems, and in several cases the published number is an artifact of a defect rather than of the mechanism the paper argues for.** This document is the ledger of those findings. It is not a survey of the literature and it is not a criticism of the projects involved; every one of them is serious work, and research code that drifts from its paper is the ordinary condition of the field. It is, however, the reason "be faithful to the paper" is not a well-defined target, and the reason this repo pins lineages instead.
+This repository reimplements ten upstream artifacts: the nine memory methodologies listed in the README plus A-MAC's admission policy. Doing that faithfully required reading each paper against its official repository line by line, and the recurring outcome was not a transcription difficulty but a factual one — **the paper and the code frequently describe different systems, and in several cases the published number is an artifact of a defect rather than of the mechanism the paper argues for.** This document is the ledger of those findings. It is not a survey of the literature and it is not a criticism of the projects involved; every one of them is serious work, and research code that drifts from its paper is the ordinary condition of the field. It is, however, the reason "be faithful to the paper" is not a well-defined target, and the reason this repo pins lineages instead.
 
 The evidence standard is fixed and applies to every entry below. Each claim cites the upstream `file:line` at a **pinned SHA** — the snapshot table gives the full hashes, and a proof against any other SHA proves something else. Each entry then carries a proof cell naming one of three things: a Tier-0 reproduction script under `scripts/repro/defects/`, which CI runs against the pinned snapshots on pushes to `main` and on every pull request, and which spends $0 and makes no model call; a pinning test in `tests/`; or the research document that established the finding, in which case the finding also passed the adversarial verification round described below. Findings originated in twelve audit rounds recorded under `docs/research/`; the final round ran eight parallel fresh-eyes audits that read the upstream clones directly and treated this repo's own documentation as claims to be broken rather than as evidence. Those findings then went through a verification pass whose explicit mandate was to refute them, using code-line citation and deterministic reproduction only: **96 verdicts, 94 confirmed and 2 sub-claims refuted.** The refutations were honored: both overturned sub-claims were withdrawn rather than softened, and neither survives into this ledger. Seven entries below additionally record a correction to *our own* earlier claim — A-3, B-3, B-5, B-6, C-2, C-3 and C-4 — because a ledger that only catalogues other people's errors is not an audit.
 
@@ -22,7 +22,7 @@ Every entry except C-5 — which collects short citation defects that have no si
 
 The tiers order entries by how much they cost a reader who wants to cite these systems:
 
-- **Tier A — the published number cannot be taken at face value from the released code.** This comes in two shapes: either the reported result is produced by the defect rather than by the mechanism the paper credits (A-1), or the artifact that would reproduce it does not run, or is not the path the repository ships by default (A-2, A-3).
+- **Tier A — the published number cannot be taken at face value from the released code.** This comes in three shapes: the reported result is produced by the defect rather than by the mechanism the paper credits (A-1); the artifact that would reproduce it does not run, or is not the path the repository ships by default (A-2, A-3); or the code that produced it was never released at all, because the write path runs inside a hosted service (A-4).
 - **Tier B — paper ≠ code.** The mechanism the paper describes is absent, inert, or numerically different in the code, but the effect on any specific published number is not established.
 - **Tier C — the evaluation harness itself.** Defects in the scoring and benchmark code, which move numbers for everyone who uses them, including us.
 
@@ -45,6 +45,17 @@ Every citation to a *methodology's* code in this document resolves against these
 | `reasoning-bank` | [google-research/reasoning-bank](https://github.com/google-research/reasoning-bank) | `ed80611788292ea739f1effd31f16c53823b8a0d` | Apache-2.0 |
 | `MemMachine` | [MemMachine/MemMachine](https://github.com/MemMachine/MemMachine) | `18f1211290c50ae30e9960b90bbe57d89bf68600` | Apache-2.0 |
 | `amac` | [GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents](https://github.com/GuilinDev/Adaptive_Memory_Admission_Control_LLM_Agents) | `40407aec883bf289664653406ac15a4cac1f6158` | MIT |
+| `mem0` @ tag `v0.1.94` | [mem0ai/mem0](https://github.com/mem0ai/mem0) — the paper-era OSS library | `07ddd7cb4bd67962cf9a988d7b5c3f3920fad2d4` | Apache-2.0 |
+| `mem0` @ tag `evaluation-archive` | same repository — the preserved paper harness | `931d579ba56cf6ef0c50cdb0495ce79a41d15def` | Apache-2.0 |
+
+Two traps live in that pair of Mem0 rows, and both are the kind this table exists to prevent.
+First, `evaluation-archive` is an **annotated** tag: `git rev-parse evaluation-archive` returns
+`f65142f6…`, the tag *object*, and only `git rev-parse evaluation-archive^{commit}` returns the
+`931d579b…` above. A check written without the peel compares a commit against a tag object and
+reports a mismatch on a clone that is in fact correct. Second, the repository carries two tag
+series distinguished only by a `v` prefix, and they are not the same lineage — the unprefixed
+`0.1.94` is a commit from **2024-03-05**, sixteen months before the tag we pin. Any citation of
+"Mem0 at 0.1.94" that does not show the `v` is ambiguous.
 
 The G-Memory row is not an oversight on our part: the repository carries no license of any kind, re-confirmed via the GitHub API on 2026-07-27 (`license: null`). We read it, cite it, and reimplement from it; we vendor nothing.
 
@@ -89,6 +100,27 @@ This one is inseparable from the repo-multiplicity problem. Three official A-Mem
 | **Our handling** | Documented, with both shipped operating points registered on our side as explicit configs (`memmachine` = the legacy `limit=30, expand_context=3`; `memmachine_library` = the library defaults `20 / 0`), since they are different systems and neither is "the" MemMachine. Our own earlier note claiming the retrieval-agent path was the recommended and therefore working entry point was wrong and was corrected (commit `1f4df42`). |
 | **Proof** | `scripts/repro/defects/repro_memmachine_typeerror.py`. The static half asserts both source facts in the pinned clone; the dynamic half rebuilds the exact construct with pydantic and catches the `TypeError`. |
 | **Impact** | The published numbers necessarily predate the union refactor, and the harness that would reproduce them does not run at HEAD of a 3.3k-star repository. |
+
+### A-4 · Mem0: the LoCoMo numbers were produced by a closed hosted service, not by the released library
+
+*(The Mem0 study files this as **M0-C1**; it is A-4 here because this ledger numbers by tier.)*
+
+| | |
+|---|---|
+| **Paper claim** | arXiv:2504.19413 reports Mem0's LoCoMo results as the output of the evaluation harness shipped with the paper. |
+| **Official code** | That harness's ingest entry point constructs `MemoryClient(api_key=…, org_id=…, project_id=…)` (`evaluation/src/memzero/add.py:47-51` @ `evaluation-archive`) and calls `self.mem0_client.add(message, user_id=…, version="v2", …)` (`:69-71`); the search side is the same client (`evaluation/src/memzero/search.py:20-24`). `MemoryClient` is a pure HTTP client — `self.host = host or "https://api.mem0.ai"` (`mem0/client/main.py:117`), `self.client.post("/v3/memories/add/", json=payload)` (`:217`) — with no extraction or update logic on the client side at all. **The write path that produced the published table is server-side and not released.** The repository's own `evaluation/README.md:3,6` identifies this harness as the paper's code and carries its BibTeX, so the identification is upstream's, not ours. The current benchmarks repository does not close the gap: `results/` holds LoCoMo results only under `results/platform/`, and `results/oss/` contains LongMemEval files and **no LoCoMo at all**. |
+| **Our handling** | We port the paper-era OSS two-phase write (`v0.1.94`) and compare **structure**, never claiming to reproduce the published value. The port's own deviations are declared at the code site (`src/agmem/organizers/mem0/organizer.py`): one store per conversation rather than upstream's two per speaker, and `k = 30` at read time. The comparison table carries the closed-write-path footnote as a hard requirement. |
+| **Proof** | `docs/research/mem0.md` §① (static read of the pinned clone, every claim `file:line`), plus this track's own run artifacts under `results/repro/` — see [`18-locomo-4way.md`](18-locomo-4way.md). No Tier-0 script: the finding is a lineage argument across two files, which the ledger's evidence standard admits as "the research document plus its verification verdict" rather than as a runnable assertion about a value. |
+| **Measured** | Our port of the OSS structure scores **J 31.82 / F1 24.71** on LoCoMo 10conv under this repo's harness at `text-embedding-3-small`, against A-Mem 59.87 and Nemori 65.78-67.60 measured identically. The deficit decomposes: Mem0 abstained on **55.6%** of judged questions versus 19.5-26.9% for the other arms, and was correct on 71.7% of the ones it did answer. Retrieval returned a full k=30 on all 1,986 questions and was never empty, so this is a property of the write path's output granularity — an atomic fact averaging 46.0 characters across all 5,427 of them — not a retrieval failure. |
+| **Impact** | The most-cited number for the most-starred system in this comparison cannot be checked against any released code. This is not a claim that the number is wrong; it is a claim that **no one outside the vendor can verify it**, which is a different and more durable problem. Our row is not evidence against the published value either — it measures a different write path, and says so. |
+
+Two further hazards travel with this entry. The first is a false-corroboration trap: an independent
+re-measurement reporting **32.4%** against a Mem0 vendor claim of 93.4% circulates in this area, and
+our 31.82 is numerically adjacent to it — but that re-measurement is **LongMemEval** and ours is a
+LoCoMo judge accuracy, so pairing them would manufacture agreement out of unrelated experiments.
+The second is structural: the main repository's `evaluation/` is an **uninitialized submodule**
+pointing at `mem0ai/memory-benchmarks`, so a reader who clones `mem0` and opens `evaluation/` sees
+an empty directory. The lineage question this entry answers is invisible by default.
 
 ---
 
@@ -243,4 +275,4 @@ These five are findings in their own right — they generalize past this repo, a
 
 Entries here are outcomes; the process logs that produced them are the twelve fidelity rounds under `docs/research/`, and the per-entry evidence base with its impact tags is `docs/research/upstream-defect-catalog.md`. Remediation was carried out in eight per-methodology commits (`ed44610` A-MAC, `6fad7bb` G-Memory, `a3bf258` Zep, `1f4df42` MemMachine, `7ced0eb` MemoryOS, `688c959` Nemori, `3038510` A-Mem, `eba9e97` ACE/ReasoningBank), which took the suite from 388 to 441 passing tests — the added 53 being mostly pinning tests written so that a fidelity property cannot regress silently.
 
-The Tier-0 proofs in `scripts/repro/defects/` are the deterministic half of the evidence: they cost nothing, make no model calls, and either prove their claim or fail CI. They deliberately self-skip with a `SKIP:` line when their evidence is absent — an upstream clone that was not fetched, or a heavy dependency the core install omits — following the same capability-gating convention as the test suite, so that a missing prerequisite never masquerades as a passing proof. The API-measured half — ablations that quantify what these defects cost in benchmark points and dollars — is planned and not yet run; where a number would belong in this ledger, there is no number.
+The Tier-0 proofs in `scripts/repro/defects/` are the deterministic half of the evidence: they cost nothing, make no model calls, and either prove their claim or fail CI. They deliberately self-skip with a `SKIP:` line when their evidence is absent — an upstream clone that was not fetched, or a heavy dependency the core install omits — following the same capability-gating convention as the test suite, so that a missing prerequisite never masquerades as a passing proof. The API-measured half has since started arriving, and its entries carry a **Measured** row alongside the five-field schema: B-3 (Nemori's dead merge filter, across seed, model and embedder axes) and A-4 (Mem0's OSS structure under our harness). Where a number would belong and none has been paid for, there is still no number — that remains the rule, not an aspiration. Measured rows state their seed count, and a single-seed result is labeled as one.

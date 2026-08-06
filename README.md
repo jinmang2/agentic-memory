@@ -1,6 +1,6 @@
 # agmem — agentic memory, reimplemented with its lineage attached
 
-Eight agentic-memory methodologies — **A-Mem · Nemori · MemoryOS · Zep/Graphiti · G-Memory · ACE · ReasoningBank · MemMachine** — reimplemented behind one API, where *which version of the method you are running* is a first-class, pinnable, testable property.
+Nine agentic-memory methodologies — **A-Mem · Nemori · Mem0 · MemoryOS · Zep/Graphiti · G-Memory · ACE · ReasoningBank · MemMachine** — reimplemented behind one API, where *which version of the method you are running* is a first-class, pinnable, testable property.
 
 [![CI](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -24,7 +24,7 @@ Every row below was found by reading the paper against the official repository, 
 | **A-MAC** | θ\* = 0.55 with five weighted features | the weight vector appears only in the release, fit while novelty was pinned at 1.0 and recency ≈ 0 |
 | **MemMachine** | an eval harness that produced the published numbers | at the audited SHA every eval entry point raises `TypeError` before it runs |
 
-This is **not a criticism of those projects** — it is the ordinary condition of research code, and all eight are serious pieces of work. It is, however, fatal to the naive goal of "being faithful to the paper," because that target does not exist as a single point.
+This is **not a criticism of those projects** — it is the ordinary condition of research code, and all nine are serious pieces of work. It is, however, fatal to the naive goal of "being faithful to the paper," because that target does not exist as a single point.
 
 **The stance this repo takes instead: pin the lineage.** Every divergent constant names the lineage it came from, and the choice is an explicit, switchable, tested object:
 
@@ -88,7 +88,7 @@ Recurring defect classes this process surfaced — useful beyond this repo — a
 
 **Measurement is deliberately deferred.** No benchmark result is claimed on this page.
 
-LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts from earlier runs are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). But the fidelity fixes from the latest audit round changed write-path behavior in seven of the eight methodologies, so **those numbers are stale and have not been re-measured.** The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first.
+LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). The fidelity fixes from the latest audit round changed write-path behavior in seven of the methodologies, which invalidated the pre-audit numbers; **four write paths have since been re-measured post-fix on the full LoCoMo 10-conversation set under one harness and one judge — A-Mem, Nemori (both arms of the ledger's B-3 pair) and Mem0 — and are tabulated in [`docs/18-locomo-4way.md`](docs/18-locomo-4way.md).** The remaining six methodologies have no post-fix number, and LongMemEval has never been run at all (ledger C-4). The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first and an unmeasured row stays visibly empty.
 
 ---
 
@@ -144,6 +144,7 @@ tests/           441 tests, incl. fidelity pinning suites
 | Doc | What's in it |
 |---|---|
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
+| [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational four-way on LoCoMo: one harness, one judge, four write paths, with the footnotes that must travel with it |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the eight systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |

@@ -1,0 +1,176 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "4b8fb5b982fa73a060cc27fd224590e158512ecc",
+    "model": "gpt-4o-mini",
+    "judge": "ours",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-06T08:46:28+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": {
+      "semantic": 30
+    },
+    "eval_mode": "ours",
+    "temps": {
+      "extract": {
+        "temperature": 0.1,
+        "max_tokens": 2000
+      },
+      "distill": {
+        "temperature": 0.1,
+        "max_tokens": 2000
+      },
+      "generate": {
+        "temperature": 0.0
+      }
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "workers": 1,
+    "n_questions": null,
+    "config": "mem0_v0194",
+    "memory_types": [
+      "semantic"
+    ],
+    "keyword_queries": false,
+    "eval_only": false,
+    "git_sha": "4b8fb5b982fa73a060cc27fd224590e158512ecc",
+    "utc_started": "2026-08-05T23:15:36.020824+00:00",
+    "utc_finished": "2026-08-05T23:46:28.602892+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
+    "parallel_ingest": {
+      "workers": 1,
+      "convs": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "wall_s": 9.0
+    }
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 0,
+      "n_turns": 419
+    },
+    {
+      "conv": 1,
+      "n_turns": 369
+    },
+    {
+      "conv": 2,
+      "n_turns": 663
+    },
+    {
+      "conv": 3,
+      "n_turns": 629
+    },
+    {
+      "conv": 4,
+      "n_turns": 680
+    },
+    {
+      "conv": 5,
+      "n_turns": 675
+    },
+    {
+      "conv": 6,
+      "n_turns": 689
+    },
+    {
+      "conv": 7,
+      "n_turns": 681
+    },
+    {
+      "conv": 8,
+      "n_turns": 509
+    },
+    {
+      "conv": 9,
+      "n_turns": 568
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 2945,
+      "tokens_in": 2197751,
+      "tokens_out": 87760,
+      "errors": 0,
+      "latency_ms_total": 3695597.4,
+      "latency_ms_avg": 1254.9
+    },
+    "distill": {
+      "calls": 2945,
+      "tokens_in": 5076666,
+      "tokens_out": 1108734,
+      "errors": 0,
+      "latency_ms_total": 14483550.3,
+      "latency_ms_avg": 4918.0
+    },
+    "embed": {
+      "calls": 19756,
+      "tokens_in": 377088,
+      "tokens_out": 0,
+      "errors": 0,
+      "latency_ms_total": 0.0,
+      "latency_ms_avg": 0.0
+    }
+  },
+  "cost_usd": 1.865622,
+  "drops": {
+    "mem0/hallucinated_id": 184
+  },
+  "timing": {
+    "ingest_s": 24602.4,
+    "wall_s": 9.0,
+    "total_s": 24602.4
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 5882,
+      "semantic": 5427
+    },
+    "total_items": 11309,
+    "memory_jsonl_bytes": 4460477,
+    "store_dir_bytes": 183191352
+  },
+  "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:semantic": 5654,
+    "NOOP:semantic": 26209,
+    "UPDATE:semantic": 1077,
+    "DELETE:semantic": 227
+  },
+  "per_conv_summaries": [
+    "gpt-4o-mini_mem0_v0194_conv0_ingest_e3sM_c0.json",
+    "gpt-4o-mini_mem0_v0194_conv1_ingest_e3sM_c1.json",
+    "gpt-4o-mini_mem0_v0194_conv2_ingest_e3sM_c2.json",
+    "gpt-4o-mini_mem0_v0194_conv3_ingest_e3sM_c3.json",
+    "gpt-4o-mini_mem0_v0194_conv4_ingest_e3sM_c4.json",
+    "gpt-4o-mini_mem0_v0194_conv5_ingest_e3sM_c5.json",
+    "gpt-4o-mini_mem0_v0194_conv6_ingest_e3sM_c6.json",
+    "gpt-4o-mini_mem0_v0194_conv7_ingest_e3sM_c7.json",
+    "gpt-4o-mini_mem0_v0194_conv8_ingest_e3sM_c8.json",
+    "gpt-4o-mini_mem0_v0194_conv9_ingest_e3sM_c9.json"
+  ]
+}

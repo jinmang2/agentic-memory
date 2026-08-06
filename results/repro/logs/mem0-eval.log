@@ -1,0 +1,50 @@
+[conv0] 40/199
+[conv0] 80/199
+[conv0] 120/199
+[conv0] 160/199
+[conv1] 40/105
+[conv1] 80/105
+[conv2] 40/193
+[conv2] 80/193
+[conv2] 120/193
+[conv2] 160/193
+[conv3] 40/260
+[conv3] 80/260
+[conv3] 120/260
+[conv3] 160/260
+[conv3] 200/260
+[conv3] 240/260
+[conv4] 40/242
+[conv4] 80/242
+[conv4] 120/242
+[conv4] 160/242
+[conv4] 200/242
+[conv4] 240/242
+[conv5] 40/158
+[conv5] 80/158
+[conv5] 120/158
+[conv6] 40/190
+[conv6] 80/190
+[conv6] 120/190
+[conv6] 160/190
+[conv7] 40/239
+[conv7] 80/239
+[conv7] 120/239
+[conv7] 160/239
+[conv7] 200/239
+[conv8] 40/196
+[conv8] 80/196
+[conv8] 120/196
+[conv8] 160/196
+[conv9] 40/204
+[conv9] 80/204
+[conv9] 120/204
+[conv9] 160/204
+[conv9] 200/204
+[run 1/1] all overall={'f1': 24.71, 'n': 1986, 'bleu1': 21.57, 'j_score': 31.82, 'j_n': 1540}
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.records.jsonl (1986 question records)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.memory.ops.jsonl (evolution log)
+[cost] ~$0.304599 (gpt-4o-mini rates in stamp)
