@@ -591,9 +591,17 @@ def test_parallel_conv_done_needs_summary_and_nonempty_store(tmp_path, monkeypat
     assert p.conv_is_done("gpt-4o-mini", str(data_dir), 0, "_seed1")
 
 
-def _fake_conv_summary(n_turns, calls, tin, tout, cost, per_type):
-    """Shape one per-conv --ingest-only summary the way exp_amem_repro emits it."""
+def _fake_conv_summary(n_turns, calls, tin, tout, cost, per_type, op_counts=None):
+    """Shape one per-conv --ingest-only summary the way exp_amem_repro emits it.
+
+    `op_counts` is part of that shape (`combined["op_counts"] = op_counts or
+    None`) and defaults to a non-empty tally here on purpose: while this fixture
+    omitted the field, no test could notice that the parallel merge was dropping
+    it, and every orchestrated campaign wrote a combined summary claiming the
+    write path had done nothing.
+    """
     return {
+        "op_counts": op_counts if op_counts is not None else {"ADD:notes": calls},
         "stamp": {"model": "gpt-4o-mini", "embedder": "all-MiniLM-L6-v2", "conv": "0"},
         "ingest_only": True,
         "per_conv": [{"conv": 0, "n_turns": n_turns}],
@@ -671,6 +679,11 @@ def test_parallel_finalize_writes_combined_summary_and_sentinel(tmp_path, monkey
     assert sentinel.name == p.H.SENTINEL_NAME
     done = set(json.loads(sentinel.read_text())["conv_indices"])
     assert done == set(convs)
+    # the write path's own record of itself survives the merge INTO the emitted
+    # dict — summing it in `merge_ingest_summaries` is not enough if the key is
+    # then left out of the summary that actually gets written to disk.
+    assert combined["op_counts"] == {"ADD:notes": 2400}
+    assert json.loads(out_path.read_text())["op_counts"] == {"ADD:notes": 2400}
 
 
 def test_required_stamp_fields_match_the_documented_discipline():
@@ -963,6 +976,89 @@ def test_conv_is_done_rejects_a_conv_that_dropped_structured_output(tmp_path, mo
     assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is False
 
     sp.write_text(json.dumps({"drops": {}, "llm_budget": {"extract": {"calls": 5, "errors": 2}}}))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is False
+
+
+def test_merge_ingest_summaries_carries_op_counts():
+    """The parallel path must not drop the write path's own record of itself.
+
+    `finalize_combined` promises the combined summary is "byte-for-byte the pair
+    the sequential `--conv all --ingest-only` emits". The sequential path sets
+    `op_counts` (exp_amem_repro.py: `combined["op_counts"] = op_counts or None`)
+    — the per-op tally that is the ONLY artifact able to show an UPDATE, a
+    DELETE, or a NOOP, since a snapshot shows just what survived. The merge
+    summed every other block and silently omitted this one, so every campaign
+    ingested through the orchestrator wrote a combined summary reporting no
+    evolution at all, while its per-conv summaries carried the counts intact.
+
+    Found on the Mem0 Stage C ingest (2026-08-06), where `op_counts` is the
+    headline: 79.0% of 33,167 semantic decisions were NOOP. The same omission
+    had already blanked the field for the A-Mem and both Nemori arms.
+    """
+    P = _load_parallel()
+    merged = P.merge_ingest_summaries(
+        [
+            {
+                "llm_budget": {"extract": {"calls": 2, "tokens_in": 10, "tokens_out": 1}},
+                "op_counts": {"ADD:semantic": 3, "NOOP:semantic": 7},
+            },
+            {
+                "llm_budget": {"extract": {"calls": 1, "tokens_in": 5, "tokens_out": 1}},
+                "op_counts": {"NOOP:semantic": 2, "DELETE:semantic": 1},
+            },
+        ],
+        "gpt-4o-mini",
+    )
+    assert merged["op_counts"] == {"ADD:semantic": 3, "NOOP:semantic": 9, "DELETE:semantic": 1}
+
+    # an arm whose organizers log nothing collapses to None, matching the
+    # sequential path's `op_counts or None` rather than an empty dict.
+    bare = P.merge_ingest_summaries([{"llm_budget": {}}, {"llm_budget": {}}], "gpt-4o-mini")
+    assert bare["op_counts"] is None
+
+
+def test_conv_is_done_accepts_organizer_discards_but_still_rejects_transport_drops(
+    tmp_path, monkeypatch
+):
+    """An organizer's judged non-application is not lost work, and must not gate.
+
+    `_merge_budget` folds two different things into one `drops` block: the
+    structured-output layer's parse failures, keyed by ROLE, and each
+    organizer's own discards, namespaced `"{organizer}/{reason}"`. Pooling them
+    is right for cost accounting — both are calls that were paid for — but they
+    are opposite signals of run health. A role-keyed drop means the harness
+    lost a response it had already bought: the 2026-08-04 failure this gate
+    exists for. An organizer-keyed discard means the response arrived intact
+    and the organizer decided not to apply it.
+
+    For Mem0 the distinction decides whether the run is affordable at all.
+    `mem0/hallucinated_id` fires on every conversation by construction —
+    upstream maps memory ids onto integers precisely because the model invents
+    UUIDs otherwise — so gating on it marks every conversation not-done, and
+    `_run_one` then wipes the store and re-ingests up to `--retries` times
+    before reporting FAILED. The conv0 pilot measured 6 such discards, which
+    would have turned a $1.74 nine-conversation ingest into $5.22 with no
+    usable result.
+    """
+    P = _load_parallel()
+    sd = tmp_path / "repro-conv3"
+    sd.mkdir()
+    (sd / "x").write_text("store")
+    monkeypatch.setattr(P.H, "OUT", tmp_path)
+    sp = tmp_path / f"{P._model_safe('gpt-4o-mini')}_conv3_ingest_t_c3.json"
+    clean = {"drops": {}, "llm_budget": {"extract": {"calls": 5, "errors": 0}}}
+
+    # measured on the conv0 pilot (2026-08-05): a clean Mem0 ingest, 420 calls,
+    # zero LLM errors, six ids the decision step hallucinated and we refused.
+    sp.write_text(json.dumps({**clean, "drops": {"mem0/hallucinated_id": 6}}))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is True
+
+    sp.write_text(json.dumps({**clean, "drops": {"mem0/empty_text": 2}}))
+    assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is True
+
+    # a transport drop alongside organizer discards still fails the gate — the
+    # namespaced keys must not mask a role-keyed one sharing the block.
+    sp.write_text(json.dumps({**clean, "drops": {"mem0/hallucinated_id": 6, "distill": 1}}))
     assert P.conv_is_done("gpt-4o-mini", str(tmp_path), 3, "_t") is False
 
 

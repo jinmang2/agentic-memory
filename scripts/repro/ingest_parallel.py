@@ -154,7 +154,23 @@ def conv_is_done(
     An ingest that silently dropped work is a wrong measurement, not a cheap
     one, so it is treated as not-done and retried on a clean store. The bar is
     the one every conversation of the comparison baseline already meets: zero
-    drops, zero LLM errors.
+    LLM errors and zero drops OF THE KIND THAT MEAN LOST WORK.
+
+    That qualifier is load-bearing, because ``_merge_budget`` folds two unlike
+    things into one ``drops`` block. Structured-output failures are keyed by
+    ROLE (``extract``, ``distill``) and mean the harness paid for a response it
+    could not parse — the 2026-08-04 signal. Organizer discards are namespaced
+    ``"{organizer}/{reason}"`` and mean the response arrived intact and the
+    organizer judged it inapplicable. Pooling them is right for cost accounting
+    and wrong for a health gate, so only the role-keyed half gates here.
+
+    Mem0 is what forces the distinction: ``mem0/hallucinated_id`` fires on
+    every conversation by construction — upstream maps memory ids onto small
+    integers precisely because the model invents UUIDs when shown real ones —
+    so gating on it would mark every Mem0 conversation not-done, and
+    ``_run_one`` would wipe the store and re-ingest to the retry cap before
+    reporting FAILED. Measured on the conv0 pilot: six such discards in a run
+    that was otherwise perfectly clean (420 calls, zero LLM errors).
     """
     sp = per_conv_summary_path(model, conv, tag_suffix, config)
     sd = store_dir_for(data_dir, conv)
@@ -164,7 +180,7 @@ def conv_is_done(
         summary = json.loads(sp.read_text())
     except (OSError, json.JSONDecodeError):
         return False  # unreadable/truncated summary — not done, re-ingest cleanly
-    if any((summary.get("drops") or {}).values()):
+    if any(n for key, n in (summary.get("drops") or {}).items() if "/" not in key):
         return False
     return not any(s.get("errors", 0) for s in (summary.get("llm_budget") or {}).values())
 
@@ -226,6 +242,17 @@ def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
             drops[role] = drops.get(role, 0) + n
     ingest_s = round(sum((s.get("timing") or {}).get("ingest_s", 0.0) or 0.0 for s in summaries), 1)
 
+    # Per-op counts keyed "OP:target_type", summed like every other block. The
+    # snapshot in memory_capacity says what the memory ENDED as; only this says
+    # what the write path DID — an UPDATE, a DELETE and a NOOP all leave a
+    # snapshot that looks the same. `or None` mirrors the sequential path's
+    # `op_counts or None` so an arm whose organizers log nothing reads as absent
+    # rather than as a measured zero.
+    op_counts: dict[str, int] = {}
+    for s in summaries:
+        for op, n in (s.get("op_counts") or {}).items():
+            op_counts[op] = op_counts.get(op, 0) + n
+
     per_type: dict[str, int] = {}
     total_items = 0
     mem_bytes = 0
@@ -248,6 +275,7 @@ def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
         "drops": drops,
         "ingest_s": ingest_s,
         "memory_capacity": memory_capacity,
+        "op_counts": op_counts or None,
     }
 
 
@@ -421,6 +449,7 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
             "total_s": merged["ingest_s"],
         },
         "memory_capacity": merged["memory_capacity"],
+        "op_counts": merged["op_counts"],
         "per_conv_summaries": [
             per_conv_summary_path(args.model, c, args.tag_suffix, args.config).name for c in convs
         ],
