@@ -773,10 +773,21 @@ def test_amem_perhit_pins_the_cap_shape_and_leaves_other_arms_alone():
     base = cfgmod.get_config("amem")
     for field in ("memory_types", "role_temps", "per_type_k", "store", "keyword_queries"):
         assert getattr(base, field) == getattr(ph, field), field
+    # Only the arms that exist to move the cap may carry it; everything else must
+    # stay None so the runner's own --expand-links expression is byte-identical.
+    cap_arms = {"amem_perhit", "amem_rawq_perhit"}
     for name, cfg in cfgmod.CONFIGS.items():
-        if name != "amem_perhit":
+        if name in cap_arms:
+            assert (cfg.link_expansion_cap, cfg.link_expansion_per_hit) == (11, True), name
+        else:
             assert cfg.link_expansion_cap is None, name
             assert cfg.link_expansion_per_hit is False, name
+    # The 2x2 is only interpretable if each axis moves alone: the combined arm
+    # must differ from `amem` in BOTH read knobs and in nothing else.
+    combo = cfgmod.get_config("amem_rawq_perhit")
+    assert (combo.keyword_queries, combo.link_expansion_per_hit) == (False, True)
+    for field in ("memory_types", "role_temps", "per_type_k", "store"):
+        assert getattr(base, field) == getattr(combo, field), field
 
 
 def test_runner_configs_construct_and_name_arms():

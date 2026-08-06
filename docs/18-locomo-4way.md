@@ -144,10 +144,28 @@ against the weaker embedders of the paper's era — the step is not obviously wr
 **unmeasured upstream and no longer earning its cost here**. For anyone deploying A-Mem the
 actionable form is short: the rewrite is a knob, and turning it off bought +5.26 J and −1,986 calls.
 
-**This delta was measured at the global-5 cap**, i.e. against the configuration that was the
-headline row before the link-expansion fix above. The two changes have not been run together, so
-"raw question at the per-hit cap" has no number; nothing here entitles anyone to add +5.26 and
-+1.36.
+### The two read-path changes are not additive
+
+All four cells were run, so the interaction is measured rather than assumed. Same store, same judge,
+one seed each:
+
+| | global-5 cap | per-hit cap | effect of the cap |
+|---|---|---|---|
+| **keyword rewrite** (upstream) | 59.87 | **61.23** ← headline | +1.36 |
+| **raw question** | 65.13 | **65.58** | +0.45 |
+| *effect of dropping the rewrite* | +5.26 | +4.35 | |
+
+Adding the two deltas predicts 66.49; the measured value is **65.58**, an interaction of
+**−0.91**. Both changes buy the same thing — coverage — so the second one to arrive finds less
+left to buy. The abstention series shows it directly: 26.9% → 21.6% when the query is fixed, then
+only → 21.0% when the budget is also opened, with accuracy-when-answered flat at 83.0% across both.
+
+**A deployment reading, which is not the same as the fidelity reading.** The best cell is raw
+question + per-hit at 65.58, but raw question + global-5 gets 65.13 for **60% of the context**
+(1,937 vs 3,283 tokens/question, $0.6333 vs $1.0345 per eval). Paying 69% more context for +0.45 J
+is a bad trade. The headline row above is chosen for lineage fidelity, not because it is the
+configuration anyone should deploy — and the arm that best serves a deployment is the least
+faithful of the four.
 
 Read-side choices, stacked, move A-Mem across a 15-point range — worth knowing before reading any
 single A-Mem number in this repository or elsewhere:
@@ -158,7 +176,7 @@ single A-Mem number in this repository or elsewhere:
 | `text-embedding-3-small` + keyword rewrite + global-5 cap | 59.87 |
 | `text-embedding-3-small` + keyword rewrite + **per-hit cap** (**the row above**) | **61.23** |
 | `text-embedding-3-small` + raw question + global-5 cap | 65.13 |
-| `text-embedding-3-small` + raw question + per-hit cap | *not run* |
+| `text-embedding-3-small` + raw question + per-hit cap | **65.58** |
 
 ### What each write path did — the evolution log
 
@@ -256,8 +274,9 @@ Every number above resolves to a committed file under `results/repro/`:
 | arm | ingest summary | eval summary |
 |---|---|---|
 | A-Mem (headline: keyword rewrite + per-hit cap) | `gpt-4o-mini_all_ingest_e3s.json` | `gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.json` |
-| A-Mem (ablation: global-5 cap) | same ingest — one store, three read protocols | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
+| A-Mem (ablation: global-5 cap) | same ingest — one store, four read protocols | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
 | A-Mem (ablation: raw question, global-5 cap) | " | `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json` |
+| A-Mem (ablation: raw question, per-hit cap) | " | `gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.json` |
 | Nemori arm A | `gpt-4o-mini_nemori_upstream_all_ingest_e3sA.json` | `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json` |
 | Nemori arm B | `gpt-4o-mini_nemori_merge085_all_ingest_e3sB.json` | `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json` |
 | Mem0 | `gpt-4o-mini_mem0_v0194_all_ingest_e3sM.json` | `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json` |

@@ -156,6 +156,21 @@ CONFIGS: dict[str, RunnerConfig] = {
             link_expansion_cap=11,
             link_expansion_per_hit=True,
         ),
+        # Both read-path changes at once. Not a fidelity arm — it is deliberately
+        # the LEAST faithful of the four, dropping upstream's query rewrite while
+        # keeping its link budget. It exists because the docs had to say "+5.26
+        # and +1.36 were measured against different baselines, do not add them",
+        # and a stated non-additivity is worth one run to resolve. It also
+        # answers the deployment question the fidelity arms cannot: given this
+        # store, what is the best read configuration available?
+        RunnerConfig(
+            "amem_rawq_perhit",
+            lambda: [AMemOrganizer()],
+            ("notes",),
+            keyword_queries=False,
+            link_expansion_cap=11,
+            link_expansion_per_hit=True,
+        ),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:
         RunnerConfig(
             "nemori_upstream",
