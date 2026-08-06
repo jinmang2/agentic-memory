@@ -17,7 +17,11 @@ LLM이 스스로 노트를 만들고, 이웃과 연결하고, 이웃을 갱신�
 operations 없이 long-term memory 유지."
 
 핵심 통찰 3가지:
-1. **차별화는 전부 write-path에 있다.** read는 순수 dense top-k(+링크 확장), LLM 0회.
+1. **차별화는 전부 write-path에 있다.** read는 순수 dense top-k(+링크 확장) — **단 "LLM 0회"는
+   논문 서술에 한한다.** 수치를 낸 하네스는 질문마다 LLM을 한 번 더 불러 키워드를 만들고 그
+   키워드로 검색한다(`test_advanced.py:129,134`, `test_advanced_robust.py:111-112` @ 핀 SHA,
+   2026-08-06 재대조). 종전 이 줄은 논문 서술을 코드 서술처럼 적어, §6-2가 upstream 자신의
+   단계를 "우리 이탈"로 분류하는 원인이 됐다 — 정정 내역은 §6-2 참조.
 2. **메타데이터-풍부 임베딩**(식3)이 검색 품질을 견인.
 3. **링크 생성이 이득의 대부분**, evolution은 보정 — ablation이 뒷받침(§4).
 
@@ -213,9 +217,32 @@ A-MEM이고 `K`는 그 입력일 뿐이다. write가 먹는 것만 다르다.
 2. **논문 수치를 "재현"으로 인용 금지** — 단, 이유가 종전 서술과 다르다. 논문 수치는
    in-memory **순수 cosine** 경로 산출이고 우리 `amem` config도 notes dense-only이므로
    **채널 종류는 오히려 일치한다**(종전의 "read 채널이 다름"은 hybrid 오해에서 나온
-   잘못된 캐비앗). 실제 남는 차이는 두 가지다: ① 우리는 LLM `keyword_queries`로 질의를
-   재작성하고, ② 링크 확장 캡이 **per-hit이 아니라 global 5**다(`retrieval/steps.py`
-   `LinkExpansion`). 비교 시 이 둘을 명기할 것.
+   잘못된 캐비앗).
+
+   **정정 (2026-08-06) — ①은 우리 이탈이 아니었다.** 종전 이 자리는 "실제 남는 차이는 두
+   가지: ① 우리는 LLM `keyword_queries`로 질의를 재작성하고 ② 링크 확장 캡이 per-hit이 아니라
+   global 5"라고 적었다. ①은 **틀렸다.** 핀된 클론을 다시 읽으니 upstream eval 하네스가
+   `answer_question`에서 `keywords = self.generate_query_llm(question)`을 호출하고
+   (`test_advanced.py:129`, `test_advanced_robust.py:111`) 그 키워드로 검색한다
+   (`:134` / `:112`, `retrieve_memory` → `find_related_memories_raw`). 프롬프트는
+   *"Given the following question, generate several keywords, using 'cosmos' as the separator"*
+   (`test_advanced.py:96-103`). 즉 **우리 `keyword_queries=True`는 수치를 낸 경로에 충실**하고,
+   "우리가 얹었다"는 종전 서술은 §1이 논문 문장("LLM 0회")을 코드 서술로 오기억한 데서 나왔다.
+   이 프로젝트의 class-(a')(=파일은 맞게 읽었으나 그 파일이 그 수치의 경로가 아님)의 거울상 —
+   이번엔 **논문을 읽고 코드라고 적은** 경우다.
+
+   **남는 실제 차이는 ②뿐이다**: 링크 확장 캡이 per-hit이 아니라 global 5
+   (`retrieval/steps.py` `LinkExpansion`). 부수로 중복 처리도 다르다 — upstream 읽기
+   (`memory_layer.py:889-897`)는 dedup이 없어 같은 이웃을 두 번 내보내고 캡 슬롯도 두 번
+   쓰는데, 우리는 seen-set으로 건너뛴다. 그리고 upstream의 per-hit 캡은 off-by-one이라
+   hit당 **k+1**개가 실린다(`:895` `if j >= k: break`가 append **뒤**에 온다).
+   비교 시 ②를 명기할 것.
+
+   **부수 확인**: `retrieve_memory_llm`(검색 결과에서 관련 부분만 LLM으로 추리는 단계)은
+   양쪽 하네스에서 **주석 처리된 dead code**다(`test_advanced.py:137`). read 시점 LLM 콜은
+   키워드 생성 1회뿐이다.
+
+   측정: 이 키워드 재작성은 우리 하네스에서 A-Mem에 **−5.26 J**로 작용한다(원장 B-8).
    (`exp:208 AMEM_STORE=ChromaVectorStore`는 "라이브러리판 저장소 계보"이지 논문 수치
    계보가 아님 — docs/03 §5 전제 정정 대상.)
 3. **강한 baseline 중요**: passthrough(raw + hybrid BM25+dense+RRF)만으로 F1 22.85 —

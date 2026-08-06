@@ -738,14 +738,17 @@ def test_dataset_fingerprint_is_content_addressed(tmp_path):
 def test_amem_rawq_differs_from_amem_at_retrieval_only():
     """The read-protocol ablation must change the read protocol and nothing else.
 
-    `amem_rawq` exists to price one of the two deviations docs/13 §6-2 records
-    against A-Mem's own read path — the LLM keyword rewrite, which A-Mem's paper
-    says does not exist there ("read는 순수 dense top-k, LLM 0회") and which no
-    other arm of the four-way table pays. An ablation that also moved the
-    organizer, the retrieved types, the temperatures or the store would not
-    isolate it, and its delta would be uninterpretable — the exact failure mode
-    that cost Track 1 a $2.1 eval when a Nemori run silently inherited this same
-    rewrite.
+    `amem_rawq` prices a step that belongs to A-Mem, not to us: its evaluation
+    harness rewrites each question into LLM-generated keywords before searching
+    (`test_advanced.py:129,134` at the pinned SHA), which the paper's account of
+    the read path does not mention, and which no other arm of the four-way table
+    pays. `amem` therefore stays the faithful headline arm and this one measures
+    what the step costs — +5.26 J and 1,986 calls to drop it (ledger B-8).
+
+    An ablation that also moved the organizer, the retrieved types, the
+    temperatures or the store would not isolate the step, and its delta would be
+    uninterpretable — the exact failure mode that cost Track 1 a $2.1 eval when a
+    Nemori run silently inherited this same rewrite.
     """
     cfgmod = _load_configs()
     base, abl = cfgmod.get_config("amem"), cfgmod.get_config("amem_rawq")

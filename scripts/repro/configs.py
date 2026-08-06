@@ -104,18 +104,22 @@ CONFIGS: dict[str, RunnerConfig] = {
         RunnerConfig("amem", lambda: [AMemOrganizer()], ("notes",)),
         # Read-protocol ablation of the entry above, and ONLY of that: identical
         # organizer, memory_types, temperatures and store, so it evaluates the
-        # SAME ingested store and differs at retrieval alone. It exists because
-        # the LLM keyword rewrite is one of the two deviations docs/13 §6-2
-        # records against A-Mem's own read path ("read는 순수 dense top-k, LLM
-        # 0회") and instructs us to state whenever we compare — and the four-way
-        # table is that comparison. A-Mem is the only arm paying a read-side LLM
-        # call there (1,986 of them; Nemori and Mem0 pay zero), so the asymmetry
-        # was uncontrolled and its DIRECTION unmeasured: keyword replacement can
-        # help (drops stopwords, concentrates entities) or hurt (loses sentence
-        # semantics, notably on temporal questions). This arm measures it.
-        # Not a claim that raw-question is more faithful in every respect: the
-        # second deviation (global-5 link-expansion cap vs upstream's per-hit)
-        # is untouched here and needs its own change to move.
+        # SAME ingested store and differs at retrieval alone.
+        #
+        # The `amem` entry's keyword rewrite is NOT a deviation of ours — it is
+        # what upstream's evaluation harness does: `answer_question` opens with
+        # `keywords = self.generate_query_llm(question)` and searches with those
+        # keywords instead of the question (test_advanced.py:129,134, and the
+        # same in test_advanced_robust.py:111-112 @ the pinned SHA). A-Mem is
+        # therefore the only arm here paying a read-side LLM call, and that
+        # asymmetry belongs to A-Mem. `amem` stays the faithful headline arm.
+        #
+        # This arm exists to PRICE that step, which upstream never did: measured
+        # at +5.26 J and -1,986 calls for dropping it (ledger B-8). Both stay
+        # wired — a knob whose effect is measured is worth keeping addressable
+        # even if one setting is later retired. Not a fidelity claim in either
+        # direction: our one real read-path deviation is LinkExpansion's global
+        # cap of 5 where upstream caps per hit, and it is untouched by both arms.
         RunnerConfig("amem_rawq", lambda: [AMemOrganizer()], ("notes",), keyword_queries=False),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:
         RunnerConfig(
