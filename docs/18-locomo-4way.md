@@ -28,26 +28,71 @@ a published number disagree, the disagreement is documented in
 |---|---|---|---|---|---|---|---|
 | **Nemori** arm A (upstream) | **67.60** | 46.79 | 41.74 | 3,579 | 0.87 | 1.37 | **2.24** |
 | **Nemori** arm B (0.85 filter live) | 65.78 | 45.79 | 40.68 | 2,759 | 0.69 | 1.12 | **1.82** |
-| **A-Mem** | 59.87 | 41.41 | 36.51 | 11,754 | 2.81 | 0.67 | **3.48** |
+| **A-Mem** | 65.13 | 46.21 | 40.86 | 11,754 | 2.81 | 0.63 | **3.45** |
 | **Mem0** `v0.1.94` | 31.82 | 24.71 | 21.57 | 5,890 | 1.87 | 0.30 | **2.17** |
 | **Zep** | *not measured* | | | | | | |
 
+The A-Mem row reads with the **raw question** (`amem_rawq`). Every earlier campaign in this
+repository read A-Mem with an LLM keyword rewrite instead, and that choice was ours, not A-Mem's —
+see the ablation two sections below, which is why the row moved 5.26 J points and why the ranking
+between A-Mem and Nemori arm B is now a 0.65-point gap rather than a 5.91-point one.
+
 ### Read path — the arms are not given the same thing to read
 
-Each arm retrieves through its own lineage's operating point, which is deliberate (fidelity over
-symmetry, the same choice Track 1 made) and is the single most important thing to know before
-citing any row against another.
+Each arm retrieves through its own lineage's operating point — deliberate, the same choice Track 1
+made, and the single most important thing to know before citing any row against another.
 
-| arm | retrieved types | k | link expansion | query | context handed to the answerer |
-|---|---|---|---|---|---|
-| A-Mem | `notes` | 10 | on | LLM-rewritten keywords | 1,913 tok/question |
-| Nemori (both arms) | `episodes` + `semantic` | 10 + 20 | off | original question | 3,574–4,409 tok/question |
-| Mem0 | `semantic` | 30 | off | original question | **837** tok/question |
+| arm | retrieved types | k | link expansion | query | read-side LLM calls | context handed to the answerer |
+|---|---|---|---|---|---|---|
+| A-Mem | `notes` | 10 | on | original question | 0 | 1,937 tok/question |
+| Nemori (both arms) | `episodes` + `semantic` | 10 + 20 | off | original question | 0 | 3,574–4,409 tok/question |
+| Mem0 | `semantic` | 30 | off | original question | 0 | **837** tok/question |
+
+No arm now pays an LLM call to read, which is what all three papers describe. Getting there took a
+measurement — see below.
 
 Item *count* at read time is 30 for Nemori and Mem0 and 10 for A-Mem, so the spread in the last
 column is not a k difference — it is what a "memory" is in each system. Mem0's unit is an atomic
 fact averaging **46.0 characters** over all 5,427 of them (per-conversation means 43.2–48.9);
 Nemori's is a narrative episode.
+
+### The harness was costing A-Mem 5.26 J points
+
+A-Mem's paper puts zero LLM calls on the read path — retrieval is dense top-k over the notes plus a
+one-hop link expansion. Our harness nonetheless rewrote every question into keywords with an LLM
+call before searching, replacing `"When did Caroline go to the LGBTQ support group?"` with
+`"Caroline, LGBTQ, support group, when"`. That was a deviation this repository had already recorded
+(`13-amem-study.md` §6-2, which instructs that it be stated whenever we compare) but never priced,
+and A-Mem was the only arm paying it — Nemori and Mem0 have always read the raw question.
+
+Single variable, same ingested store, same judge, everything else byte-identical in the stamp:
+
+| | keyword rewrite | raw question | Δ |
+|---|---|---|---|
+| J | 59.87 | **65.13** | **+5.26** |
+| F1 | 41.41 | 46.21 | +4.80 |
+| BLEU-1 | 36.51 | 40.86 | +4.35 |
+| read-side LLM calls | 1,986 | 0 | −1,986 |
+| eval cost | $0.6704 | $0.6333 | −$0.037 |
+
+**It was paying money to score worse.** The mechanism is coverage, read-side: abstention falls
+26.9% → 21.6% while accuracy-when-answered barely moves (82.0% → 83.0%), and the retrieved sets
+genuinely differ — the top-1 hit is the same for only 65.3% of questions, mean Jaccard 0.598. Gains
+concentrate where retrieval decides the outcome (single-hop +6.30, multi-hop +6.03) and are
+smallest on open-domain (+3.12), where the answer is not in memory to be found. That is the same
+signature the embedder diagnostic produced, and for the same reason: replacing a sentence with its
+keywords throws away the sentence-level semantics a 1,536-dimension embedder can use.
+
+Both arms stay wired (`amem` and `amem_rawq` in `scripts/repro/configs.py`) — a knob whose effect is
+measured is worth keeping addressable even if one setting is later retired.
+
+Stacking this with the embedder re-base, two harness choices moved A-Mem 15.13 J points:
+
+| A-Mem configuration | J |
+|---|---|
+| `all-MiniLM-L6-v2` + keyword rewrite | 50.00 |
+| `text-embedding-3-small` + keyword rewrite | 59.87 |
+| `text-embedding-3-small` + raw question | **65.13** |
 
 ### What each write path did — the evolution log
 
@@ -115,6 +160,13 @@ context.** More memories, less memory.
    both embedders.
 4. **Read-k and link expansion differ by arm** (table above), by design. A row's cost and its
    context budget are both downstream of that choice.
+4b. **A-Mem's read path still carries one unmeasured deviation.** `13-amem-study.md` §6-2 names
+   two: the LLM keyword rewrite, now measured and removed from the headline row, and the
+   link-expansion cap, which our `LinkExpansion` applies **globally at 5** where upstream applies
+   it per hit. The second is untouched in both A-Mem rows here — it is a code change rather than a
+   flag, so it has no price yet. A-Mem's 65.13 is therefore *closer to* its own read path than any
+   earlier number in this repo, not identical to it, and this footnote is the standing instruction
+   from §6-2 being honored rather than a claim of full fidelity.
 5. **Nemori arm A vs arm B** is the ledger's B-3 pair — the same code with the dead 0.85 merge
    filter revived. Arm A is the shipped (defective) behavior. On this embedder the *defect wins* on
    quality by 1.82 J while costing 29.7% more calls, which is the reverse of what the same
@@ -125,7 +177,13 @@ context.** More memories, less memory.
    halves the per-session cost relative to the upstream harness; it also changes what each stored
    fact is "about".
 7. **One seed.** No delta in this table has been seed-replicated except Nemori's arm A/B ordering
-   on MiniLM (which replicated, and which the embedder change then reversed).
+   on MiniLM (which replicated, and which the embedder change then reversed). The A-Mem read-path
+   ablation is single-seed too; its +5.26 J is large against the ±0.35 pp per-arm seed stability
+   Track 1 measured, but that stability figure was measured on Nemori, not on A-Mem.
+8. **What the ranking is sensitive to.** Three of the four rows sit inside a 2.5-point band
+   (67.60 / 65.78 / 65.13) and two harness choices — the embedder and the read query — moved a
+   single arm by 15.13 points across this campaign. Treat the ordering among those three as
+   unresolved at this precision; the gap that *is* robust is the one to Mem0.
 
 ## Artifacts
 
@@ -133,7 +191,8 @@ Every number above resolves to a committed file under `results/repro/`:
 
 | arm | ingest summary | eval summary |
 |---|---|---|
-| A-Mem | `gpt-4o-mini_all_ingest_e3s.json` | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
+| A-Mem (headline, raw question) | `gpt-4o-mini_all_ingest_e3s.json` | `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json` |
+| A-Mem (ablation, keyword rewrite) | same ingest — one store, two read protocols | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
 | Nemori arm A | `gpt-4o-mini_nemori_upstream_all_ingest_e3sA.json` | `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json` |
 | Nemori arm B | `gpt-4o-mini_nemori_merge085_all_ingest_e3sB.json` | `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json` |
 | Mem0 | `gpt-4o-mini_mem0_v0194_all_ingest_e3sM.json` | `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json` |

@@ -735,6 +735,26 @@ def test_dataset_fingerprint_is_content_addressed(tmp_path):
     assert dataset_fingerprint(tmp_path / "missing.json") == "unknown"
 
 
+def test_amem_rawq_differs_from_amem_at_retrieval_only():
+    """The read-protocol ablation must change the read protocol and nothing else.
+
+    `amem_rawq` exists to price one of the two deviations docs/13 §6-2 records
+    against A-Mem's own read path — the LLM keyword rewrite, which A-Mem's paper
+    says does not exist there ("read는 순수 dense top-k, LLM 0회") and which no
+    other arm of the four-way table pays. An ablation that also moved the
+    organizer, the retrieved types, the temperatures or the store would not
+    isolate it, and its delta would be uninterpretable — the exact failure mode
+    that cost Track 1 a $2.1 eval when a Nemori run silently inherited this same
+    rewrite.
+    """
+    cfgmod = _load_configs()
+    base, abl = cfgmod.get_config("amem"), cfgmod.get_config("amem_rawq")
+    assert base.keyword_queries is True and abl.keyword_queries is False
+    for field in ("memory_types", "role_temps", "per_type_k", "store", "run_ready"):
+        assert getattr(base, field) == getattr(abl, field), field
+    assert type(base.factory()[0]).__name__ == type(abl.factory()[0]).__name__ == "AMemOrganizer"
+
+
 def test_runner_configs_construct_and_name_arms():
     cfgmod = _load_configs()
     CONFIGS, get_config = cfgmod.CONFIGS, cfgmod.get_config
