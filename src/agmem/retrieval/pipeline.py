@@ -40,6 +40,7 @@ class RetrievalPipeline:
         embedder: Embedder,
         reranker=None,
         link_expansion_cap: int = 5,
+        link_expansion_per_hit: bool = False,
         attach_sources_top_r: int = 2,
         graph_store=None,
         lexical_types: tuple[str, ...] = ("episodic",),
@@ -106,6 +107,7 @@ class RetrievalPipeline:
             if read_steps is not None
             else default_read_steps(
                 link_expansion_cap=link_expansion_cap,
+                link_expansion_per_hit=link_expansion_per_hit,
                 attach_sources_top_r=attach_sources_top_r,
                 graph_expansion_cap=graph_expansion_cap,
                 graph_expansion_hops=graph_expansion_hops,

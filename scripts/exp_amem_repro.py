@@ -491,7 +491,17 @@ def build_memory(
         # — both `--expand-links on` and `off` ran with LinkExpansion(cap=5) —
         # while the run tag and result filename still said `expand-off`. Results
         # stamped at or before e2e7ebe predate 3b39c7d and are unaffected.
-        link_expansion_cap=5 if args.expand_links == "on" else 0,
+        # An arm may pin the cap itself (configs.py `link_expansion_cap`); None
+        # leaves this expression exactly as it was, so every pre-existing arm is
+        # byte-identical. `--expand-links off` still wins, since a cap of 0 is
+        # how the step gets dropped and an arm asking for expansion cannot
+        # override the runner's decision not to expand at all.
+        link_expansion_cap=(
+            0
+            if args.expand_links != "on"
+            else (5 if cfg_entry.link_expansion_cap is None else cfg_entry.link_expansion_cap)
+        ),
+        link_expansion_per_hit=cfg_entry.link_expansion_per_hit,
         # Pin synchronous writes: the ingest-completion sentinel attests that the
         # ingest LOOP finished, and that only implies every note was actually
         # built+persisted if organizer writes run inline (a hard failure then
@@ -1179,6 +1189,15 @@ def _stamp(
         config=args.config,
         memory_types=list(cfg_entry.memory_types),
         keyword_queries=cfg_entry.keyword_queries,
+        # Stamped for the same reason keyword_queries is: they are read-path
+        # knobs that change what the answerer sees, and `expand_links` alone
+        # only says whether the step ran, not how much it served. Without these
+        # an `amem_perhit` artifact is indistinguishable from an `amem` one
+        # except by resolving the config NAME against a particular commit of
+        # configs.py — recoverable, but not self-describing the way the rest of
+        # the stamp is.
+        link_expansion_cap=cfg_entry.link_expansion_cap,
+        link_expansion_per_hit=cfg_entry.link_expansion_per_hit,
         eval_only=args.eval_only,
         git_sha=sha,
         utc_started=utc_started,

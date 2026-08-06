@@ -91,34 +91,57 @@ class ReadStep:
 class LinkExpansion(ReadStep):
     """A-Mem 1-hop: pull linked neighbor notes of retrieved notes.
 
-    Links are unidirectional as upstream. Cap semantics deviate: upstream caps
-    PER HIT (agiresearch k per hit — repo not retained in ~/.agmem/upstream,
-    verified 2026-07-27, not re-verifiable locally; WujiangXu k+1 via an
-    off-by-one), so eval k=10 can pull ~100 link neighbors — WujiangXu #16/#21
-    show even upstream considers this ambiguous. We use one global cap
-    (default 5); neighbors score just below their parent.
+    Links are unidirectional as upstream. Cap semantics differ by mode, and both
+    are reachable: ``per_hit=False`` (default) spends ONE global budget of
+    ``cap`` neighbors across all hits; ``per_hit=True`` gives each hit its own
+    ``cap``, which is upstream's shape.
+
+    Upstream re-read at the pinned SHA (2026-08-06, ``memory_layer.py:889-897``):
+    the neighbor loop appends first and breaks on ``if j >= k`` afterwards
+    (``:895``), so each of the k hits may contribute up to **k+1** neighbors.
+    (The earlier note here cited agiresearch for the per-hit shape and called it
+    "not re-verifiable locally"; the retained WujiangXu clone shows it directly,
+    so the claim no longer rests on a repo we do not have. WujiangXu #16/#21 show
+    even upstream considers the count ambiguous.) Neighbors score just below
+    their parent.
+
+    That per-hit cap never actually binds, which is worth knowing before reading
+    it as a limit: a note cannot hold more than 5 links, because the write path
+    retrieves only 5 neighbor candidates (upstream ``memory_layer.py:755``,
+    ours ``AMemOrganizer(top_k=5)``). Measured over a full LoCoMo store — 5,882
+    notes, 18,886 links, mean 3.21, distribution stopping dead at 5. So
+    upstream's shape means "serve every link of every hit", while our global cap
+    of 5 does bind (10 hits + 5 neighbors, saturated on every question).
 
     Ordering under the cap matches upstream since round-12 finding 3: links are
     stored in insertion order with duplicates (upstream ``links.extend``), and
     this step consumes them in stored order, so overflow selection is
     first-linked-wins. (Pre-round-12, LINK application sorted a dedup'd set —
-    lowest-id-wins.) Duplicate handling still deviates: upstream's read
-    (memory_layer.py:889-897) has no dedup, so a duplicate link serves the same
-    neighbor twice AND burns a cap slot per occurrence; our seen-set skips a
-    duplicate id before the cap check, so it is served once and burns no extra
-    budget. Keep both deviations in result caveats when comparing multi-hop."""
+    lowest-id-wins.) Duplicate handling still deviates and **cannot be fixed
+    here**: upstream's read has no dedup, so a duplicate link serves the same
+    neighbor twice AND burns a slot per occurrence, while our seen-set skips it
+    before the budget check. Reproducing that would not survive the pipeline
+    anyway — ``RetrievalPipeline._assemble`` dedups on ``(memory_type, id)``
+    before anything reaches the bundle, an invariant every methodology depends
+    on. So the duplicate half of this deviation is disclosed, not priced; only
+    the cap shape is ablatable, via ``per_hit``. Keep both in result caveats
+    when comparing multi-hop."""
 
-    def __init__(self, cap: int = 5) -> None:
+    def __init__(self, cap: int = 5, per_hit: bool = False) -> None:
         self.cap = cap
+        self.per_hit = per_hit
 
     def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
         seen = {s.item.data["id"] for s in hits}
         wanted: list[tuple[str, float]] = []
         for s in sorted(hits, key=lambda s: s.score, reverse=True):
+            taken = 0  # per-hit budget; ignored unless self.per_hit
             for linked_id in s.item.data.get("links", []):
-                if linked_id not in seen and len(wanted) < self.cap:
+                room = taken < self.cap if self.per_hit else len(wanted) < self.cap
+                if linked_id not in seen and room:
                     seen.add(linked_id)
                     wanted.append((linked_id, s.score * 0.9))
+                    taken += 1
         if not wanted:
             return hits
         by_id = dict(wanted)
@@ -959,6 +982,7 @@ class TaskGraphExpansion(ReadStep):
 
 def default_read_steps(
     link_expansion_cap: int = 5,
+    link_expansion_per_hit: bool = False,
     attach_sources_top_r: int = 2,
     graph_expansion_cap: int = 10,
     graph_expansion_hops: int = 1,
@@ -997,7 +1021,7 @@ def default_read_steps(
         "derivatives": memmachine_step,
     }
     if link_expansion_cap:
-        steps["notes"] = LinkExpansion(link_expansion_cap)
+        steps["notes"] = LinkExpansion(link_expansion_cap, link_expansion_per_hit)
     if attach_sources_top_r:
         steps["episodes"] = AttachSources(attach_sources_top_r)
     if graph_expansion_cap:

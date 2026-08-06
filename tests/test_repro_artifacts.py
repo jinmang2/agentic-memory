@@ -758,6 +758,27 @@ def test_amem_rawq_differs_from_amem_at_retrieval_only():
     assert type(base.factory()[0]).__name__ == type(abl.factory()[0]).__name__ == "AMemOrganizer"
 
 
+def test_amem_perhit_pins_the_cap_shape_and_leaves_other_arms_alone():
+    """`amem_perhit` closes A-Mem's last read-path gap; nothing else may move.
+
+    cap=11 reproduces upstream's k+1 at the eval's k=10 (`memory_layer.py:895`
+    breaks after appending). The two fields travel together — a per-hit budget of
+    5 is neither our shape nor upstream's — and every other arm must keep
+    `link_expansion_cap=None`, which is what makes the runner's own
+    `--expand-links` expression byte-identical for them.
+    """
+    cfgmod = _load_configs()
+    ph = cfgmod.get_config("amem_perhit")
+    assert (ph.link_expansion_cap, ph.link_expansion_per_hit) == (11, True)
+    base = cfgmod.get_config("amem")
+    for field in ("memory_types", "role_temps", "per_type_k", "store", "keyword_queries"):
+        assert getattr(base, field) == getattr(ph, field), field
+    for name, cfg in cfgmod.CONFIGS.items():
+        if name != "amem_perhit":
+            assert cfg.link_expansion_cap is None, name
+            assert cfg.link_expansion_per_hit is False, name
+
+
 def test_runner_configs_construct_and_name_arms():
     cfgmod = _load_configs()
     CONFIGS, get_config = cfgmod.CONFIGS, cfgmod.get_config
@@ -840,6 +861,16 @@ def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
     assert amem_stamp["k"] == 10  # unchanged from before this fix — no per_type_k on amem
     assert amem_stamp["temps"] == {"write": 0.7, "generate": 0.7, "cat5": repro.CAT5_TEMPERATURE}
     assert amem_stamp["keyword_queries"] is True  # unchanged — amem's LLM query rewrite
+    # The link-expansion knobs join the stamp for the same reason keyword_queries
+    # is there: `expand_links` records only THAT the step ran, so without these an
+    # amem_perhit artifact reads exactly like an amem one and the arm that
+    # produced a number is recoverable only by resolving the config name against
+    # a particular commit of configs.py.
+    assert amem_stamp["link_expansion_cap"] is None  # amem defers to the runner's own 5
+    assert amem_stamp["link_expansion_per_hit"] is False
+    perhit_stamp = repro._stamp(_args("amem_perhit"), spec, None, "t0", "t1", 5)
+    assert perhit_stamp["link_expansion_cap"] == 11
+    assert perhit_stamp["link_expansion_per_hit"] is True
 
     nemori_stamp = repro._stamp(_args("nemori_upstream"), spec, None, "t0", "t1", 5)
     assert nemori_stamp["k"] == {"episodes": 10, "semantic": 20}

@@ -94,6 +94,13 @@ class AgmemConfig:
     # documented deviations from upstream (A-Mem caps per hit, not globally),
     # so they must be reachable from config to be ablatable at all.
     link_expansion_cap: int = 5  # A-Mem 1-hop note-link expansion, global cap
+    # False = one budget of `link_expansion_cap` shared by all hits (our default);
+    # True = each hit gets its own, which is upstream's shape (memory_layer.py:895
+    # breaks after appending, so a hit contributes up to k+1 neighbours at search
+    # k). Exposed because the cap SHAPE is the one A-Mem read-path deviation we
+    # can still price — the no-dedup half cannot survive the pipeline's own
+    # (memory_type, id) dedup. See LinkExpansion's docstring.
+    link_expansion_per_hit: bool = False
     attach_sources_top_r: int = 2  # Nemori r: top-r episodes carry source messages
     # GraphRecall (our own entity-hit -> incident-edge expansion) is OFF by
     # default now that `bfs_types` expresses Zep's actual φ_bfs channel; it was
@@ -224,6 +231,9 @@ def load_config(path: str | Path) -> AgmemConfig:
         dense_min_score=retrieval.get("dense_min_score", defaults.dense_min_score),
         reranker_params=dict(retrieval.get("reranker_params", defaults.reranker_params)),
         link_expansion_cap=retrieval.get("link_expansion_cap", defaults.link_expansion_cap),
+        link_expansion_per_hit=retrieval.get(
+            "link_expansion_per_hit", defaults.link_expansion_per_hit
+        ),
         attach_sources_top_r=retrieval.get("attach_sources_top_r", defaults.attach_sources_top_r),
         graph_expansion_cap=retrieval.get("graph_expansion_cap", defaults.graph_expansion_cap),
         graph_expansion_hops=retrieval.get("graph_expansion_hops", defaults.graph_expansion_hops),

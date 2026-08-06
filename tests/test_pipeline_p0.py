@@ -35,6 +35,44 @@ def test_amem_one_hop_link_expansion():
         mem.close()
 
 
+def test_link_expansion_per_hit_budget_is_not_the_global_one():
+    """The cap SHAPE is A-Mem's remaining read-path deviation, so both are pinned.
+
+    Ours spends one budget across every hit; upstream gives each hit its own and
+    breaks only after appending (`memory_layer.py:895` at the pinned SHA), so a
+    hit contributes up to k+1 neighbours. With two hits each carrying two
+    exclusive neighbours and a cap of 2, the two modes are distinguishable:
+    global serves the top hit's two and starves the second, per-hit serves both
+    hits' two. If this ever passes with equal sets, the mode is not wired.
+    """
+    from agmem.retrieval.steps import LinkExpansion, ReadContext
+
+    mem = make_mem()
+    try:
+        put_indexed(mem, "h1", "notes", {"content": "paris museums", "links": ["a1", "a2"]})
+        put_indexed(mem, "h2", "notes", {"content": "paris museums tour", "links": ["b1", "b2"]})
+        for nid in ("a1", "a2", "b1", "b2"):
+            put_indexed(mem, nid, "notes", {"content": f"neighbour {nid}", "links": []})
+        ctx = ReadContext(doc_store=mem.doc_store, namespace="t", vector_store=mem.vector_store)
+
+        def served(step):
+            hits = [
+                s
+                for s in mem.search("paris museums", memory_types=["notes"], k=2).items
+                if s.item.data["id"] in ("h1", "h2")
+            ]
+            assert len(hits) == 2, "both anchors must be retrieved for this to test anything"
+            return {s.item.data["id"] for s in step.run(hits, ctx)}
+
+        global_two = served(LinkExpansion(cap=2, per_hit=False))
+        per_hit_two = served(LinkExpansion(cap=2, per_hit=True))
+        assert len(global_two - {"h1", "h2"}) == 2  # one shared budget of 2
+        assert len(per_hit_two - {"h1", "h2"}) == 4  # 2 for each of the 2 hits
+        assert global_two < per_hit_two
+    finally:
+        mem.close()
+
+
 def test_link_expansion_does_not_resurrect_retired_notes():
     """``LinkExpansion`` was the one read step with neither guard: it pulled
     neighbours by id and appended them unfiltered, so an invalidated note came

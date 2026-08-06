@@ -28,14 +28,16 @@ a published number disagree, the disagreement is documented in
 |---|---|---|---|---|---|---|---|
 | **Nemori** arm A (upstream) | **67.60** | 46.79 | 41.74 | 3,579 | 0.87 | 1.37 | **2.24** |
 | **Nemori** arm B (0.85 filter live) | 65.78 | 45.79 | 40.68 | 2,759 | 0.69 | 1.12 | **1.82** |
-| **A-Mem** | 59.87 | 41.41 | 36.51 | 11,754 | 2.81 | 0.67 | **3.48** |
+| **A-Mem** | 61.23 | 42.92 | 38.03 | 11,754 | 2.81 | 1.09 | **3.90** |
 | **Mem0** `v0.1.94` | 31.82 | 24.71 | 21.57 | 5,890 | 1.87 | 0.30 | **2.17** |
 | **Zep** | *not measured* | | | | | | |
 
-Each row runs its own lineage's read path, A-Mem's included — which for A-Mem means an LLM keyword
-rewrite before every search, because that is what its evaluation harness does. Turning that step
-off is worth **+5.26 J**, and the ablation two sections below is where that is measured; it is
-reported as a property of A-Mem rather than folded into this row.
+Each row runs its own lineage's read path. For A-Mem that means two things its paper does not
+describe but its evaluation harness does: an LLM keyword rewrite before every search, and a
+link-expansion budget granted **per hit** rather than shared. Both were measured this campaign and
+both are folded into the row above — the second one because it was **our** deviation and closing it
+is a fidelity fix (+1.36 J), the first because it is A-Mem's own step and removing it would make the
+row less faithful, not more (it is worth +5.26 J and is reported as a property of A-Mem below).
 
 ### Read path — the arms are not given the same thing to read
 
@@ -44,7 +46,7 @@ made, and the single most important thing to know before citing any row against 
 
 | arm | retrieved types | k | link expansion | query | read-side LLM calls | context handed to the answerer |
 |---|---|---|---|---|---|---|
-| A-Mem | `notes` | 10 | on | LLM-generated keywords | **1,986** | 1,913 tok/question |
+| A-Mem | `notes` | 10 | on, per hit | LLM-generated keywords | **1,986** | 3,322 tok/question |
 | Nemori (both arms) | `episodes` + `semantic` | 10 + 20 | off | original question | 0 | 3,574–4,409 tok/question |
 | Mem0 | `semantic` | 30 | off | original question | 0 | **837** tok/question |
 
@@ -56,6 +58,53 @@ Item *count* at read time is 30 for Nemori and Mem0 and 10 for A-Mem, so the spr
 column is not a k difference — it is what a "memory" is in each system. Mem0's unit is an atomic
 fact averaging **46.0 characters** over all 5,427 of them (per-conversation means 43.2–48.9);
 Nemori's is a narrative episode.
+
+### Closing our link-expansion deviation: +1.36 J, and a different mechanism
+
+A-Mem's read path expands each retrieved note to its linked neighbours. Upstream gives **every hit
+its own budget** — the loop appends and only then breaks on `if j >= k` (`memory_layer.py:895`), so
+a hit may contribute up to k+1 neighbours — while ours spent a single budget of 5 across all hits.
+That was our deviation, and it was the binding one:
+
+| | global 5 (ours, before) | per hit (upstream's shape) | Δ |
+|---|---|---|---|
+| J | 59.87 | **61.23** | **+1.36** |
+| F1 | 41.41 | 42.92 | +1.51 |
+| BLEU-1 | 36.51 | 38.03 | +1.52 |
+| notes served / question | 15.0 (13–15, saturated) | 26.7 (13–43) | +78% |
+| context to the answerer | 1,913 tok | 3,322 tok | +74% |
+| eval cost | $0.6704 | $1.0905 | +$0.42 |
+
+**Whose cap actually binds is the surprise.** Upstream's per-hit cap can never fire at k=10, because
+a note cannot hold more than 5 links — the write path retrieves only 5 neighbour candidates
+(`memory_layer.py:755`; ours `AMemOrganizer(top_k=5)`). Measured on this store: 5,882 notes, 18,886
+links, mean **3.21**, and the distribution stops dead at 5 with nothing above it. So upstream's
+shape means "serve every link of every hit", and the real comparison is **~32 candidates versus 5**,
+not 110 versus 5. Ours was the only cap doing any cutting, and it saturated on every question.
+
+The mechanism is unlike the other two read-path findings in this document, and the category
+breakdown shows it cleanly:
+
+| category | Δ J |
+|---|---|
+| open-domain | **+5.21** |
+| single-hop | +1.43 |
+| multi-hop | +1.42 |
+| temporal | **+0.00** |
+
+The embedder re-base and the query-rewrite ablation both gained *least* on open-domain, because a
+better-targeted search cannot find an answer that was never stored. This one gains *most* there,
+and nothing at all on temporal. It is a **breadth** effect rather than a precision one: abstention
+barely moves (26.9% → 25.1%) and accuracy-when-answered is flat (82.0% → 81.7%), so the extra 1,409
+tokens per question mostly help questions answerable from background rather than from a pinpointed
+fact. Paying 74% more context for +1.36 J is a poor deployment trade and a necessary fidelity one —
+those are different questions, and this table answers the second.
+
+One honest gap: the duplicate half of this deviation stays unpriced. Upstream serves a duplicate
+link twice and burns a slot each time; our `RetrievalPipeline._assemble` dedups on
+`(memory_type, id)` before anything reaches the bundle, an invariant every methodology here depends
+on. Reproducing it would mean changing shared machinery for one arm, so it is disclosed rather than
+measured.
 
 ### A-Mem's own query rewrite costs it 5.26 J points
 
@@ -95,14 +144,21 @@ against the weaker embedders of the paper's era — the step is not obviously wr
 **unmeasured upstream and no longer earning its cost here**. For anyone deploying A-Mem the
 actionable form is short: the rewrite is a knob, and turning it off bought +5.26 J and −1,986 calls.
 
-Two read-side choices, stacked, move A-Mem 15.13 J points — worth knowing before reading any single
-A-Mem number in this repository or elsewhere:
+**This delta was measured at the global-5 cap**, i.e. against the configuration that was the
+headline row before the link-expansion fix above. The two changes have not been run together, so
+"raw question at the per-hit cap" has no number; nothing here entitles anyone to add +5.26 and
++1.36.
+
+Read-side choices, stacked, move A-Mem across a 15-point range — worth knowing before reading any
+single A-Mem number in this repository or elsewhere:
 
 | A-Mem configuration | J |
 |---|---|
-| `all-MiniLM-L6-v2` + keyword rewrite | 50.00 |
-| `text-embedding-3-small` + keyword rewrite (**the row above**) | 59.87 |
-| `text-embedding-3-small` + raw question | **65.13** |
+| `all-MiniLM-L6-v2` + keyword rewrite + global-5 cap | 50.00 |
+| `text-embedding-3-small` + keyword rewrite + global-5 cap | 59.87 |
+| `text-embedding-3-small` + keyword rewrite + **per-hit cap** (**the row above**) | **61.23** |
+| `text-embedding-3-small` + raw question + global-5 cap | 65.13 |
+| `text-embedding-3-small` + raw question + per-hit cap | *not run* |
 
 ### What each write path did — the evolution log
 
@@ -170,12 +226,10 @@ context.** More memories, less memory.
    both embedders.
 4. **Read-k and link expansion differ by arm** (table above), by design. A row's cost and its
    context budget are both downstream of that choice.
-4b. **A-Mem's row carries one real deviation of ours, and it is unmeasured.** Our `LinkExpansion`
-   caps neighbors **globally at 5**; upstream caps **per hit**, and with an off-by-one
-   (`memory_layer.py:895`, the break follows the append) so each of the 10 hits contributes up to
-   k+1 = 11 neighbors, undeduplicated. That is a large difference in how much context reaches the
-   answerer, it is a code change rather than a flag, and it has no price yet. `13-amem-study.md`
-   §6-2 previously listed the keyword rewrite as a second deviation of ours; that was wrong and is
+4b. **A-Mem's read-path deviations are now closed or disclosed, not outstanding.** The
+   link-expansion cap shape was ours and is fixed in this row (+1.36 J, ledger C-7); the duplicate
+   half of it is structurally unreproducible here and is disclosed instead. `13-amem-study.md` §6-2
+   previously listed the keyword rewrite as a second deviation of ours; that was wrong and is
    corrected at the source — the rewrite is upstream's own step (ledger B-8).
 5. **Nemori arm A vs arm B** is the ledger's B-3 pair — the same code with the dead 0.85 merge
    filter revived. Arm A is the shipped (defective) behavior. On this embedder the *defect wins* on
@@ -201,8 +255,9 @@ Every number above resolves to a committed file under `results/repro/`:
 
 | arm | ingest summary | eval summary |
 |---|---|---|
-| A-Mem (headline, upstream keyword rewrite) | `gpt-4o-mini_all_ingest_e3s.json` | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
-| A-Mem (ablation, raw question) | same ingest — one store, two read protocols | `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json` |
+| A-Mem (headline: keyword rewrite + per-hit cap) | `gpt-4o-mini_all_ingest_e3s.json` | `gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.json` |
+| A-Mem (ablation: global-5 cap) | same ingest — one store, three read protocols | `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json` |
+| A-Mem (ablation: raw question, global-5 cap) | " | `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json` |
 | Nemori arm A | `gpt-4o-mini_nemori_upstream_all_ingest_e3sA.json` | `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json` |
 | Nemori arm B | `gpt-4o-mini_nemori_merge085_all_ingest_e3sB.json` | `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json` |
 | Mem0 | `gpt-4o-mini_mem0_v0194_all_ingest_e3sM.json` | `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json` |

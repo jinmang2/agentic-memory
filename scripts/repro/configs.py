@@ -40,6 +40,14 @@ class RunnerConfig:
     # rewrite (an extra LLM call and a protocol deviation from the claim under
     # verification).
     keyword_queries: bool = True
+    # A-Mem link expansion, when this arm wants something other than the runner's
+    # own `--expand-links` default. None = leave the runner's expression alone
+    # (5 when on, 0 when off), so every existing arm is byte-identical. An int
+    # sets the cap; `link_expansion_per_hit` makes that cap PER HIT, which is
+    # upstream's shape (memory_layer.py:889-897). They travel together because a
+    # per-hit budget of 5 is neither our design nor upstream's.
+    link_expansion_cap: int | None = None
+    link_expansion_per_hit: bool = False
 
 
 # Nemori "upstream" preset threading — precheck §7 (docs/_internal/plans/
@@ -121,6 +129,33 @@ CONFIGS: dict[str, RunnerConfig] = {
         # direction: our one real read-path deviation is LinkExpansion's global
         # cap of 5 where upstream caps per hit, and it is untouched by both arms.
         RunnerConfig("amem_rawq", lambda: [AMemOrganizer()], ("notes",), keyword_queries=False),
+        # The other read-path ablation, and the one that IS our deviation: our
+        # LinkExpansion spends a single budget of 5 neighbours across all hits,
+        # where upstream gives each hit its own and breaks only after appending
+        # (`memory_layer.py:895`), so at the eval's k=10 each hit may contribute
+        # up to k+1 = 11. cap=11 transcribes that arithmetic.
+        #
+        # In practice ANY per-hit cap >= 5 is the same arm, because a note cannot
+        # hold more than 5 links: the write path only ever retrieves 5 neighbour
+        # candidates (`AMemOrganizer(top_k=5)`, upstream `memory_layer.py:755`
+        # `find_related_memories(note.content, k=5)`). Measured on this store —
+        # 5,882 notes, 18,886 links, mean 3.21, and the distribution stops dead
+        # at 5 with nothing above it. So upstream's per-hit cap never binds and
+        # means "serve every link of every hit", while OUR global 5 does bind
+        # (measured: exactly 15 items served per question, 10 hits + 5, saturated
+        # every time). What this arm changes is therefore ~32 candidates versus
+        # 5, not 110 versus 5.
+        #
+        # Everything else matches `amem`, keyword rewrite included, so this arm
+        # is `amem` plus the one remaining fidelity gap closed — not a second
+        # ablation stacked on the first.
+        RunnerConfig(
+            "amem_perhit",
+            lambda: [AMemOrganizer()],
+            ("notes",),
+            link_expansion_cap=11,
+            link_expansion_per_hit=True,
+        ),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:
         RunnerConfig(
             "nemori_upstream",

@@ -243,6 +243,7 @@ class AgenticMemory:
             rrf_k=self.config.rrf_k,
             dense_min_score=self.config.dense_min_score,
             link_expansion_cap=self.config.link_expansion_cap,
+            link_expansion_per_hit=self.config.link_expansion_per_hit,
             attach_sources_top_r=self.config.attach_sources_top_r,
             graph_expansion_cap=self.config.graph_expansion_cap,
             graph_expansion_hops=self.config.graph_expansion_hops,
