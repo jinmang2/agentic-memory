@@ -69,20 +69,42 @@ HEADLINE_ANCHORS = {
 ADVERSARIAL = "adversarial"
 RECORDS_SUFFIX = ".records.jsonl"
 
+# Eval modes that score F1/BLEU only and legitimately emit no judge verdicts.
+# Matched as a whole underscore-delimited token in the run stem, never as a
+# substring, so a future "wujiang2" mode is a stranger until it is added here.
+F1_ONLY_EVAL_MODES = frozenset({"wujiang"})
+
 _REQUIRED_FIELDS = ("conv", "q", "cat", "f1")
+
+
+def run_stem(path: Path) -> str:
+    """The run identifier: the file name with the records suffix removed."""
+    name = Path(path).name
+    return name[: -len(RECORDS_SUFFIX)] if name.endswith(RECORDS_SUFFIX) else Path(path).stem
+
+
+def is_f1_only_eval(stem: str) -> bool:
+    """Does this run's eval mode score without a judge at all?"""
+    return bool(F1_ONLY_EVAL_MODES & set(stem.split("_")))
 
 
 def load_records(path: Path) -> list[dict]:
     """Load a run's records.jsonl, verifying every row can be scored.
 
-    Verdicts are all-or-nothing across a run's non-adversarial rows. Judged runs
+    Verdicts are all-or-nothing across a run's non-adversarial rows: judged runs
     carry ``j`` on every one of them (1,540 of 1,986; adversarial questions are
-    never judged). The wujiang eval mode carries none at all -- it scores F1 and
-    BLEU only, so its J is unmeasurable rather than wrong, and excluding it from
-    the replay entirely would be reading a different measurement as a damaged
-    file. What must still fail is the run judged in *part*: a row that quietly
-    lost its verdict shrinks the J denominator with nothing looking wrong, which
-    is the precise failure this replay exists to rule out.
+    never judged). Two ways that can fail, and they need different answers.
+
+    A run judged in *part* is always an error: a row that quietly lost its
+    verdict shrinks the J denominator with nothing looking wrong, which is the
+    precise failure this replay exists to rule out.
+
+    A run with *no* verdicts at all is ambiguous on the bytes alone -- an
+    F1-only eval mode and a judge pass that died wholesale produce identical
+    files. Only the eval mode in the stem separates them, so that is what is
+    consulted: wujiang is F1/BLEU by design and reports an unmeasurable J, while
+    the same file from a judging mode is a broken run and raises. Accepting both
+    would let a total judge failure be published as a clean F1-only measurement.
     """
     rows: list[dict] = []
     with Path(path).open() as fh:
@@ -102,6 +124,13 @@ def load_records(path: Path) -> list[dict]:
             f"{path}: {len(unjudged)} of {len(judgeable)} non-adversarial rows carry no "
             f"judge verdict 'j' (first: cat={unjudged[0]['cat']!r} q={unjudged[0]['q']!r}) "
             "-- a partially judged run cannot be aggregated; the J denominator is unsound"
+        )
+    if judgeable and len(unjudged) == len(judgeable) and not is_f1_only_eval(run_stem(path)):
+        raise ValueError(
+            f"{path}: not one of {len(judgeable)} non-adversarial rows carries a judge "
+            f"verdict 'j', and the eval mode is not one of the known F1-only modes "
+            f"{sorted(F1_ONLY_EVAL_MODES)} -- this looks like a judge pass that failed "
+            "wholesale, which must not be reported as an unmeasurable J"
         )
     return rows
 
@@ -180,7 +209,7 @@ def rescore_file(path: Path, error_keys: set[tuple[int, str]]) -> dict:
     nothing to match and reporting only that would read as a broken join, when in
     fact the flagged questions do leave the F1 denominator.
     """
-    stem = path.name[: -len(RECORDS_SUFFIX)] if path.name.endswith(RECORDS_SUFFIX) else path.stem
+    stem = run_stem(path)
     records = load_records(path)
     run_is_judged = any("j" in r for r in records)
 
@@ -261,6 +290,7 @@ def rescore_file(path: Path, error_keys: set[tuple[int, str]]) -> dict:
             "matched_any_row": all_report["matched"],
             "excluded_rows_all": all_report["excluded_rows"],
             "unmatched_any_row": [list(k) for k in all_report["unmatched_errors"]],
+            "duplicate_matched_keys_any_row": all_report["duplicate_matched_keys"],
             # judged basis: the J denominator reduction, None where J is unmeasurable
             "judged_basis_applicable": run_is_judged,
             "matched_judged": None if judged_report is None else judged_report["matched"],
@@ -272,7 +302,7 @@ def rescore_file(path: Path, error_keys: set[tuple[int, str]]) -> dict:
                 if judged_report is None
                 else [list(k) for k in judged_report["unmatched_errors"]]
             ),
-            "duplicate_matched_keys": (
+            "duplicate_matched_keys_judged": (
                 None if judged_report is None else judged_report["duplicate_matched_keys"]
             ),
             "row_counts_known": all_report["row_counts_known"],
@@ -354,19 +384,24 @@ def render_markdown(results: list[dict], meta: dict) -> str:
             "J is scored over judged rows, F1 over all of them."
         ),
         "",
-        (
-            "The F1-only runs (`wujiang`, which emits no judge verdicts) have no judged "
-            "basis at all -- `n/a` there means the question is unmeasurable for that "
-            "run, not that the join failed. Their flagged questions do leave the F1 "
-            "denominator, as the all-rows column shows."
-        ),
-        "",
+    ]
+    if any(not r["judged"] for r in results):
+        lines += [
+            (
+                "The F1-only runs (`wujiang`, which emits no judge verdicts) have no judged "
+                "basis at all -- `n/a` there means the question is unmeasurable for that "
+                "run, not that the join failed. Their flagged questions do leave the F1 "
+                "denominator, as the all-rows columns show."
+            ),
+            "",
+        ]
+    lines += [
         (
             "| run | error keys | matched (all rows) | excluded rows (F1 denom) "
-            "| matched (judged) | excluded judged rows (J denom) | unmatched "
-            "| duplicate-serving keys |"
+            "| dup keys (all rows) | matched (judged) | excluded judged rows (J denom) "
+            "| dup keys (judged) | unmatched |"
         ),
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for r in sorted(results, key=lambda r: (not r["headline"], r["stem"])):
         j = r["join"]
@@ -377,11 +412,11 @@ def render_markdown(results: list[dict], meta: dict) -> str:
         )
         lines.append(
             f"| `{r['stem']}` | {j['error_keys']} | {j['matched_any_row']} "
-            f"| {j['excluded_rows_all']} "
+            f"| {j['excluded_rows_all']} | {j['duplicate_matched_keys_any_row']} "
             f"| {na if j['matched_judged'] is None else j['matched_judged']} "
             f"| {na if j['excluded_judged_rows'] is None else j['excluded_judged_rows']} "
-            f"| {unmatched} "
-            f"| {na if j['duplicate_matched_keys'] is None else j['duplicate_matched_keys']} |"
+            f"| {na if j['duplicate_matched_keys_judged'] is None else j['duplicate_matched_keys_judged']} "
+            f"| {unmatched} |"
         )
 
     lines += ["", "## Per category", ""]
@@ -453,7 +488,12 @@ def main(argv: list[str] | None = None) -> int:
         "headline_files_not_matched": missing_anchors,
     }
     if missing_anchors:
-        print(f"warning: headline run(s) not matched by the glob: {missing_anchors}", flush=True)
+        # stderr: a warning must not land in stdout beside the success line,
+        # where a caller capturing output would read it as part of the result.
+        print(
+            f"warning: headline run(s) not matched by the glob: {missing_anchors}",
+            file=sys.stderr,
+        )
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)

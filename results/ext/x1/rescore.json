@@ -38,11 +38,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -121,11 +122,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -204,11 +206,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -287,11 +290,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -370,11 +374,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": false,
         "matched_judged": null,
         "excluded_judged_rows": null,
         "unmatched_judged": null,
-        "duplicate_matched_keys": null,
+        "duplicate_matched_keys_judged": null,
         "row_counts_known": true
       },
       "per_cat": {
@@ -453,11 +458,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": false,
         "matched_judged": null,
         "excluded_judged_rows": null,
         "unmatched_judged": null,
-        "duplicate_matched_keys": null,
+        "duplicate_matched_keys_judged": null,
         "row_counts_known": true
       },
       "per_cat": {
@@ -536,11 +542,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": false,
         "matched_judged": null,
         "excluded_judged_rows": null,
         "unmatched_judged": null,
-        "duplicate_matched_keys": null,
+        "duplicate_matched_keys_judged": null,
         "row_counts_known": true
       },
       "per_cat": {
@@ -619,11 +626,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -702,11 +710,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -785,11 +794,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -868,11 +878,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -951,11 +962,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1034,11 +1046,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1117,11 +1130,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1200,11 +1214,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1283,11 +1298,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1366,11 +1382,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1449,11 +1466,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {
@@ -1532,11 +1550,12 @@
         "matched_any_row": 99,
         "excluded_rows_all": 99,
         "unmatched_any_row": [],
+        "duplicate_matched_keys_any_row": 0,
         "judged_basis_applicable": true,
         "matched_judged": 99,
         "excluded_judged_rows": 99,
         "unmatched_judged": [],
-        "duplicate_matched_keys": 0,
+        "duplicate_matched_keys_judged": 0,
         "row_counts_known": true
       },
       "per_cat": {

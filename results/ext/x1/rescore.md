@@ -46,29 +46,29 @@ Headline runs are marked; every other row is an ablation, seed replicate or alte
 
 Excluded-row counts are the true denominator reductions, and they exceed `matched` wherever one question serves more than one records row. Two bases are reported because the two metrics have different denominators: J is scored over judged rows, F1 over all of them.
 
-The F1-only runs (`wujiang`, which emits no judge verdicts) have no judged basis at all -- `n/a` there means the question is unmeasurable for that run, not that the join failed. Their flagged questions do leave the F1 denominator, as the all-rows column shows.
+The F1-only runs (`wujiang`, which emits no judge verdicts) have no judged basis at all -- `n/a` there means the question is unmeasurable for that run, not that the join failed. Their flagged questions do leave the F1 denominator, as the all-rows columns show.
 
-| run | error keys | matched (all rows) | excluded rows (F1 denom) | matched (judged) | excluded judged rows (J denom) | unmatched | duplicate-serving keys |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed1` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed2` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed3` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1` | 99 | 99 | 99 | n/a | n/a | 0 | n/a |
-| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2` | 99 | 99 | 99 | n/a | n/a | 0 | n/a |
-| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3` | 99 | 99 | 99 | n/a | n/a | 0 | n/a |
-| `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_armB` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_armB_s2` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_armA` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_armA_s2` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-5.6-luna_nemori_merge085_all_k10_ours_expand-off_run1_lunaB` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
-| `gpt-5.6-luna_nemori_upstream_all_k10_ours_expand-off_run1_lunaA` | 99 | 99 | 99 | 99 | 99 | 0 | 0 |
+| run | error keys | matched (all rows) | excluded rows (F1 denom) | dup keys (all rows) | matched (judged) | excluded judged rows (J denom) | dup keys (judged) | unmatched |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_all_k10_ours_expand-on_run1_e3s` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed1` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed2` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_all_k10_ours_expand-on_run1_seed3` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1` | 99 | 99 | 99 | 0 | n/a | n/a | n/a | 0 |
+| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed2` | 99 | 99 | 99 | 0 | n/a | n/a | n/a | 0 |
+| `gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed3` | 99 | 99 | 99 | 0 | n/a | n/a | n/a | 0 |
+| `gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_armB` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_armB_s2` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_armA` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_armA_s2` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-5.6-luna_nemori_merge085_all_k10_ours_expand-off_run1_lunaB` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
+| `gpt-5.6-luna_nemori_upstream_all_k10_ours_expand-off_run1_lunaA` | 99 | 99 | 99 | 0 | 99 | 99 | 0 | 0 |
 
 ## Per category
 

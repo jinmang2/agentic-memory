@@ -193,8 +193,10 @@ def test_no_rows_yields_none_rather_than_zero():
 # --- record loading -------------------------------------------------------
 
 
-def _write_records(tmp_path: Path, rows: list[dict]) -> Path:
-    path = tmp_path / "r.records.jsonl"
+def _write_records(tmp_path: Path, rows: list[dict], stem: str = "run_ours_x") -> Path:
+    """Write a records file. The stem matters: it carries the eval mode, which
+    is what decides whether a verdict-free run is legitimate."""
+    path = tmp_path / f"{stem}.records.jsonl"
     path.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
     return path
 
@@ -223,18 +225,39 @@ def test_load_records_rejects_a_partially_judged_run(tmp_path):
         x1.load_records(_write_records(tmp_path, rows))
 
 
-def test_load_records_accepts_a_run_with_no_judge_at_all(tmp_path):
+def test_load_records_accepts_a_verdict_free_run_from_an_f1_only_eval_mode(tmp_path):
     # the wujiang eval mode scores F1/BLEU only and emits no verdicts anywhere.
     # That is a different measurement, not a damaged file -- J is unmeasurable
     # for it, which is what the artifact must say.
     x1 = _rescore()
     rows = [_rec(0, "a?", "single-hop", 1.0), _rec(0, "b?", "temporal", 0.5)]
-    loaded = x1.load_records(_write_records(tmp_path, rows))
+    path = _write_records(tmp_path, rows, stem="gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1")
+    loaded = x1.load_records(path)
     assert len(loaded) == 2
     agg = x1.aggregate(loaded)
     assert agg["j_n"] == 0
     assert agg["J"] is None  # unmeasured, not zero
     assert agg["F1"] == pytest.approx(75.0)
+
+
+def test_load_records_rejects_a_verdict_free_run_from_a_judging_eval_mode(tmp_path):
+    # "the eval mode never judges" and "the judge pass died wholesale" produce
+    # byte-identical files. Only the eval mode in the stem tells them apart, and
+    # accepting both as null-J would report a crashed judge as a clean F1-only
+    # measurement.
+    x1 = _rescore()
+    rows = [_rec(0, "a?", "single-hop", 1.0), _rec(0, "b?", "temporal", 0.5)]
+    path = _write_records(tmp_path, rows, stem="gpt-4o-mini_nemori_upstream_all_k10_ours_run1_zz")
+    with pytest.raises(ValueError, match="judge"):
+        x1.load_records(path)
+
+
+def test_is_f1_only_eval_matches_a_whole_stem_token_not_a_substring(tmp_path):
+    x1 = _rescore()
+    assert x1.is_f1_only_eval("gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1") is True
+    assert x1.is_f1_only_eval("gpt-4o-mini_all_k10_ours_expand-on_run1_seed1") is False
+    # a token that merely contains the mode name is a different eval mode
+    assert x1.is_f1_only_eval("gpt-4o-mini_all_k10_wujiangx_run1") is False
 
 
 def test_load_records_accepts_adversarial_rows_without_a_verdict(tmp_path):
@@ -259,13 +282,16 @@ def test_rescore_file_reports_both_join_bases_for_a_judged_run(tmp_path):
     assert r["delta_J"] == pytest.approx(100 * 2 / 3 - 50.0, abs=1e-4)
 
 
+WUJIANG_STEM = "gpt-4o-mini_all_k10_wujiang_expand-off_run1_seed1"
+
+
 def test_rescore_file_on_an_unjudged_run_still_reports_the_F1_exclusion(tmp_path):
     # the wujiang shape: no verdicts anywhere. The judged basis is unmeasurable,
     # but the flagged question must still leave the F1 denominator -- reporting
     # only the judged basis here would read as a join failure.
     x1 = _rescore()
     rows = [_rec(0, "a?", "single-hop", 1.0), _rec(0, "b?", "temporal", 0.0)]
-    r = x1.rescore_file(_write_records(tmp_path, rows), {(0, "b?")})
+    r = x1.rescore_file(_write_records(tmp_path, rows, stem=WUJIANG_STEM), {(0, "b?")})
     assert r["judged"] is False
     assert r["J_full"] is None and r["J_excluded"] is None and r["delta_J"] is None
     assert r["n_full"] == 2 and r["n_excluded"] == 1
@@ -275,15 +301,48 @@ def test_rescore_file_on_an_unjudged_run_still_reports_the_F1_exclusion(tmp_path
     assert r["F1_full"] == pytest.approx(50.0) and r["F1_excluded"] == pytest.approx(100.0)
 
 
-def test_rescore_file_refuses_an_anchored_run_that_carries_no_verdicts(tmp_path):
-    # a headline stem whose file turns out to be F1-only has no J to compare
-    # against its anchor. That must say so, not fail obscurely on a None.
+def test_unjudged_run_still_reports_its_duplicate_key_count(tmp_path):
+    # sourcing duplicates from the judged basis alone silently discards a real,
+    # measured all-rows duplicate count for F1-only runs -- the one number that
+    # explains why their F1 denominator drops by more than the key count.
     x1 = _rescore()
-    stem = next(iter(x1.HEADLINE_ANCHORS))
-    path = tmp_path / f"{stem}.records.jsonl"
-    path.write_text(json.dumps(_rec(0, "a?", "single-hop", 1.0)) + "\n")
-    with pytest.raises(ValueError, match="no judge verdicts"):
-        x1.rescore_file(path, set())
+    rows = [
+        _rec(0, "dup?", "single-hop", 1.0),
+        _rec(0, "dup?", "single-hop", 0.0),
+        _rec(0, "keep?", "temporal", 0.5),
+    ]
+    r = x1.rescore_file(_write_records(tmp_path, rows, stem=WUJIANG_STEM), {(0, "dup?")})
+    assert r["judged"] is False
+    assert r["join"]["duplicate_matched_keys_any_row"] == 1
+    assert r["join"]["excluded_rows_all"] == 2  # one key, two rows
+    assert r["join"]["duplicate_matched_keys_judged"] is None
+    assert r["n_full"] == 3 and r["n_excluded"] == 1
+
+
+def test_judged_run_reports_duplicate_key_counts_on_both_bases(tmp_path):
+    x1 = _rescore()
+    rows = [
+        _rec(0, "dup?", "single-hop", 1.0, True),
+        _rec(0, "dup?", "single-hop", 0.0, False),
+        _rec(0, "keep?", "temporal", 0.5, True),
+    ]
+    r = x1.rescore_file(_write_records(tmp_path, rows), {(0, "dup?")})
+    assert r["join"]["duplicate_matched_keys_any_row"] == 1
+    assert r["join"]["duplicate_matched_keys_judged"] == 1
+
+
+def test_rescore_file_refuses_an_anchored_run_that_carries_no_verdicts(tmp_path):
+    # defense in depth: an anchor on an F1-only stem passes the loader (verdict
+    # -free is legitimate there) but still has no J to compare. That must say so,
+    # not fail obscurely on a None.
+    x1 = _rescore()
+    path = _write_records(tmp_path, [_rec(0, "a?", "single-hop", 1.0)], stem=WUJIANG_STEM)
+    x1.HEADLINE_ANCHORS[WUJIANG_STEM] = 50.0
+    try:
+        with pytest.raises(ValueError, match="no judge verdicts"):
+            x1.rescore_file(path, set())
+    finally:
+        del x1.HEADLINE_ANCHORS[WUJIANG_STEM]
 
 
 def test_anchor_check_uses_the_same_rounding_the_report_prints(tmp_path):
@@ -299,6 +358,101 @@ def test_rescore_file_flags_a_stem_with_no_anchor_as_not_headline(tmp_path):
     r = x1.rescore_file(_write_records(tmp_path, _six_rows()), set())
     assert r["headline"] is False
     assert r["anchor_J"] is None and r["anchor_ok"] is None
+
+
+# --- main(): the CLI and its one hard STOP --------------------------------
+
+
+def _synthetic_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    """A dataset and an errors catalogue small enough to reason about.
+
+    main() resolves error ids against the dataset, so the two must agree; the
+    records files are joined separately and need not contain these questions.
+    """
+    dataset = tmp_path / "locomo10.json"
+    dataset.write_text(
+        json.dumps([{"qa": [{"question": "Q zero?", "answer": "a", "category": 1}]}])
+    )
+    errors = tmp_path / "errors.json"
+    errors.write_text(
+        json.dumps(
+            [{"question_id": "locomo_0_qa0", "question": "Q zero?", "error_type": "HALLUCINATION"}]
+        )
+    )
+    return dataset, errors
+
+
+def _run_main(x1, tmp_path: Path, records_dir: Path, out_dir: Path):
+    dataset, errors = _synthetic_inputs(tmp_path)
+    return x1.main(
+        [
+            "--records-glob",
+            str(records_dir / "*.records.jsonl"),
+            "--out",
+            str(out_dir),
+            "--dataset",
+            str(dataset),
+            "--errors",
+            str(errors),
+        ]
+    )
+
+
+def test_main_stops_without_writing_when_a_headline_anchor_disagrees(tmp_path):
+    # THE hard requirement of this task. The gate must be fail-closed: nothing
+    # may reach disk when a headline J does not reproduce. A refactor that moves
+    # the write above the gate has to break this test, not ship quietly.
+    x1 = _rescore()
+    records_dir = tmp_path / "recs"
+    records_dir.mkdir()
+    stem = "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA"  # anchor 67.60
+    _write_records(records_dir, [_rec(0, "a?", "single-hop", 0.0, False)], stem=stem)
+
+    out_dir = tmp_path / "out"
+    with pytest.raises(SystemExit):
+        _run_main(x1, tmp_path, records_dir, out_dir)
+    assert not out_dir.exists()  # fail-closed: no artifact, not even an empty dir
+
+
+def test_main_writes_both_artifacts_when_no_anchor_is_violated(tmp_path):
+    x1 = _rescore()
+    records_dir = tmp_path / "recs"
+    records_dir.mkdir()
+    _write_records(records_dir, _six_rows(), stem="some_ablation_ours_run1")
+
+    out_dir = tmp_path / "out"
+    assert _run_main(x1, tmp_path, records_dir, out_dir) == 0
+    payload = json.loads((out_dir / "rescore.json").read_text())
+    assert len(payload["runs"]) == 1
+    assert payload["runs"][0]["headline"] is False
+    assert payload["meta"]["errors_score_corrupting"] == 1
+    assert (out_dir / "rescore.md").read_text().startswith("# X1 gold-error replay")
+
+
+def test_main_refuses_a_glob_that_matches_nothing(tmp_path):
+    x1 = _rescore()
+    empty = tmp_path / "recs"
+    empty.mkdir()
+    with pytest.raises(SystemExit, match="no records files"):
+        _run_main(x1, tmp_path, empty, tmp_path / "out")
+
+
+def test_markdown_omits_the_f1_only_note_when_every_run_is_judged(tmp_path):
+    # the wujiang paragraph explains an `n/a` that is not on the page otherwise.
+    x1 = _rescore()
+    judged = x1.rescore_file(_write_records(tmp_path, _six_rows()), set())
+    meta = {
+        "errors_path": "e",
+        "errors_total": 1,
+        "errors_score_corrupting": 1,
+        "dataset_path": "d",
+        "records_glob": "g",
+    }
+    assert "wujiang" not in x1.render_markdown([judged], meta)
+    unjudged = x1.rescore_file(
+        _write_records(tmp_path, [_rec(0, "z?", "single-hop", 1.0)], stem=WUJIANG_STEM), set()
+    )
+    assert "wujiang" in x1.render_markdown([judged, unjudged], meta)
 
 
 # --- the anchors ----------------------------------------------------------
