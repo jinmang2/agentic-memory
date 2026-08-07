@@ -97,6 +97,11 @@ ADVERSARIAL_CATEGORY = 5
 
 RATE_BASES = ("unflagged", "flagged")
 
+# A pair's order counts as holding under gold noise when the simulated
+# probability of it not holding strictly (a flip or a tie) is below this. The
+# same 0.05 the CIs and the seed formula use, so one alpha governs the page.
+GOLD_NOISE_ALPHA = 0.05
+
 # Bootstrap resample indices are drawn in fixed-size blocks so a 10k x 1540
 # index matrix never has to exist at once. The size is a constant, not a
 # parameter, because changing it changes the numbers a given seed produces.
@@ -131,6 +136,14 @@ def seeds_needed(
     rounded up: both arms are replicated, hence the ``sqrt(2)``. A gap of zero
     needs infinitely many seeds, so it raises rather than returning a finite
     number that would read as an answer.
+
+    ``delta_pp`` is taken as the *true* effect. Callers pass an observed gap,
+    which is an estimate: the count is "seeds to detect a gap this big, if it is
+    really this big", not "seeds to settle this comparison". Since n scales as
+    1/delta^2, a true gap half the observed one needs four times the seeds, and
+    a true gap of zero cannot be detected at any n. Wherever the answer is
+    printed beside a gap whose own CI covers zero, that assumption has to be
+    printed with it.
     """
     if not delta_pp > 0:
         raise ValueError(f"delta_pp must be positive, got {delta_pp}")
@@ -166,8 +179,15 @@ def questions_needed(
     ``n * ((z_{alpha/2} + z_beta) * se / delta)^2``. Same alpha, same power, same
     normal approximation, so the two tables are read on one scale.
 
-    It assumes the extra questions look like the ones already measured. A harder
-    or easier extension moves the SE and therefore this number.
+    Two assumptions, and the second is the load-bearing one. The extra questions
+    are assumed to look like the ones already measured -- a harder or easier
+    extension moves the SE and therefore this number. And ``delta_pp`` is taken
+    as the *true* effect, when in practice it is a point estimate: this answers
+    "how many questions to detect a gap this big, if it is really this big", not
+    "how many to settle the comparison". The distinction bites hardest exactly
+    where the number is most wanted, on a gap whose CI covers zero: n scales as
+    1/delta^2, so a smaller true gap needs more questions without bound, and a
+    true gap of zero makes the quantity undefined rather than merely large.
     """
     if not delta_pp > 0:
         raise ValueError(f"delta_pp must be positive, got {delta_pp}")
@@ -539,16 +559,17 @@ def build_report(
         },
     }
     order_excluded = sorted(excluded, key=lambda k: -_j(excluded[k]))
+    order_full = sorted(arms, key=lambda k: -_j(arms[k]))
     return {
         "arms": arm_rows,
-        "rank_order_full": sorted(arms, key=lambda k: -_j(arms[k])),
+        "rank_order_full": order_full,
         "rank_order_excluded": order_excluded,
         "paired_delta_ci": {"full_gold": ci_full, "audit_excluded_gold": ci_excluded},
         "rank_stability": stability,
         "seeds_needed": seeds,
         "detection_bands": bands,
         "conclusion": _conclusion(
-            seeds, ci_full, ci_excluded, stability, bands, order_excluded, sum(mask)
+            seeds, ci_full, ci_excluded, stability, bands, order_excluded, sum(mask), order_full
         ),
     }
 
@@ -561,29 +582,42 @@ def _conclusion(
     bands: dict,
     order_excluded: list[str],
     n_flagged: int,
+    rank_order_full: list[str],
 ) -> str:
     """The band statement, built from the table so it cannot drift from it.
 
     A pair counts as separated only when the paired CI excludes zero under
     *both* golds -- the strictest of the three noise sources, and the only one
-    that puts every question at risk rather than the 99 flagged ones. The
+    that puts every question at risk rather than only the flagged ones. The
     sentence is assembled from that test rather than around it, so a pair the
     bootstrap cannot separate cannot be phrased as a win by the template.
+
+    Every count in the sentence comes from an argument. Writing the flagged
+    count as a literal would make this read correctly on our data and lie on
+    anyone else's, which is the failure mode the docstring above claims to
+    prevent -- so ``n_flagged`` is used, never spelled out.
     """
     mdd1 = bands["min_detectable_delta_pp"]["1"]
-    order = " > ".join(s["pair"][0] for s in seeds) + " > " + seeds[-1]["pair"][1]
+    pair_order = [s["pair"][0] for s in seeds] + [seeds[-1]["pair"][1]]
+    # the sentence names a ranking; power.json prints one computed independently
+    # from the arms' J. If those ever disagree, the artifact would assert two
+    # different rankings in two places, so refuse rather than pick one.
+    if pair_order != list(rank_order_full):
+        raise ValueError(
+            f"adjacent-pair chain {pair_order} does not match the measured rank order "
+            f"{list(rank_order_full)} -- ADJACENT_PAIRS is stale relative to the data"
+        )
+    order = " > ".join(pair_order)
+    n_questions = ci_full[0]["n"]
+    plural = "" if n_flagged == 1 else "s"
     p_hold = min(s["p_observed_order"] for s in stability.values())
     n_sim = stability[RATE_BASES[0]]["n_sim"]
-    gold_same = order_excluded == [s["pair"][0] for s in seeds] + [seeds[-1]["pair"][1]]
+    gold_same = order_excluded == pair_order
 
     def phrase(s: dict, c: dict) -> str:
-        # a bootstrap p cannot resolve below 1/n_boot, so print the bound rather
-        # than a "0.000" that would read as an exact zero.
-        floor = 1.0 / c["n_boot"]
-        p = f"p<{floor:g}" if c["p_boot"] < floor else f"p={c['p_boot']:.3f}"
         return (
             f"{s['pair'][0]} over {s['pair'][1]} ({c['delta_pp']:+.2f}pp, "
-            f"[{c['lo']:+.2f}, {c['hi']:+.2f}], {p})"
+            f"[{c['lo']:+.2f}, {c['hi']:+.2f}], {_fmt_p(c['p_boot'], c['n_boot'])})"
         )
 
     firm, weak = [], []
@@ -606,31 +640,48 @@ def _conclusion(
         head = (
             f"Only part of the ranking {order} is claimable. The paired 95% bootstrap CIs "
             f"separate {kept}, but not {lost} -- that interval covers zero, so at "
-            f"{weak[0][1]['n']:,} questions the gap is inside question-sampling noise. "
-            f"Dropping the {n_flagged} audited questions does not rescue it ({on_excluded})."
+            f"{n_questions:,} questions the gap is inside question-sampling noise. "
+            f"Dropping the {n_flagged} audited question{plural} does not rescue it "
+            f"({on_excluded})."
         )
 
     lever = ""
     if weak:
         need = weak[0][0]["questions_needed_full"]
-        lever = (
-            f" More seeds would not fix it, because rerunning the same questions does not add "
-            f"questions: at the measured paired SE, {weak[0][0]['pair'][0]} over "
-            f"{weak[0][0]['pair'][1]} would need roughly {need:,} questions "
-            f"(vs {weak[0][1]['n']:,}) to be powered at alpha=0.05 / power=0.80."
+        high, low = weak[0][0]["pair"]
+        opening = (
+            " More seeds would not fix it, because rerunning the same questions does not add "
+            "questions."
         )
+        if need is None:
+            # the arms scored identically, so there is no effect to size a
+            # benchmark against. Naming any number here would invent one.
+            lever = (
+                f"{opening} Nor would more questions be sizeable: {high} and {low} scored "
+                f"exactly level, and no benchmark size detects a gap of zero."
+            )
+        else:
+            lever = (
+                f"{opening} At the measured paired SE, {high} over {low} would need roughly "
+                f"{need:,} questions (vs {n_questions:,}) to be powered at alpha=0.05 / "
+                f"power=0.80 -- a figure that conditions on the observed gap being the true "
+                f"effect, which is exactly what its own CI declines to establish. Read it as "
+                f"the size needed if the gap is real and this big; a smaller true gap needs "
+                f"more questions without bound, and a true gap of zero makes the number "
+                f"undefined rather than large."
+            )
 
     return (
         f"{head}{lever} The other two noise sources are not the binding constraint and must "
         f"not be read as agreement: every gap clears the {mdd1:.2f}pp a single seed resolves "
         f"at alpha=0.05 / power=0.80 given the +/-{bands['seed_sd_pp']}pp replicate SD, and "
-        f"redrawing the 99 disputed verdicts leaves the order intact in at least "
-        f"{100 * p_hold:.2f}% of {n_sim:,} simulations under both resampling rates, with the "
-        f"order {'unchanged' if gold_same else 'CHANGED'} when those questions are dropped "
-        f"instead. Both of those checks are narrower than the bootstrap: the gold-noise "
-        f"simulation perturbs only 99 of {ci_full[0]['n']:,} verdicts and holds the rest "
-        f"fixed, which is why it reports a stability the bootstrap over all "
-        f"{ci_full[0]['n']:,} does not support. So: the ranking is claimable at one seed and "
+        f"redrawing the {n_flagged} disputed verdict{plural} leaves the order intact in at "
+        f"least {100 * p_hold:.2f}% of {n_sim:,} simulations under both resampling rates, "
+        f"with the order {'unchanged' if gold_same else 'CHANGED'} when those questions are "
+        f"dropped instead. Both of those checks are narrower than the bootstrap: the "
+        f"gold-noise simulation perturbs only {n_flagged} of {n_questions:,} verdicts and "
+        f"holds the rest fixed, which is why it reports a stability the bootstrap over all "
+        f"{n_questions:,} does not support. So: the ranking is claimable at one seed and "
         f"under either gold for the pairs listed as separated above, and for those pairs only; "
         f"any future arm landing within {mdd1:.2f}pp of another is a tie at one seed before "
         f"question sampling is even considered, and one at the {bands['seed_sd_pp']}pp "
@@ -642,9 +693,48 @@ def _fmt_ci(c: dict) -> str:
     return f"[{c['lo']:+.2f}, {c['hi']:+.2f}]"
 
 
+def _fmt_p(p_boot: float, n_boot: int) -> str:
+    """Print a bootstrap p without ever showing a rounded-down zero.
+
+    Two separate floors have to be respected. The bootstrap cannot resolve below
+    ``1/n_boot`` at all, and three decimal places cannot show anything under
+    0.0005 -- so a p of 0.0002 would print as an exact-looking "0.000" even
+    though the resampling measured it. Whichever floor bites is stated as a
+    bound instead.
+    """
+    resolution = 1.0 / n_boot
+    if p_boot < resolution:
+        return f"p<{resolution:g}"
+    if p_boot < 0.001:
+        return "p<0.001"
+    return f"p={p_boot:.3f}"
+
+
 def _seeds_cell(n: int | None) -> str:
     """A tied pair is unresolvable at any budget -- say that, do not print `None`."""
     return "no number of seeds (gap is 0)" if n is None else str(n)
+
+
+def _seed_verdict(seeds_row: dict) -> str:
+    """The seed-jitter column's verdict, read off the seed count rather than asserted.
+
+    A composed cell, so it has to stay grammatical for every branch: a pair
+    needing 40 seeds must not read "clears", and a tied pair has no seed count
+    to put in a sentence at all.
+    """
+    n = seeds_row["seeds_full"]
+    if n is None:
+        return "unresolvable (gap is 0)"
+    if n == 1:
+        return "clears at 1 seed"
+    return f"**needs {n} seeds**"
+
+
+def _gold_verdict(p_not_held: float) -> str:
+    """The gold-noise column's verdict, from the simulated probability, not the template."""
+    stable = p_not_held < GOLD_NOISE_ALPHA
+    label = "holds" if stable else "**unstable**"
+    return f"{label} (P(not held) = {p_not_held:.4f})"
 
 
 def render_markdown(report: dict, meta: dict) -> str:
@@ -666,7 +756,10 @@ def render_markdown(report: dict, meta: dict) -> str:
         "",
         "## Arms",
         "",
-        "| arm | run | J (full gold) | J (audit-excluded) | correct on the 99 flagged |",
+        (
+            f"| arm | run | J (full gold) | J (audit-excluded) "
+            f"| correct on the {meta['n_flagged']} flagged |"
+        ),
         "| --- | --- | ---: | ---: | ---: |",
     ]
     for name in report["rank_order_full"]:
@@ -684,19 +777,24 @@ def render_markdown(report: dict, meta: dict) -> str:
         "",
         "**Which adjacent gaps the evidence actually separates:**",
         "",
-        "| pair | paired bootstrap (both golds) | seed jitter | gold noise |",
+        "| pair | paired bootstrap (both golds) | seed jitter | gold noise (worst basis) |",
         "| --- | --- | --- | --- |",
     ]
-    flip = {
-        (p["high"], p["low"]): p["p_flip"] for p in report["rank_stability"]["unflagged"]["pairs"]
-    }
+    # worst case across both resampling rates, and counting a tie as "did not
+    # hold": a pair that only survives on the friendlier basis has not survived.
+    not_held: dict[tuple[str, str], float] = {}
+    for basis in RATE_BASES:
+        for p in report["rank_stability"][basis]["pairs"]:
+            key = (p["high"], p["low"])
+            not_held[key] = max(not_held.get(key, 0.0), p["p_flip"] + p["p_tie"])
     for s in report["seeds_needed"]:
         pair = (s["pair"][0], s["pair"][1])
         sep = s["separable_full"] and s["separable_excluded"]
+        # a missing key means the pair chain and the simulated order disagree;
+        # printing `nan` there would hide it, so index rather than .get().
         lines.append(
             f"| {pair[0]} over {pair[1]} | {'**separated**' if sep else '**NOT separated**'} "
-            f"| clears ({_seeds_cell(s['seeds_full'])} seed) "
-            f"| holds (P(flip) = {flip.get(pair, float('nan')):.4f}) |"
+            f"| {_seed_verdict(s)} | {_gold_verdict(not_held[pair])} |"
         )
     lines += [
         "",
@@ -833,6 +931,18 @@ def render_markdown(report: dict, meta: dict) -> str:
             "separate; that column is the benchmark size at which the measured paired SE "
             "would put the gap at the same alpha/power threshold, assuming the added "
             "questions resemble the ones already graded."
+        ),
+        "",
+        (
+            "**Both seed and question counts condition on the observed gap being the true "
+            "effect.** They are point estimates standing in for an unknown, so every count "
+            'here reads as "what it would take to detect a gap this big, if it is really '
+            'this big" -- not "what it would take to settle this comparison". Both scale '
+            "as 1/dJ^2, so a true gap half the observed one costs four times as much, and a "
+            "true gap of zero is undetectable at any budget rather than merely expensive. "
+            "This matters most where the number is most tempting: a pair marked **NOT "
+            "separated** above has a CI covering zero, so its row is a conditional answer to "
+            "a question the data has not settled, not a plan."
         ),
     ]
     lines += [

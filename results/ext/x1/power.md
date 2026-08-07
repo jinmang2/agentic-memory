@@ -17,11 +17,11 @@ Rank order is `e3sA > e3sB > e3sPH > e3sM` under the full gold and `e3sA > e3sB 
 
 **Which adjacent gaps the evidence actually separates:**
 
-| pair | paired bootstrap (both golds) | seed jitter | gold noise |
+| pair | paired bootstrap (both golds) | seed jitter | gold noise (worst basis) |
 | --- | --- | --- | --- |
-| e3sA over e3sB | **NOT separated** | clears (1 seed) | holds (P(flip) = 0.0001) |
-| e3sB over e3sPH | **separated** | clears (1 seed) | holds (P(flip) = 0.0000) |
-| e3sPH over e3sM | **separated** | clears (1 seed) | holds (P(flip) = 0.0000) |
+| e3sA over e3sB | **NOT separated** | clears at 1 seed | holds (P(not held) = 0.0001) |
+| e3sB over e3sPH | **separated** | clears at 1 seed | holds (P(not held) = 0.0000) |
+| e3sPH over e3sM | **separated** | clears at 1 seed | holds (P(not held) = 0.0000) |
 
 The three columns are three different noise sources, not three votes on one question. Only the first puts every question at risk; sections 2 and 3 explain why the other two are narrower and must not be read as corroboration.
 
@@ -101,6 +101,8 @@ Two-sample normal approximation `n = ((z_a/2 + z_b) * sd * sqrt(2) / d)^2`, roun
 
 The last column is the lever seeds do not provide. A seed replicate reruns the *same* questions, so it cannot help a gap that question sampling fails to separate; that column is the benchmark size at which the measured paired SE would put the gap at the same alpha/power threshold, assuming the added questions resemble the ones already graded.
 
+**Both seed and question counts condition on the observed gap being the true effect.** They are point estimates standing in for an unknown, so every count here reads as "what it would take to detect a gap this big, if it is really this big" -- not "what it would take to settle this comparison". Both scale as 1/dJ^2, so a true gap half the observed one costs four times as much, and a true gap of zero is undetectable at any budget rather than merely expensive. This matters most where the number is most tempting: a pair marked **NOT separated** above has a CI covering zero, so its row is a conditional answer to a question the data has not settled, not a plan.
+
 Smallest gap each seed budget can resolve:
 
 | seeds | min detectable dJ (pp) |
@@ -113,5 +115,5 @@ Smallest gap each seed budget can resolve:
 
 ## 4. Conclusion
 
-Only part of the ranking e3sA > e3sB > e3sPH > e3sM is claimable. The paired 95% bootstrap CIs separate e3sB over e3sPH (+4.55pp, [+1.88, +7.14], p=0.001); e3sPH over e3sM (+29.42pp, [+26.56, +32.21], p<0.0001), but not e3sA over e3sB (+1.82pp, [-0.32, +3.90], p=0.097) -- that interval covers zero, so at 1,540 questions the gap is inside question-sampling noise. Dropping the 99 audited questions does not rescue it (+1.80pp [-0.42, +4.03]). More seeds would not fix it, because rerunning the same questions does not add questions: at the measured paired SE, e3sA over e3sB would need roughly 4,186 questions (vs 1,540) to be powered at alpha=0.05 / power=0.80. The other two noise sources are not the binding constraint and must not be read as agreement: every gap clears the 1.39pp a single seed resolves at alpha=0.05 / power=0.80 given the +/-0.35pp replicate SD, and redrawing the 99 disputed verdicts leaves the order intact in at least 99.99% of 10,000 simulations under both resampling rates, with the order unchanged when those questions are dropped instead. Both of those checks are narrower than the bootstrap: the gold-noise simulation perturbs only 99 of 1,540 verdicts and holds the rest fixed, which is why it reports a stability the bootstrap over all 1,540 does not support. So: the ranking is claimable at one seed and under either gold for the pairs listed as separated above, and for those pairs only; any future arm landing within 1.39pp of another is a tie at one seed before question sampling is even considered, and one at the 0.35pp replicate SD would need 16 seeds.
+Only part of the ranking e3sA > e3sB > e3sPH > e3sM is claimable. The paired 95% bootstrap CIs separate e3sB over e3sPH (+4.55pp, [+1.88, +7.14], p=0.001); e3sPH over e3sM (+29.42pp, [+26.56, +32.21], p<0.0001), but not e3sA over e3sB (+1.82pp, [-0.32, +3.90], p=0.097) -- that interval covers zero, so at 1,540 questions the gap is inside question-sampling noise. Dropping the 99 audited questions does not rescue it (+1.80pp [-0.42, +4.03]). More seeds would not fix it, because rerunning the same questions does not add questions. At the measured paired SE, e3sA over e3sB would need roughly 4,186 questions (vs 1,540) to be powered at alpha=0.05 / power=0.80 -- a figure that conditions on the observed gap being the true effect, which is exactly what its own CI declines to establish. Read it as the size needed if the gap is real and this big; a smaller true gap needs more questions without bound, and a true gap of zero makes the number undefined rather than large. The other two noise sources are not the binding constraint and must not be read as agreement: every gap clears the 1.39pp a single seed resolves at alpha=0.05 / power=0.80 given the +/-0.35pp replicate SD, and redrawing the 99 disputed verdicts leaves the order intact in at least 99.99% of 10,000 simulations under both resampling rates, with the order unchanged when those questions are dropped instead. Both of those checks are narrower than the bootstrap: the gold-noise simulation perturbs only 99 of 1,540 verdicts and holds the rest fixed, which is why it reports a stability the bootstrap over all 1,540 does not support. So: the ranking is claimable at one seed and under either gold for the pairs listed as separated above, and for those pairs only; any future arm landing within 1.39pp of another is a tie at one seed before question sampling is even considered, and one at the 0.35pp replicate SD would need 16 seeds.
 

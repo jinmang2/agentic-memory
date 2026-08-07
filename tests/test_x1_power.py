@@ -593,13 +593,146 @@ def test_the_conclusion_claims_the_whole_ranking_when_every_gap_separates():
     assert "Only part" not in report["conclusion"]
 
 
+def _md(x1, report: dict, n_judged: int = 400, n_flagged: int = 40) -> str:
+    report["meta"] = {
+        "n_judged": n_judged,
+        "n_flagged": n_flagged,
+        "seed": 0,
+        "n_boot": 2000,
+        "n_sim": 2000,
+    }
+    return x1.render_markdown(report, report["meta"])
+
+
 def test_the_summary_table_marks_the_unseparated_pair(tmp_path):
     x1 = _power()
-    report = _mixed_report(x1)
-    report["meta"] = {"n_judged": 400, "n_flagged": 40, "seed": 0, "n_boot": 2000, "n_sim": 2000}
-    md = x1.render_markdown(report, report["meta"])
+    md = _md(x1, _mixed_report(x1))
     assert "**NOT separated**" in md
     assert "**separated**" in md
+
+
+# --- generated prose must come from the data, not from constants ----------
+
+
+def test_the_conclusion_uses_the_measured_flagged_count_not_a_literal():
+    # the conclusion takes n_flagged and must spend it. Writing 99 inline reads
+    # correctly on our data and lies on anyone else's -- including the synthetic
+    # worlds these tests run in.
+    x1 = _power()
+    conclusion = _mixed_report(x1)["conclusion"]  # 40 flagged, not 99
+    assert "40 audited question" in conclusion
+    assert "40 disputed verdict" in conclusion
+    assert "40 of 400" in conclusion
+    assert "99" not in conclusion
+
+
+def test_the_flagged_count_in_the_arms_header_follows_the_data():
+    x1 = _power()
+    assert "correct on the 40 flagged" in _md(x1, _mixed_report(x1))
+
+
+def _report_with(x1, correct: dict[str, int], n: int = 1000, n_flagged: int = 500):
+    """Arms hitting exact correct-counts, with the flagged block scored proportionally.
+
+    Each arm gets the same fraction right inside and outside the flagged block,
+    so the unflagged draw rate matches its overall J and the gold-noise
+    simulation is driven by the block size rather than by a skew we invented.
+    """
+    arms = {}
+    for name, k in correct.items():
+        in_flag = round(k * n_flagged / n)
+        out_flag = k - in_flag
+        arms[name] = (
+            [True] * in_flag
+            + [False] * (n_flagged - in_flag)
+            + [True] * out_flag
+            + [False] * (n - n_flagged - out_flag)
+        )
+        assert sum(arms[name]) == k
+    mask = [True] * n_flagged + [False] * (n - n_flagged)
+    return x1.build_report(arms, mask, n_boot=1000, n_sim=2000, seed=0)
+
+
+def test_the_seed_column_says_needs_when_the_gap_does_not_clear_one_seed():
+    # 1.0pp is under the 1.39pp a single seed resolves, so this pair needs 2.
+    # The old cell said "clears (2 seed)" for every row: only the number moved.
+    x1 = _power()
+    report = _report_with(x1, {"e3sA": 600, "e3sB": 590, "e3sPH": 300, "e3sM": 100})
+    row = next(s for s in report["seeds_needed"] if s["pair"] == ["e3sA", "e3sB"])
+    assert row["seeds_full"] == 2
+    md = _md(x1, report, n_judged=1000, n_flagged=500)
+    assert "**needs 2 seeds**" in md
+    assert "clears (2 seed)" not in md
+
+
+def test_the_gold_noise_column_says_unstable_when_the_pair_flips_often():
+    # half the questions flagged and a 1.0pp gap: redrawing them flips the pair
+    # far too often to call it stable. The old cell said "holds" regardless.
+    x1 = _power()
+    report = _report_with(x1, {"e3sA": 600, "e3sB": 590, "e3sPH": 300, "e3sM": 100})
+    worst = max(
+        p["p_flip"] + p["p_tie"]
+        for basis in x1.RATE_BASES
+        for p in report["rank_stability"][basis]["pairs"]
+        if (p["high"], p["low"]) == ("e3sA", "e3sB")
+    )
+    assert worst > x1.GOLD_NOISE_ALPHA
+    md = _md(x1, report, n_judged=1000, n_flagged=500)
+    assert "**unstable**" in md
+
+
+def test_both_summary_verdicts_can_still_read_positive():
+    # the mirror of the two tests above: the derived cells must be able to say
+    # "clears"/"holds" too, or they would just be pinning a pessimistic constant.
+    x1 = _power()
+    report = _report_with(x1, {"e3sA": 800, "e3sB": 600, "e3sPH": 300, "e3sM": 100})
+    md = _md(x1, report, n_judged=1000, n_flagged=500)
+    assert "clears at 1 seed" in md
+    assert "holds (P(not held) = " in md
+    assert "**unstable**" not in md
+    assert "**needs " not in md
+
+
+def test_a_tied_pair_renders_a_grammatical_seed_cell():
+    # _seeds_cell(None) composed into "clears (... seed)" produced
+    # "clears (no number of seeds (gap is 0) seed)".
+    x1 = _power()
+    report = _report_with(x1, {"e3sA": 600, "e3sB": 600, "e3sPH": 300, "e3sM": 100})
+    row = next(s for s in report["seeds_needed"] if s["pair"] == ["e3sA", "e3sB"])
+    assert row["seeds_full"] is None
+    md = _md(x1, report, n_judged=1000, n_flagged=500)
+    assert "unresolvable (gap is 0)" in md
+    assert "(gap is 0) seed)" not in md
+    # and the conclusion must not invent a benchmark size for a zero effect
+    assert "no benchmark size detects a gap of zero" in report["conclusion"]
+
+
+def test_the_conclusion_refuses_a_ranking_that_contradicts_the_measured_order():
+    # ADJACENT_PAIRS is a constant; rank_order_full is computed from J. If they
+    # disagree the artifact would assert two different rankings in two places.
+    x1 = _power()
+    with pytest.raises(ValueError, match="rank order"):
+        _report_with(x1, {"e3sA": 500, "e3sB": 900, "e3sPH": 300, "e3sM": 100})
+
+
+def test_the_effect_size_assumption_is_disclosed_where_the_counts_are_printed():
+    x1 = _power()
+    report = _mixed_report(x1)
+    assert "conditions on the observed gap being the true effect" in report["conclusion"]
+    assert "undefined" in report["conclusion"]
+    md = _md(x1, report)
+    assert "condition on the observed gap being the true effect" in md
+    assert "1/dJ^2" in md
+
+
+def test_a_small_but_measured_p_is_not_printed_as_zero():
+    # p_boot=0.0002 is above the 1/n_boot resolution floor but rounds to 0.000
+    # at three decimals, so the old guard let it print as an exact-looking zero.
+    x1 = _power()
+    assert x1._fmt_p(0.0002, 10_000) == "p<0.001"
+    assert x1._fmt_p(0.0, 10_000) == "p<0.0001"  # under the resolution floor
+    assert x1._fmt_p(0.097, 10_000) == "p=0.097"
+    assert x1._fmt_p(0.001, 10_000) == "p=0.001"
 
 
 # --- real-data pins -------------------------------------------------------
