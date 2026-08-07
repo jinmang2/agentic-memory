@@ -151,6 +151,31 @@ def test_match_report_without_counts_assumes_one_row_per_key():
     assert rep["excluded_rows"] == 2
 
 
+def test_match_report_marks_row_counts_unknown_for_a_bare_set():
+    # the one-row-per-key assumption above is a guess, not a measurement: the
+    # artifact must say so, or a future catalogue flagging a duplicated question
+    # would understate the denominator reduction with nothing looking wrong.
+    x1 = _join()
+    rep = x1.match_report({(0, "a?")}, {(0, "a?")})
+    assert rep["row_counts_known"] is False
+
+
+def test_match_report_marks_row_counts_known_when_counts_are_available():
+    x1 = _join()
+    assert x1.match_report(Counter({(0, "a?"): 2}), {(0, "a?")})["row_counts_known"] is True
+    assert (
+        x1.match_report({(0, "a?")}, {(0, "a?")}, record_counts={(0, "a?"): 2})["row_counts_known"]
+        is True
+    )
+
+
+def test_match_report_treats_an_empty_counter_as_known_not_missing():
+    # "we counted, and there are no rows" must not collapse into "we did not count".
+    x1 = _join()
+    assert x1.match_report(Counter(), set())["row_counts_known"] is True
+    assert x1.match_report(set(), set(), record_counts=Counter())["row_counts_known"] is True
+
+
 def test_judged_record_counts_skips_unjudged_rows(tmp_path):
     x1 = _join()
     path = tmp_path / "r.jsonl"
@@ -190,7 +215,8 @@ def test_every_score_corrupting_error_matches_a_judged_record():
     keys = x1.error_question_keys(
         ad.score_corrupting(ad.load_errors(ERRORS)), x1.question_key_map(DATASET)
     )
-    counts = x1.judged_record_counts(RECORDS)
-    rep = x1.match_report(counts, keys, record_counts=counts)
+    rep = x1.match_report(x1.judged_record_counts(RECORDS), keys)
     assert rep["unmatched_errors"] == []
     assert rep["matched"] == 99
+    # the replay's denominator reduction is measured, not assumed
+    assert rep["row_counts_known"] is True

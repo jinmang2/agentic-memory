@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from pathlib import Path
 
 
@@ -95,9 +95,9 @@ def judged_record_counts(records_path: Path) -> Counter[tuple[int, str]]:
 
 
 def match_report(
-    records_qs,
+    records_qs: Collection[tuple[int, str]] | Mapping[tuple[int, str], int],
     error_keys: set[tuple[int, str]],
-    record_counts: dict[tuple[int, str], int] | None = None,
+    record_counts: Mapping[tuple[int, str], int] | None = None,
 ) -> dict:
     """Report how the error keys land on our records.
 
@@ -107,16 +107,24 @@ def match_report(
     ``excluded_rows``, the true denominator reduction, which exceeds ``matched``
     wherever one question serves two rows -- deriving them from a passed Counter
     is deliberate, so that handing over duplicate-bearing records cannot quietly
-    report zero duplicates. ``unmatched_errors`` is always listed in full: a
-    quiet partial join is the failure mode this whole module exists to prevent.
+    report zero duplicates.
+
+    With neither a Counter nor ``record_counts``, row counts are unknown and
+    one row per key is *assumed*; ``row_counts_known`` is then False so the
+    assumption is visible in the artifact rather than passing for a measured
+    zero. ``unmatched_errors`` is always listed in full: a quiet partial join is
+    the failure mode this whole module exists to prevent.
     """
     matched = sorted(k for k in error_keys if k in records_qs)
-    if record_counts is None:
-        record_counts = records_qs if isinstance(records_qs, Mapping) else None
-    counts = record_counts or {}
+    if record_counts is None and isinstance(records_qs, Mapping):
+        record_counts = records_qs
+    # an explicitly passed but empty mapping is a measurement ("no rows"), not
+    # the absence of one -- so test for None rather than falsiness.
+    counts: Mapping[tuple[int, str], int] = {} if record_counts is None else record_counts
     return {
         "matched": len(matched),
         "unmatched_errors": sorted(k for k in error_keys if k not in records_qs),
         "duplicate_matched_keys": sum(1 for k in matched if counts.get(k, 1) > 1),
         "excluded_rows": sum(counts.get(k, 1) for k in matched),
+        "row_counts_known": record_counts is not None,
     }
