@@ -124,6 +124,29 @@ MEM0_STORE = {"overrides": {"vector_store": "QdrantVectorStore"}}
 # a different embedder could not be read against the other three. A BGE-m3
 # lineage arm stays available as a later addition; the recipe's RERANKER is
 # unaffected either way and stays BGE.
+# Zep's write temperature, dated rather than read off the pinned SHA.
+#
+# The pin (graphiti @ 9140123, 2026-07) has `DEFAULT_TEMPERATURE = 1`, applied
+# uniformly to every write call with no per-role split. Taking that at face
+# value would have been wrong: pypi wheels put the 0 -> 1 change between 0.18.9
+# (2025-08-19) and 0.19.0 (2025-09-02), and 0.19.0 is the release that moved the
+# default model to `gpt-5-mini`/`gpt-5-nano`. GPT-5 reasoning models accept only
+# temperature 1 — so the constant tracks the default MODEL becoming a reasoning
+# model, and says nothing about extraction quality. At the paper's own release
+# (0.5.1, live when arXiv:2501.13956 was submitted 2025-01-23) the value is 0,
+# on `DEFAULT_MAX_TOKENS = 16384`, running gpt-4o-mini — which is the model this
+# arm runs. So the paper-era pair is what this pins.
+#
+# `generate` is NOT a lineage value: graphiti ships no answer generator, the
+# paper used a separate gpt-4o-class responder, and 0.0 is the harness-neutral
+# setting Nemori and Mem0 already use. Labeled here so it is never cited as
+# upstream's.
+ZEP_ROLE_TEMPS = {
+    "extract": {"temperature": 0.0, "max_tokens": 16384},
+    "distill": {"temperature": 0.0, "max_tokens": 16384},
+    "generate": {"temperature": 0.0},
+}
+
 ZEP_RECIPE_NAME = "cross_encoder"
 _ZEP_RECIPE = zep_search_recipe(ZEP_RECIPE_NAME)
 # Upstream applies one `limit` across every subgraph rather than a per-type
@@ -195,25 +218,26 @@ CONFIGS: dict[str, RunnerConfig] = {
             link_expansion_cap=11,
             link_expansion_per_hit=True,
         ),
-        # Track 3. run_ready=False until the counting pass and the quote gate
-        # clear: the study reads upstream as "at least 4-6 LLM calls per episode"
-        # (docs/research/zep-graphiti.md), which at 5,882 turns is 23.5k-35.3k
-        # write calls — two to three times A-Mem's 11,754, and the most
-        # expensive arm in this campaign if it holds. That range is a READ of
-        # prose, not a measurement, and Track 2 established that borrowed
-        # calibration is worth ~2x error; the number that gates spending has to
-        # come from CountingLLM against this port.
+        # Track 3. The study read upstream prose as "at least 4-6 LLM calls per
+        # episode", which at 5,882 turns would be 23.5k-35.3k write calls. The
+        # CountingLLM pass has now measured it against this port instead of
+        # reading it: 19,571 / 24,982 / 28,142 calls across the yield band
+        # (`results/repro/quotes/zep_ingest_quote_band.json`), so the prose read
+        # was right at the central point and optimistic at the low one. Either
+        # way this is the most expensive arm in the campaign — A-Mem's entire
+        # write budget, 11,754 calls, is Zep's UNCONDITIONAL floor (entity
+        # extraction + fact extraction, one each per message).
         #
-        # Also unresolved: role temperatures. Every other arm pins its lineage's
-        # temps; the Zep study records none, so this entry inherits the runner's
-        # A-Mem-shaped defaults, which is a stated gap rather than a decision.
-        # It does not affect call COUNTS, so the counting pass can proceed, but
-        # it must be settled before any paid run.
+        # Still gated on the pilot: the band's width is real. Edge resolution
+        # (the largest site, 10,041 calls at the central point) scales with how
+        # many facts a message yields, and no canned response can measure that —
+        # only a real conv0 ingest can, which is what the pilot is for.
         RunnerConfig(
             "zep_cross_encoder",
             lambda: [ZepGraphOrganizer()],
             _ZEP_RECIPE.memory_types,
             run_ready=False,
+            role_temps=ZEP_ROLE_TEMPS,
             per_type_k=ZEP_PER_TYPE_K,
             store=_ZEP_RECIPE.config_kwargs(),
             keyword_queries=False,

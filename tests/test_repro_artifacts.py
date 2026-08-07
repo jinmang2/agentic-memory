@@ -829,6 +829,32 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
             assert "lexical_types" not in (cfg.store or {}), name
 
 
+def test_zep_write_temperature_is_the_paper_era_value_not_the_pinned_sha_one():
+    """Zep writes at temperature 0, and the pinned SHA is the wrong place to read
+    that from.
+
+    graphiti @ 9140123 has `DEFAULT_TEMPERATURE = 1`. Dating the constant across
+    pypi wheels puts the 0 -> 1 change between 0.18.9 (2025-08-19) and 0.19.0
+    (2025-09-02), and 0.19.0 is the release that made `gpt-5-mini` the default
+    model — GPT-5 reasoning models accept only temperature 1. The constant
+    therefore tracks the default MODEL, not a view about extraction. At 0.5.1,
+    live when the paper was submitted and running gpt-4o-mini as this arm does,
+    the value is 0 on max_tokens 16384.
+
+    Pinned as a test because the failure mode is silent: 1.0 would look like
+    fidelity (it IS in the pinned clone) while making this the only arm in the
+    campaign sampling its write path at full temperature.
+    """
+    cfgmod = _load_configs()
+    zep = cfgmod.get_config("zep_cross_encoder")
+    for role in ("extract", "distill"):
+        assert zep.role_temps[role]["temperature"] == 0.0, role
+        assert zep.role_temps[role]["max_tokens"] == 16384, role
+    # not a lineage value — graphiti ships no answer generator; this is the
+    # harness-neutral setting shared with nemori and mem0
+    assert zep.role_temps["generate"]["temperature"] == 0.0
+
+
 def test_runner_configs_construct_and_name_arms():
     cfgmod = _load_configs()
     CONFIGS, get_config = cfgmod.CONFIGS, cfgmod.get_config
