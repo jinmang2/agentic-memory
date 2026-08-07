@@ -225,7 +225,14 @@ def worker_cmd(args, conv: int) -> list[str]:
         args.embedder,
         "--expand-links",
         args.expand_links,
-    ]
+    ] + (
+        # getattr, not attribute access: this must fail CLOSED. An args object
+        # without the field (a caller's namespace, an older invocation) then
+        # omits the flag and the worker's run_ready gate applies — the safe
+        # direction. Reading it directly would turn a missing field into a
+        # crash mid-fan-out instead.
+        ["--allow-unverified-config"] if getattr(args, "allow_unverified_config", False) else []
+    )
 
 
 def merge_ingest_summaries(summaries: list[dict], model: str) -> dict:
@@ -360,11 +367,25 @@ def main() -> None:
     )
     ap.add_argument("--expand-links", choices=["off", "on"], default="off")
     ap.add_argument("--tag-suffix", default="", help="e.g. _seed1 (matches the sequential path)")
+    ap.add_argument(
+        "--allow-unverified-config",
+        action="store_true",
+        help="pilot a config whose run_ready is False. Refuses more than one conversation "
+        "here for the same reason the worker does: the gate exists to stop a full "
+        "campaign's spend on an arm that has never survived a real run.",
+    )
     args = ap.parse_args()
     if args.workers < 1:
         ap.error("--workers must be >= 1")
 
     convs = parse_convs(args.convs)
+    if args.allow_unverified_config and len(convs) > 1:
+        raise SystemExit(
+            f"--allow-unverified-config covers a single-conversation pilot only, "
+            f"got {len(convs)} ({args.convs}). The worker refuses this too; it is "
+            f"checked here as well so the refusal costs nothing instead of arriving "
+            f"one subprocess spawn at a time."
+        )
     print(
         f"[parallel-ingest] {len(convs)} convs {convs} | workers={args.workers} "
         f"(≈{args.workers} in-flight API calls) | data-dir={args.data_dir}",

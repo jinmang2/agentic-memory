@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util as _ilu
 import json
+import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,7 +21,8 @@ from agmem.embed.fake import FakeEmbedder
 from agmem.llm.client import LLMClient, RoleConfig
 from agmem.organizers.amem import AMemOrganizer
 
-_REPRO_PATH = Path(__file__).resolve().parent.parent / "scripts" / "exp_amem_repro.py"
+_SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
+_REPRO_PATH = _SCRIPTS / "exp_amem_repro.py"
 _CONFIGS_PATH = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "configs.py"
 
 
@@ -1334,3 +1336,52 @@ def test_configure_logging_is_idempotent():
     finally:
         agmem_logger.handlers[:] = prev_handlers
         agmem_logger.setLevel(prev_level)
+
+
+def test_pilot_override_is_bounded_to_one_conversation():
+    """`run_ready=False` blocks an arm whose temps/k/store threading has never
+    survived a real run — but a pilot is HOW that threading gets verified, so the
+    gate needs a deliberate way through that is not "flip the gate off".
+
+    The override is bounded to a single conversation on purpose. Flipping
+    `run_ready` to True would open the pilot and the full campaign in one move,
+    and the full campaign is the spend the gate exists to stop. Bounded this way,
+    the escape hatch cannot become the thing it was guarding against.
+    """
+    cmd = [sys.executable, str(_SCRIPTS / "exp_amem_repro.py")]
+    common = ["--config", "zep_cross_encoder", "--ingest-only", "--data-dir", "/tmp/nope"]
+
+    blocked = subprocess.run([*cmd, *common, "--conv", "0"], capture_output=True, text=True)
+    assert blocked.returncode != 0
+    assert "not run-ready" in (blocked.stderr + blocked.stdout)
+
+    campaign = subprocess.run(
+        [*cmd, *common, "--conv", "all", "--allow-unverified-config"],
+        capture_output=True,
+        text=True,
+    )
+    assert campaign.returncode != 0
+    assert "single-conversation pilot only" in (campaign.stderr + campaign.stdout)
+
+
+def test_parallel_orchestrator_refuses_a_multi_conv_pilot_before_spawning():
+    """Same bound, enforced by the orchestrator too. The worker would refuse each
+    conversation anyway, but only after a subprocess spawn apiece; here it costs
+    nothing and the message arrives once."""
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPTS / "repro" / "ingest_parallel.py"),
+            "--data-dir",
+            "/tmp/nope",
+            "--config",
+            "zep_cross_encoder",
+            "--convs",
+            "0-3",
+            "--allow-unverified-config",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "single-conversation pilot only" in (proc.stderr + proc.stdout)
