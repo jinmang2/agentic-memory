@@ -119,5 +119,17 @@ def run_stamp(
         stamp["embedder"] = memory.embedder.name
         stamp["vector_store"] = type(memory.vector_store).__name__
         stamp["organizers"] = [o.name for o in memory.organizers]
+        # The RERANKER and any forced degradations, because a read path can be
+        # downgraded silently and the artifact was the only place that could
+        # have said so. Capability resolution falls back when a slot's adapter
+        # is unavailable, and the fallback is a working object — so a run whose
+        # `CrossEncoderReranker` could not load produces a complete, healthy
+        # result that is simply a DIFFERENT read path than the one it is
+        # labelled with. Zep is where this stops being hypothetical: its arm is
+        # named for upstream's cross-encoder recipe (paper §4.1), and a silent
+        # fall back to NoopReranker turns it into the RRF-order recipe, which is
+        # a different upstream config with its own published identity.
+        stamp["reranker"] = type(memory.reranker).__name__ if memory.reranker else None
+        stamp["degradations"] = list(getattr(memory, "_degradations", []))
     stamp.update(extra)
     return stamp

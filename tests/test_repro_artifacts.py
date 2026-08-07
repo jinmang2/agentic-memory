@@ -1477,3 +1477,42 @@ def test_zep_raises_reply_retries_because_its_call_volume_demands_it():
     for name, cfg in cfgmod.CONFIGS.items():
         if name != "zep_cross_encoder":
             assert "structured_reply_retries" not in (cfg.store or {}), name
+
+
+def test_run_stamp_records_the_reranker_and_any_degradation():
+    """A downgraded read path must be visible in the artifact.
+
+    Capability resolution substitutes a working adapter when the configured one
+    is unavailable, so a run that lost its reranker still finishes and still
+    looks healthy — the only difference is that it measured a different read
+    path than its label claims. Zep makes this concrete: its arm is named for
+    upstream's cross-encoder recipe, and a silent substitution turns it into the
+    RRF-order recipe, a different upstream config with its own identity. Neither
+    field was stamped before 2026-08-07, so nothing downstream could tell.
+    """
+    from agmem.bench import stamp as bench_stamp
+
+    mem = SimpleNamespace(
+        config=SimpleNamespace(profile="lite"),
+        embedder=SimpleNamespace(name="text-embedding-3-small"),
+        vector_store=object(),
+        organizers=[SimpleNamespace(name="zep_graph")],
+        reranker=SimpleNamespace(),
+        _degradations=["[reranker] configured 'CrossEncoderReranker' unavailable; falling back"],
+    )
+    s = bench_stamp.run_stamp(mem, model="gpt-4o-mini", judge="gpt-4o-mini", runs=1)
+    assert s["reranker"] == "SimpleNamespace"
+    assert s["degradations"] and "reranker" in s["degradations"][0]
+
+    # a clean run records an empty list, not a missing key — absence of the key
+    # would be indistinguishable from an older artifact that never had it
+    clean = SimpleNamespace(
+        config=SimpleNamespace(profile="lite"),
+        embedder=SimpleNamespace(name="e"),
+        vector_store=object(),
+        organizers=[],
+        reranker=None,
+        _degradations=[],
+    )
+    s2 = bench_stamp.run_stamp(clean, model="m", judge="j", runs=1)
+    assert s2["degradations"] == [] and s2["reranker"] is None
