@@ -1546,3 +1546,47 @@ def test_ingest_only_does_not_build_the_configured_reranker(tmp_path):
     assert (cfgmod.get_config(eval_args.config).store or {})["overrides"]["reranker"] == (
         "CrossEncoderReranker"
     )
+
+
+def test_stamp_records_the_read_path_through_the_runners_actual_call(tmp_path):
+    """The reranker/degradation fields must survive the path the HARNESS uses.
+
+    This is the finding that produced them being pinned this way. `run_stamp`
+    grew the fields under `if memory is not None`, and a test that called
+    `run_stamp` directly with a fabricated memory passed — while the runner
+    passes `memory=None` for every stamp it writes, because a run spans many
+    conversations. The fields were dead in the only place they mattered, and the
+    artifact from a live campaign had neither key. Drive `_stamp` here, not
+    `run_stamp`.
+    """
+    H = _load_repro()
+
+    class _Args(SimpleNamespace):
+        # `_stamp` reads a long tail of CLI fields this test does not care
+        # about; anything unset is None rather than an AttributeError, so the
+        # test stays about the read-path fields instead of tracking the parser.
+        def __getattr__(self, name):
+            return None
+
+    args = _Args(
+        config="zep_cross_encoder",
+        data_dir=str(tmp_path),
+        expand_links="off",
+        ingest_only=True,
+        model="gpt-4o-mini",
+        endpoint="https://api.openai.com/v1",
+        embedder="fake",
+        k=10,
+        eval_mode="ours",
+        runs=1,
+        conv="0",
+    )
+    mem = H.build_memory(args, FakeEmbedder(dim=16), 0, {})
+    mem.close()
+    assert args._read_path["reranker"] == "NoopReranker"
+    assert args._read_path["reranker_skipped_ingest_only"] is True
+
+    stamp = H._stamp(args, H.get_model("gpt-4o-mini"), "sha", "t0", "t1", None)
+    assert stamp["reranker"] == "NoopReranker"
+    assert stamp["degradations"] == []
+    assert stamp["reranker_skipped_ingest_only"] is True

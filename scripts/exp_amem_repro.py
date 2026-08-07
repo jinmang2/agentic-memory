@@ -554,6 +554,20 @@ def build_memory(
     )
     if trace_path is not None and mem.llm is not None:
         mem.llm.trace_path = trace_path
+    # Record the RESOLVED read path so the run stamp can carry it. `_stamp`
+    # builds one stamp for a run that spans many conversations and therefore has
+    # no single memory to read — but every conversation of a run resolves the
+    # SAME config, so capturing it here is accurate and is the only place it is
+    # observable. Written back onto `args` following this file's existing
+    # precedent for `args.endpoint`.
+    #
+    # Without this the fields exist on `run_stamp` and are dead in this harness:
+    # the runner passes `memory=None`, so the branch that fills them never runs.
+    args._read_path = {
+        "reranker": type(mem.reranker).__name__ if mem.reranker else None,
+        "degradations": list(getattr(mem, "_degradations", [])),
+        "reranker_skipped_ingest_only": bool(getattr(args, "ingest_only", False)),
+    }
     return mem
 
 
@@ -1233,6 +1247,9 @@ def _stamp(
     extra_rates = {}
     if judge_model and judge_model != args.model:
         extra_rates["judge_cost_rates"] = get_model(judge_model).rates_dict()
+    # The resolved read path, captured by build_memory. Absent only when no
+    # memory was ever built (aggregate stamps), never silently empty.
+    extra_rates.update(getattr(args, "_read_path", None) or {})
     return bench_stamp.run_stamp(
         None,  # the memory is per-conversation here; the run spans many
         model=args.model,
