@@ -1,0 +1,15 @@
+===== attempt 1 =====
+[conv0] ingested 419 turns, notes persisted under results/repro/stores/zep-ce-pilot
+[ingest-only] done (conv0); reload with --eval-only
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.memory.ops.jsonl (evolution log)
+
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]
+Loading weights:  26%|██▌       | 102/393 [00:00<00:00, 1001.27it/s]
+Loading weights:  53%|█████▎    | 209/393 [00:00<00:00, 1036.05it/s]
+Loading weights: 100%|██████████| 393/393 [00:00<00:00, 1332.46it/s]
+WARNING agmem.llm: structured output dropped (role=distill, total_drops=1): {"duplicate_of":90de3af4e3684eef9c75bfc318610939,"contradicts":[]} ...
+WARNING agmem.organizers.zep_graph.community: label propagation is oscillating (2-cycle) after 8 rounds over 230 nodes; stopping. Upstream would loop forever here — the components involved cannot be clustered by this rule and stay singletons
+INFO agmem.organizers.zep_graph: community refresh: 230 entities -> 125 communities (125 rebuilt, 0 dropped)

@@ -1,0 +1,122 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "58930b1247a59fc1ef5deecbcb3a5143499350a3",
+    "model": "gpt-4o-mini",
+    "judge": "wujiang",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-07T11:56:08+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": {
+      "facts": 10,
+      "entities": 10,
+      "communities": 10
+    },
+    "eval_mode": "wujiang",
+    "temps": {
+      "extract": {
+        "temperature": 0.0,
+        "max_tokens": 16384
+      },
+      "distill": {
+        "temperature": 0.0,
+        "max_tokens": 16384
+      },
+      "generate": {
+        "temperature": 0.0
+      }
+    },
+    "expand_links": "off",
+    "conv": "0",
+    "workers": 1,
+    "n_questions": null,
+    "config": "zep_cross_encoder",
+    "memory_types": [
+      "facts",
+      "entities",
+      "communities"
+    ],
+    "keyword_queries": false,
+    "link_expansion_cap": null,
+    "link_expansion_per_hit": false,
+    "eval_only": false,
+    "git_sha": "58930b1247a59fc1ef5deecbcb3a5143499350a3",
+    "utc_started": "2026-08-07T01:38:17.007743+00:00",
+    "utc_finished": "2026-08-07T02:56:08.763369+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)"
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 0,
+      "n_turns": 419
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 943,
+      "tokens_in": 527530,
+      "tokens_out": 129114,
+      "errors": 0,
+      "latency_ms_total": 2211146.4000000004,
+      "latency_ms_avg": 2344.8
+    },
+    "distill": {
+      "calls": 1234,
+      "tokens_in": 878414,
+      "tokens_out": 31728,
+      "errors": 0,
+      "latency_ms_total": 1155270.8,
+      "latency_ms_avg": 936.2
+    },
+    "embed": {
+      "calls": 4272,
+      "tokens_in": 44784,
+      "tokens_out": 0,
+      "latency_ms_avg": 282.4,
+      "errors": 0
+    }
+  },
+  "cost_usd": 0.308292,
+  "drops": {
+    "distill": 1
+  },
+  "timing": {
+    "ingest_s": 4643.2,
+    "total_s": 4643.2
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 419,
+      "facts": 762,
+      "entities": 230
+    },
+    "total_items": 1411,
+    "memory_jsonl_bytes": 648984,
+    "store_dir_bytes": 28561408
+  },
+  "op_counts": {
+    "ADD:episodic": 419,
+    "ADD:entities": 230,
+    "ADD:facts": 762,
+    "UPDATE:facts": 309,
+    "UPDATE:entities": 92,
+    "INVALIDATE:facts": 88,
+    "ADD:communities": 125
+  },
+  "llm_trace_file": "gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.memory.jsonl",
+  "op_log_file": "gpt-4o-mini_zep_cross_encoder_conv0_ingest_zepCE_c0.memory.ops.jsonl"
+}
