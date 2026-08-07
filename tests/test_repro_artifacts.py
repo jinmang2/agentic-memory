@@ -1516,3 +1516,33 @@ def test_run_stamp_records_the_reranker_and_any_degradation():
     )
     s2 = bench_stamp.run_stamp(clean, model="m", judge="j", runs=1)
     assert s2["degradations"] == [] and s2["reranker"] is None
+
+
+def test_ingest_only_does_not_build_the_configured_reranker(tmp_path):
+    """An ingest never reranks, so it must not pay to construct one.
+
+    No organizer calls the retrieval pipeline — they read the vector and doc
+    stores directly — so the reranker slot is resolved, built, and never
+    touched for the entire write phase. Free for six of the seven rerankers and
+    not for `CrossEncoderReranker`, which loads its weights in `__init__`:
+    measured 2026-08-07, two Zep ingest workers held 3.4 GB of a 6 GB GPU for
+    hours without issuing one rerank call.
+    """
+    H = _load_repro()
+    args = SimpleNamespace(
+        config="zep_cross_encoder", data_dir=str(tmp_path), expand_links="off", ingest_only=True
+    )
+    mem = H.build_memory(args, FakeEmbedder(dim=16), 0, {})
+    try:
+        assert type(mem.reranker).__name__ == "NoopReranker"
+    finally:
+        mem.close()
+
+    # ...and an eval run still gets the arm's real reranker slot
+    eval_args = SimpleNamespace(
+        config="zep_cross_encoder", data_dir=str(tmp_path), expand_links="off", ingest_only=False
+    )
+    cfgmod = _load_configs()
+    assert (cfgmod.get_config(eval_args.config).store or {})["overrides"]["reranker"] == (
+        "CrossEncoderReranker"
+    )

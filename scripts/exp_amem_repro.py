@@ -477,6 +477,29 @@ def build_memory(
     appended to the shared run trace."""
     cfg_entry = get_config(args.config)
     store_kwargs = dict(cfg_entry.store or {})
+    if getattr(args, "ingest_only", False):
+        # An ingest never reranks. No organizer calls the retrieval pipeline —
+        # they read `ctx.vector_store`/`ctx.doc_store` directly — so the reranker
+        # slot is resolved, constructed and then never touched for the whole
+        # write phase. That is free for the six cheap rerankers and emphatically
+        # not for the seventh: `CrossEncoderReranker` loads its weights EAGERLY
+        # in `__init__`, so every conversation worker was pinning BGE-reranker-v2-m3
+        # (~1.7 GB) for the hours it spent doing something else, once per worker.
+        # Measured 2026-08-07 on the Zep campaign: 3.4 GB of a 6 GB GPU held by
+        # two ingest workers that never issued a single rerank call.
+        #
+        # Forced to Noop rather than made lazy: laziness would hide the cost
+        # instead of removing it, and would leave `stamp["reranker"]` naming an
+        # object that may never be built. Here the ingest artifact records
+        # `NoopReranker` next to `ingest_only: true`, which is exactly what ran.
+        overrides = dict(store_kwargs.get("overrides") or {})
+        if overrides.get("reranker"):
+            logging.getLogger("agmem.repro").info(
+                "ingest-only: skipping reranker %s (write path never reranks)",
+                overrides["reranker"],
+            )
+        overrides["reranker"] = "NoopReranker"
+        store_kwargs["overrides"] = overrides
     cfg = AgmemConfig(
         profile="lite",
         data_dir=Path(args.data_dir).expanduser() if args.data_dir else None,
