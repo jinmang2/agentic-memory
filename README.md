@@ -71,7 +71,7 @@ Policies (rounded) own no memory type and emit no ops, so they wrap any host mec
 
 ## How the claims here were checked
 
-The interesting engineering in this repo is not that eight systems were written; it is that they were *audited*, repeatedly, against their sources.
+The interesting engineering in this repo is not that nine systems were written; it is that they were *audited*, repeatedly, against their sources.
 
 - **A dozen audit rounds**, recorded in `docs/10-fidelity-audit.md` and `docs/research/fidelity-*.md`.
 - The final round ran **eight parallel fresh-eyes audits** that read the upstream clones directly and treated this repo's own documentation as *claims to be verified*, not evidence — because those docs came from the same eyes that would have made any original mistake.
@@ -145,7 +145,7 @@ tests/           441 tests, incl. fidelity pinning suites
 |---|---|
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational four-way on LoCoMo: one harness, one judge, four write paths, with the footnotes that must travel with it |
-| [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the eight systems: mechanisms, benchmarks, reproducibility |
+| [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |
 | [docs/01-capability-system.md](docs/01-capability-system.md) | capability detection and profiles |
