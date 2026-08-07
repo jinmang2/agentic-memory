@@ -1,0 +1,138 @@
+"""Claude Code hooks: the layer that makes this memory automatic rather than asked-for.
+
+The MCP server exposes memory as TOOLS, which means the model has to decide to
+call them. A hook fires whether or not anyone decided anything, which is the
+whole point — capture that depends on the model remembering to capture is the
+thing it was supposed to replace.
+
+Two entry points, one per direction:
+
+    python -m agmem.hooks.recall     SessionStart    memory -> context
+    python -m agmem.hooks.capture    UserPromptSubmit  turn -> memory
+
+Both speak the Claude Code hook contract: a JSON object on stdin, a JSON object
+on stdout whose ``hookSpecificOutput.additionalContext`` (recall) reaches the
+model, and an exit code the harness reads.
+
+THE INVARIANT BOTH OBEY: a hook must never break the session it is attached to.
+A memory system that makes Claude Code fail to start is worse than no memory
+system, so every failure path here exits 0 with no output. `fail_open` is the
+only error handling in this package that is deliberately silent, and it is
+silent because the alternative is a broken editor.
+
+COST: capture is free by default. It writes an episode and returns; organizers
+that need an LLM see no configured endpoint and skip explicitly (verified
+against the MCP server, whose no-LLM path this shares). Distillation is opt-in
+via ``--organizers``, so nobody wires a hook and discovers a bill.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+from typing import Any
+
+DEFAULT_NAMESPACE = "claude-code"
+DEFAULT_DATA_DIR = Path.home() / ".agmem/data"
+
+
+def read_event() -> dict[str, Any]:
+    """The hook payload on stdin, or `{}` when there is none.
+
+    Never raises: a hook invoked by hand, or by a harness version that sends
+    something unexpected, still has to reach `fail_open` rather than dying with
+    a traceback the user sees at session start.
+    """
+    try:
+        raw = sys.stdin.read()
+    except Exception:
+        return {}
+    if not raw or not raw.strip():
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def emit_context(text: str, event_name: str) -> None:
+    """Hand `text` to the model as additional context for `event_name`.
+
+    `hookEventName` is required alongside `additionalContext` — omitting it
+    makes the harness drop the payload, which fails as silence rather than as
+    an error, so it is set from the caller's own event rather than defaulted.
+    """
+    if not text.strip():
+        return
+    json.dump(
+        {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}},
+        sys.stdout,
+    )
+    sys.stdout.write("\n")
+
+
+def fail_open(exc: BaseException) -> None:
+    """Exit 0, silently, after routing the reason somewhere a human can find it.
+
+    The session must survive anything this package does to it. Diagnostics go to
+    AGMEM_HOOK_LOG when set — stderr would surface in the transcript and train
+    the user to ignore hook output, which is exactly when a real failure hides.
+    """
+    log = os.environ.get("AGMEM_HOOK_LOG")
+    if log:
+        try:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(f"{type(exc).__name__}: {exc}\n")
+        except OSError:
+            pass
+    raise SystemExit(0)
+
+
+def _resolve(namespace: str | None, data_dir: str | None) -> tuple[str, Path]:
+    ns = namespace or os.environ.get("AGMEM_NAMESPACE") or DEFAULT_NAMESPACE
+    root = Path(data_dir or os.environ.get("AGMEM_DATA_DIR") or DEFAULT_DATA_DIR).expanduser()
+    return ns, root
+
+
+def open_doc_store(namespace: str | None = None, data_dir: str | None = None):
+    """The doc store alone — no embedder, no vector store, no organizers.
+
+    This exists because of a measurement, not a preference. Opening a full
+    `AgenticMemory` costs 15.1 s on this machine, and 15.1 of those seconds are
+    `SentenceTransformerEmbedder` loading its weights; `import agmem` plus
+    interpreter startup is 0.22 s. A hook that only READS episodes by recency
+    never touches a vector, so paying for the embedder makes it 70x slower than
+    its job requires — and at that speed the recall hook exceeds any sane
+    `timeout` and is killed, which presents as no memory rather than as an
+    error.
+
+    Assumes the lite profile's `SqliteDocStore` layout (`<data_dir>/<namespace>/
+    memory.db`), which is what `open_memory` pins, so the two agree by
+    construction. A deployment that overrides the doc store slot needs the full
+    handle instead.
+    """
+    from agmem.stores.sqlite_doc import SqliteDocStore
+
+    ns, root = _resolve(namespace, data_dir)
+    return ns, SqliteDocStore(root / ns / "memory.db")
+
+
+def open_memory(namespace: str | None = None, data_dir: str | None = None):
+    """A memory handle for hook use: persistent, no LLM, no organizers.
+
+    Deliberately organizer-free. A hook runs on somebody's keystroke, so the
+    default has to be the cheap path — an episode written to the store and
+    nothing else. Anything that wants distillation configures it explicitly.
+    """
+    from agmem.config import AgmemConfig
+    from agmem.memory import AgenticMemory
+
+    ns, root = _resolve(namespace, data_dir)
+    return AgenticMemory(
+        namespace=ns,
+        organizers=[],
+        config=AgmemConfig(profile="lite", data_dir=root, sync_write=True),
+    )
