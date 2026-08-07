@@ -11,6 +11,8 @@ import importlib.util as _ilu
 import json
 import subprocess
 import sys
+
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -814,8 +816,9 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
     assert zep.memory_types == ("facts", "entities", "communities")
     assert zep.per_type_k == dict.fromkeys(zep.memory_types, 10)
     assert zep.keyword_queries is False
-    # gated: the counting pass and the quote gate have not cleared yet
-    assert zep.run_ready is False
+    # ungated 2026-08-07: the conv0 pilot ran a complete ingest through this
+    # entry, which is the only thing that can verify temps/k/store threading
+    assert zep.run_ready is True
 
     store = dict(zep.store or {})
     assert store["lexical_types"] == ("facts", "entities", "communities")
@@ -1347,21 +1350,23 @@ def test_pilot_override_is_bounded_to_one_conversation():
     `run_ready` to True would open the pilot and the full campaign in one move,
     and the full campaign is the spend the gate exists to stop. Bounded this way,
     the escape hatch cannot become the thing it was guarding against.
+
+    Driven against a fabricated entry, not a real arm: the first version of this
+    test used whichever config happened to be gated, and broke the moment that
+    arm passed its pilot — testing the guard through today's roster made the
+    roster part of the guard's contract.
     """
-    cmd = [sys.executable, str(_SCRIPTS / "exp_amem_repro.py")]
-    common = ["--config", "zep_cross_encoder", "--ingest-only", "--data-dir", "/tmp/nope"]
+    H = _load_repro()
+    gated = SimpleNamespace(run_ready=False)
+    ready = SimpleNamespace(run_ready=True)
 
-    blocked = subprocess.run([*cmd, *common, "--conv", "0"], capture_output=True, text=True)
-    assert blocked.returncode != 0
-    assert "not run-ready" in (blocked.stderr + blocked.stdout)
-
-    campaign = subprocess.run(
-        [*cmd, *common, "--conv", "all", "--allow-unverified-config"],
-        capture_output=True,
-        text=True,
-    )
-    assert campaign.returncode != 0
-    assert "single-conversation pilot only" in (campaign.stderr + campaign.stdout)
+    with pytest.raises(SystemExit, match="not run-ready"):
+        H.check_run_ready(gated, "x", allow_unverified=False, conv="0")
+    with pytest.raises(SystemExit, match="single-conversation pilot only"):
+        H.check_run_ready(gated, "x", allow_unverified=True, conv="all")
+    # the pilot itself is allowed, and a ready arm is never touched
+    assert H.check_run_ready(gated, "x", allow_unverified=True, conv="0") is None
+    assert H.check_run_ready(ready, "x", allow_unverified=False, conv="all") is None
 
 
 def test_parallel_orchestrator_refuses_a_multi_conv_pilot_before_spawning():
@@ -1385,3 +1390,90 @@ def test_parallel_orchestrator_refuses_a_multi_conv_pilot_before_spawning():
     )
     assert proc.returncode != 0
     assert "single-conversation pilot only" in (proc.stderr + proc.stdout)
+
+
+def test_drop_budget_is_proportional_and_still_rejects_the_incident():
+    """The clean-ingest bar has to separate two things a zero-drop gate cannot.
+
+    It was set against a host-failure run that lost 15 structured calls out of
+    ~1,180 — a corrupted measurement. The 2026-08-07 Zep pilot lost ONE out of
+    2,177, which is ordinary model non-determinism, and paid for the whole
+    conversation twice because the gate could not tell them apart. A
+    proportional budget separates them: at 0.1% the incident is still rejected
+    and the pilot passes.
+    """
+    P = _load_parallel()
+    incident = {"llm_budget": {"extract": {"calls": 590}, "distill": {"calls": 590}}}
+    pilot = {"llm_budget": {"extract": {"calls": 943}, "distill": {"calls": 1234}}}
+
+    assert P.drop_budget(incident, 0.001) == 1  # 15 drops > 1 -> still rejected
+    assert P.drop_budget(pilot, 0.001) == 2  # 1 drop <= 2 -> accepted
+
+    # embed is not a structured call and cannot drop this way
+    with_embed = {"llm_budget": {**pilot["llm_budget"], "embed": {"calls": 40000}}}
+    assert P.drop_budget(with_embed, 0.001) == P.drop_budget(pilot, 0.001)
+
+    # default is the historical bar, exactly
+    assert P.drop_budget(pilot, 0.0) == 0
+
+
+def test_conv_is_done_tolerance_never_covers_llm_errors(tmp_path):
+    """A drop is a reply that arrived and would not parse. An error is a call
+    that never completed — the host/transport signal the gate was built for — so
+    no drop tolerance may excuse one."""
+    P = _load_parallel()
+    summary = P.per_conv_summary_path("gpt-4o-mini", 0, "_t", "zep_cross_encoder")
+    summary.parent.mkdir(parents=True, exist_ok=True)
+    store = P.store_dir_for(str(tmp_path), 0)
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "x.db").write_text("x")
+    try:
+        summary.write_text(
+            json.dumps(
+                {
+                    "drops": {"distill": 1},
+                    "llm_budget": {
+                        "extract": {"calls": 943, "errors": 0},
+                        "distill": {"calls": 1234, "errors": 0},
+                    },
+                }
+            )
+        )
+        args = ("gpt-4o-mini", str(tmp_path), 0, "_t", "zep_cross_encoder")
+        assert P.conv_is_done(*args, 0.0) is False  # historical bar: 1 drop fails
+        assert P.conv_is_done(*args, 0.001) is True  # proportional bar: passes
+
+        summary.write_text(
+            json.dumps(
+                {
+                    "drops": {},
+                    "llm_budget": {
+                        "extract": {"calls": 943, "errors": 0},
+                        "distill": {"calls": 1234, "errors": 1},
+                    },
+                }
+            )
+        )
+        assert P.conv_is_done(*args, 0.5) is False  # an ERROR is never tolerated
+    finally:
+        summary.unlink(missing_ok=True)
+
+
+def test_structured_caller_reply_retries_default_is_unchanged_and_overridable():
+    """Raising the correction-turn budget must not silently re-time every arm
+    measured before it existed: the default stays 1, and an explicit
+    `max_retries` still wins over the instance default."""
+    from agmem.llm.structured import StructuredCaller
+
+    assert StructuredCaller(client=None, use_guided_json=False).reply_retries == 1
+    assert StructuredCaller(client=None, use_guided_json=False, reply_retries=4).reply_retries == 4
+
+
+def test_zep_raises_reply_retries_because_its_call_volume_demands_it():
+    cfgmod = _load_configs()
+    zep = cfgmod.get_config("zep_cross_encoder")
+    assert (zep.store or {})["structured_reply_retries"] == 4
+    # and no other arm's timing is touched
+    for name, cfg in cfgmod.CONFIGS.items():
+        if name != "zep_cross_encoder":
+            assert "structured_reply_retries" not in (cfg.store or {}), name

@@ -62,6 +62,11 @@ class AgmemConfig:
     strict: bool = False
     sync_write: bool = True  # False -> background write worker (memory.py)
     use_guided_json: bool = True
+    # Correction turns allowed for a malformed structured reply before the
+    # call is dropped. 1 is what every arm measured before 2026-08-07 used;
+    # raise it on arms whose per-conversation call count makes a zero-drop
+    # ingest improbable (see StructuredCaller.__init__).
+    structured_reply_retries: int = 1
     # memory types that get a BM25/FTS lexical channel fused with dense
     # (Zep hybrid search adds "facts"/"entities"; A-Mem/Nemori stay
     # dense-only as their upstream evals do)

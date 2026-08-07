@@ -236,10 +236,24 @@ CONFIGS: dict[str, RunnerConfig] = {
             "zep_cross_encoder",
             lambda: [ZepGraphOrganizer()],
             _ZEP_RECIPE.memory_types,
-            run_ready=False,
+            # Cleared 2026-08-07 by the conv0 pilot: a complete 419-turn ingest
+            # ran through this exact entry — temps, per-type k, recipe store and
+            # the Kuzu graph slot all threaded — for 2,177 calls with zero LLM
+            # errors and one malformed reply. That is what run_ready attests to,
+            # and it could not be attested any other way.
+            run_ready=True,
             role_temps=ZEP_ROLE_TEMPS,
             per_type_k=ZEP_PER_TYPE_K,
-            store=_ZEP_RECIPE.config_kwargs(),
+            # The recipe supplies the read path; the extra key is a HARNESS knob,
+            # not part of any upstream recipe, and it is here because Zep's call
+            # volume broke an assumption the other arms never tested. The pilot
+            # issued 2,177 structured calls for ONE conversation and had exactly
+            # one malformed reply; with a single correction turn that is a drop,
+            # and a drop wipes and re-pays the conversation. At that volume a
+            # clean conversation is a 37% event, so the campaign would have cost
+            # ~2x and still failed ~2-3 of 10. Four correction turns cost nothing
+            # on replies that parse (see StructuredCaller.__init__).
+            store={**_ZEP_RECIPE.config_kwargs(), "structured_reply_retries": 4},
             keyword_queries=False,
         ),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:

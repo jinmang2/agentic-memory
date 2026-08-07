@@ -65,6 +65,7 @@ class StructuredCaller:
         client: LLMClient,
         use_guided_json: bool = True,
         transport_retries: int = 2,
+        reply_retries: int = 1,
     ) -> None:
         """`use_guided_json=False` skips the `guided_json` extra_body layer
         entirely (e.g. for endpoints that reject unknown fields outright).
@@ -83,10 +84,27 @@ class StructuredCaller:
         every call already paid for was re-spent. Two retries with backoff turn
         that into a pause. Set to 0 to restore the previous drop-immediately
         behavior.
+
+        `reply_retries` is the same economics applied to the OTHER half of the
+        chain, and it took a second incident to notice the asymmetry. The
+        2026-08-07 Zep pilot issued 2,177 structured calls in one conversation;
+        exactly one reply came back malformed, its single correction turn also
+        failed, and the drop cost the whole conversation — 45 minutes and $0.31
+        re-spent, on a gate that admits no drops. At that call volume a
+        per-call malformed rate of 1/2177 makes a clean conversation a **37%**
+        event, so the default of one correction turn is not sized for arms of
+        this shape. Raising it is close to free: a correction turn is issued
+        only when a reply already failed to parse, so an arm that never
+        malforms never pays for it.
+
+        It is a DEFAULT, not a policy: `call(max_retries=...)` still wins, and
+        the default stays 1 so every arm measured before this parameter existed
+        replays byte-identically.
         """
         self.client = client
         self.use_guided_json = use_guided_json
         self.transport_retries = transport_retries
+        self.reply_retries = reply_retries
         self.drops: dict[str, int] = {}
         # Transport failures that were RECOVERED by a retry. Not drops — no work
         # was lost — but a run over a degrading link should be able to say so
@@ -110,7 +128,7 @@ class StructuredCaller:
         prompt: str,
         schema: dict[str, Any],
         required_keys: tuple[str, ...] = (),
-        max_retries: int = 1,
+        max_retries: int | None = None,
         system: str = "You must respond with a single JSON object and nothing else.",
         phase: str | None = None,
     ) -> dict[str, Any] | None:
@@ -120,7 +138,14 @@ class StructuredCaller:
         lifecycle phases — segment/narrate/merge/integrate/consolidate/
         predict_calibrate) so methodology cost comparisons can break down
         spend by write-path stage instead of just by role.
+
+        ``max_retries`` is the number of CORRECTION turns for a malformed reply;
+        ``None`` (the normal case — no organizer passes it) takes the instance
+        default set at construction. See ``__init__`` for why that default is
+        worth raising on high-call-count arms.
         """
+        if max_retries is None:
+            max_retries = self.reply_retries
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": prompt},

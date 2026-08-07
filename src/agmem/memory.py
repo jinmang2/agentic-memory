@@ -162,7 +162,11 @@ class AgenticMemory:
         self.structured: StructuredCaller | None = None
         if self.config.llm_roles:
             self.llm = LLMClient(self.config.llm_roles, budget=self.budget)
-            self.structured = StructuredCaller(self.llm, self.config.use_guided_json)
+            self.structured = StructuredCaller(
+                self.llm,
+                self.config.use_guided_json,
+                reply_retries=self.config.structured_reply_retries,
+            )
 
         # --- organizers -----------------------------------------------------
         # Plural is load-bearing for chaining only: one producer plus N

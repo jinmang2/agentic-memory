@@ -818,6 +818,40 @@ def _merge_run_budgets(budgets: list[dict]) -> dict:
     return merged
 
 
+def check_run_ready(cfg_entry, config_name: str, allow_unverified: bool, conv: str) -> None:
+    """Refuse a config whose threading has never survived a real run, and bound
+    the escape hatch to one conversation.
+
+    A pilot is HOW an arm's temps/k/store threading gets verified, so the gate
+    needs a deliberate way through — but the obvious one, flipping `run_ready`,
+    opens the pilot and the whole campaign in a single edit, and the campaign is
+    the spend the gate exists to stop. Bounding the override to a single
+    conversation keeps the escape hatch from becoming the thing it guards
+    against.
+
+    A function rather than an inline block so it is testable without spawning a
+    subprocess against whichever arm happens to be gated today — that coupling
+    made the first version of this test fail the moment its example arm passed
+    its pilot.
+    """
+    if cfg_entry.run_ready:
+        return
+    if not allow_unverified:
+        raise SystemExit(
+            f"--config {config_name} is not run-ready (temps/k/store threading not "
+            "yet verified for this arm — see scripts/repro/configs.py). Pass "
+            "--allow-unverified-config to pilot it on a SINGLE conversation."
+        )
+    if conv == "all":
+        raise SystemExit(
+            f"--config {config_name} is not run-ready, and "
+            "--allow-unverified-config covers a single-conversation pilot only. "
+            "Running every conversation is the spend the gate exists to stop; "
+            "flip run_ready in scripts/repro/configs.py once the pilot has "
+            "verified the arm."
+        )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="A-Mem x LoCoMo reproduction harness")
     ap.add_argument("--model", default="gpt-4o-mini")
@@ -891,21 +925,7 @@ def main() -> None:
         ap.error("--ingest-only and --eval-only are mutually exclusive")
 
     cfg_entry = get_config(args.config)
-    if not cfg_entry.run_ready:
-        if not args.allow_unverified_config:
-            raise SystemExit(
-                f"--config {args.config} is not run-ready (temps/k/store threading not "
-                "yet verified for this arm — see scripts/repro/configs.py). Pass "
-                "--allow-unverified-config to pilot it on a SINGLE conversation."
-            )
-        if args.conv == "all":
-            raise SystemExit(
-                f"--config {args.config} is not run-ready, and "
-                "--allow-unverified-config covers a single-conversation pilot only. "
-                "Running every conversation is the spend the gate exists to stop; "
-                "flip run_ready in scripts/repro/configs.py once the pilot has "
-                "verified the arm."
-            )
+    check_run_ready(cfg_entry, args.config, args.allow_unverified_config, args.conv)
 
     load_env_local()
     spec = get_model(args.model)

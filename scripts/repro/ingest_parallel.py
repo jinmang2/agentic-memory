@@ -136,8 +136,37 @@ def per_conv_summary_path(model: str, conv: int, tag_suffix: str, config: str = 
     return H.OUT / f"{_model_safe(model, config)}_conv{conv}_ingest{tag_suffix}_c{conv}.json"
 
 
+def drop_budget(summary: dict, max_drop_rate: float) -> int:
+    """How many role-keyed drops this conversation may carry and still count as
+    clean: ``floor(max_drop_rate * structured calls)``.
+
+    PROPORTIONAL, because the thing being defended against is proportional. The
+    zero-drop bar was set against a host-failure incident that lost 15 calls out
+    of ~1,180 (1.3%) — a corrupted measurement. It cannot tell that apart from
+    one malformed reply in 2,177 (0.05%), which is ordinary model
+    non-determinism, and at Zep's call volume the second is the common case: a
+    per-call malformed rate of 1/2177 makes a clean conversation a 37% event, so
+    a binary gate turns a healthy run into an endless wipe-and-re-pay loop.
+
+    Sized so the incident that motivated the gate still fails it: at the default
+    0.1%, 1,180 calls buy a budget of 1 and the DNS run's 15 drops are still
+    rejected, while the pilot's single drop passes. `embed` is excluded — it is
+    not a structured call and cannot drop this way.
+    """
+    if max_drop_rate <= 0:
+        return 0
+    budget = summary.get("llm_budget") or {}
+    structured = sum(s.get("calls", 0) for role, s in budget.items() if role != "embed")
+    return int(structured * max_drop_rate)
+
+
 def conv_is_done(
-    model: str, data_dir: str, conv: int, tag_suffix: str, config: str = "amem"
+    model: str,
+    data_dir: str,
+    conv: int,
+    tag_suffix: str,
+    config: str = "amem",
+    max_drop_rate: float = 0.0,
 ) -> bool:
     """A conversation counts as already-ingested iff its per-conv summary exists,
     its store dir is non-empty, AND that summary reports a CLEAN ingest.
@@ -180,8 +209,12 @@ def conv_is_done(
         summary = json.loads(sp.read_text())
     except (OSError, json.JSONDecodeError):
         return False  # unreadable/truncated summary — not done, re-ingest cleanly
-    if any(n for key, n in (summary.get("drops") or {}).items() if "/" not in key):
+    lost = sum(n for key, n in (summary.get("drops") or {}).items() if "/" not in key)
+    if lost > drop_budget(summary, max_drop_rate):
         return False
+    # LLM errors stay at ZERO regardless of the drop budget. A drop is a reply
+    # that arrived and would not parse; an error is a call that did not complete,
+    # which is the host/transport signal the tolerance is not meant to cover.
     return not any(s.get("errors", 0) for s in (summary.get("llm_budget") or {}).values())
 
 
@@ -291,7 +324,8 @@ def _run_one(args, conv: int) -> tuple[int, bool, str]:
     (conv, ok, note). Skips instantly if already done; wipes a partial store
     before each (re)attempt so re-ingest is clean (locomo.ingest is not
     idempotent — re-ingesting a populated store would duplicate notes)."""
-    if conv_is_done(args.model, args.data_dir, conv, args.tag_suffix, args.config):
+    rate = getattr(args, "max_drop_rate", 0.0)
+    if conv_is_done(args.model, args.data_dir, conv, args.tag_suffix, args.config, rate):
         return conv, True, "skipped (already complete)"
     sd = store_dir_for(args.data_dir, conv)
     cmd = worker_cmd(args, conv)
@@ -319,7 +353,7 @@ def _run_one(args, conv: int) -> tuple[int, bool, str]:
         except OSError:
             logger.exception("failed to persist worker log for conv%s", conv)
         if proc.returncode == 0 and conv_is_done(
-            args.model, args.data_dir, conv, args.tag_suffix, args.config
+            args.model, args.data_dir, conv, args.tag_suffix, args.config, rate
         ):
             note = "ok" if attempt == 1 else f"ok (attempt {attempt})"
             return conv, True, note
@@ -367,6 +401,15 @@ def main() -> None:
     )
     ap.add_argument("--expand-links", choices=["off", "on"], default="off")
     ap.add_argument("--tag-suffix", default="", help="e.g. _seed1 (matches the sequential path)")
+    ap.add_argument(
+        "--max-drop-rate",
+        type=float,
+        default=0.0,
+        help="fraction of a conversation's STRUCTURED calls that may be dropped and still "
+        "count as a clean ingest (default 0.0 = the historical zero-drop bar). Use on arms "
+        "whose per-conversation call count makes zero drops improbable; 0.001 still rejects "
+        "the 2026-08-04 host-failure run. Recorded in the combined summary.",
+    )
     ap.add_argument(
         "--allow-unverified-config",
         action="store_true",
@@ -457,7 +500,17 @@ def finalize_combined(args, convs: list[int], wall_s: float) -> tuple[Path, Path
             "conv": "all",
             "commit": sha,  # canonical name; git_sha kept for existing readers
             "git_sha": sha,
-            "parallel_ingest": {"workers": args.workers, "convs": convs, "wall_s": wall_s},
+            "parallel_ingest": {
+                "workers": args.workers,
+                "convs": convs,
+                "wall_s": wall_s,
+                # The clean-ingest bar this run was accepted under. Stamped
+                # because it is not a constant across arms any more: an arm run
+                # at a non-zero tolerance may carry dropped write-path calls
+                # that the zero-drop arms could not, and a cross-arm comparison
+                # has to be able to see that from the artifact alone.
+                "max_drop_rate": getattr(args, "max_drop_rate", 0.0),
+            },
         },
         "ingest_only": True,
         "per_conv": per_conv,
