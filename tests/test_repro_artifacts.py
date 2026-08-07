@@ -790,6 +790,45 @@ def test_amem_perhit_pins_the_cap_shape_and_leaves_other_arms_alone():
         assert getattr(base, field) == getattr(combo, field), field
 
 
+def test_zep_config_takes_its_whole_read_path_from_the_recipe():
+    """Zep's read path is a recipe table, so the arm must not assemble one itself.
+
+    The paper presents three search functions and five rerankers as components,
+    and §4.1 fixes which combination produced its numbers — BGE for reranking.
+    Composing those knobs at the call site is how this project once built a
+    hybrid upstream never ships (RRF fusion beside a BFS-ish GraphRecall), so
+    the config takes `memory_types`, the lexical and BFS channels, `rrf_k`,
+    `dense_min_score` and the reranker slot from one `SearchRecipe` object.
+
+    `lexical_types` is the assertion that matters most: Zep gives its three
+    subgraphs the BM25 channel and the raw turns none, the inverse of every
+    other arm, and the runner used to hardcode `("episodic",)`. Any arm that
+    does NOT carry the key must still inherit that hardcoded default, or this
+    refactor silently re-channelled the whole campaign.
+    """
+    cfgmod = _load_configs()
+    zep = cfgmod.get_config("zep_cross_encoder")
+    assert type(zep.factory()[0]).__name__ == "ZepGraphOrganizer"
+    assert zep.memory_types == ("facts", "entities", "communities")
+    assert zep.per_type_k == dict.fromkeys(zep.memory_types, 10)
+    assert zep.keyword_queries is False
+    # gated: the counting pass and the quote gate have not cleared yet
+    assert zep.run_ready is False
+
+    store = dict(zep.store or {})
+    assert store["lexical_types"] == ("facts", "entities", "communities")
+    assert store["bfs_types"] == ("facts", "entities")  # communities have no BFS upstream
+    assert store["rrf_k"] == 1  # upstream's rank_const, not the textbook 60
+    assert store["dense_min_score"] == 0.6  # upstream DEFAULT_MIN_SCORE, not 0
+    assert store["graph_expansion_cap"] == 0  # our GraphRecall must not double-serve φ_bfs
+    assert store["overrides"] == {"reranker": "CrossEncoderReranker"}
+    assert "bge-reranker" in store["reranker_params"]["model_name"]
+
+    for name, cfg in cfgmod.CONFIGS.items():
+        if name != "zep_cross_encoder":
+            assert "lexical_types" not in (cfg.store or {}), name
+
+
 def test_runner_configs_construct_and_name_arms():
     cfgmod = _load_configs()
     CONFIGS, get_config = cfgmod.CONFIGS, cfgmod.get_config

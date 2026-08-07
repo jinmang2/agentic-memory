@@ -476,12 +476,19 @@ def build_memory(
     client's full-I/O trace sink so every LLM call of this conversation is
     appended to the shared run trace."""
     cfg_entry = get_config(args.config)
+    store_kwargs = dict(cfg_entry.store or {})
     cfg = AgmemConfig(
         profile="lite",
         data_dir=Path(args.data_dir).expanduser() if args.data_dir else None,
         llm_roles=roles,
         use_guided_json=False,
-        lexical_types=("episodic",),
+        # A config may replace the lexical channel wholesale — Zep's search
+        # recipes give facts/entities/communities a BM25 channel and give the
+        # raw turns none, which is the opposite of every other arm here. Popped
+        # from `store` rather than added as another explicit kwarg because
+        # passing it both ways is a TypeError, and the fallback keeps every
+        # pre-existing arm byte-identical.
+        lexical_types=store_kwargs.pop("lexical_types", ("episodic",)),
         # --expand-links belongs HERE, not on the built pipeline. It used to be
         # `mem.pipeline.link_expansion_cap = 5 if ... else 0` after construction,
         # which was live only while the cap was a RetrievalPipeline attribute;
@@ -514,7 +521,7 @@ def build_memory(
         # lineage-faithful QdrantVectorStore + PostgresDocStore via slot overrides.
         # amem's store is None -> no override, same SqliteVec/SqliteDoc lite profile
         # as before this change (byte-identical path).
-        **(cfg_entry.store or {}),
+        **store_kwargs,
     )
     mem = AgenticMemory(
         namespace=f"repro-conv{conv_idx}",

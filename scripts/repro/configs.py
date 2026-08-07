@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.mem0 import Mem0Organizer
 from agmem.organizers.nemori import NemoriOrganizer
+from agmem.organizers.zep_graph import ZepGraphOrganizer, zep_search_recipe
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,29 @@ MEM0_PER_TYPE_K = {"semantic": 30}
 # NEMORI_STORE for the same reason.
 MEM0_STORE = {"overrides": {"vector_store": "QdrantVectorStore"}}
 
+# Zep's read path is a RECIPE TABLE, not a single answer: the paper presents
+# three search functions and five rerankers as system components, and upstream
+# ships their combinations as named SearchConfigs. §4.1 fixes which one produced
+# the paper's numbers — "BGE-m3 models from BAAI for both reranking and
+# embedding" — so `cross_encoder` is the operating point and the only family
+# carrying a BFS channel. The recipe supplies memory_types, the lexical/BFS
+# channels, rrf_k=1, dense_min_score=0.6 and the reranker slot override in one
+# object, which is exactly what keeps a run from becoming a hybrid no upstream
+# recipe has (this project has made that mistake: RRF fusion + a BFS-ish
+# GraphRecall, a combination upstream never ships).
+#
+# EMBEDDER: the campaign standard `text-embedding-3-small`, NOT the paper's
+# BGE-m3 (controller decision 2026-08-07). The four-way table's whole purpose is
+# internal comparability, and an embedder swap moved A-Mem 9.87 J — a Zep row on
+# a different embedder could not be read against the other three. A BGE-m3
+# lineage arm stays available as a later addition; the recipe's RERANKER is
+# unaffected either way and stays BGE.
+ZEP_RECIPE_NAME = "cross_encoder"
+_ZEP_RECIPE = zep_search_recipe(ZEP_RECIPE_NAME)
+# Upstream applies one `limit` across every subgraph rather than a per-type
+# table, so the scalar is expanded here to the shape RunnerConfig speaks.
+ZEP_PER_TYPE_K = {t: _ZEP_RECIPE.limit for t in _ZEP_RECIPE.memory_types}
+
 CONFIGS: dict[str, RunnerConfig] = {
     c.name: c
     for c in (
@@ -170,6 +194,29 @@ CONFIGS: dict[str, RunnerConfig] = {
             keyword_queries=False,
             link_expansion_cap=11,
             link_expansion_per_hit=True,
+        ),
+        # Track 3. run_ready=False until the counting pass and the quote gate
+        # clear: the study reads upstream as "at least 4-6 LLM calls per episode"
+        # (docs/research/zep-graphiti.md), which at 5,882 turns is 23.5k-35.3k
+        # write calls — two to three times A-Mem's 11,754, and the most
+        # expensive arm in this campaign if it holds. That range is a READ of
+        # prose, not a measurement, and Track 2 established that borrowed
+        # calibration is worth ~2x error; the number that gates spending has to
+        # come from CountingLLM against this port.
+        #
+        # Also unresolved: role temperatures. Every other arm pins its lineage's
+        # temps; the Zep study records none, so this entry inherits the runner's
+        # A-Mem-shaped defaults, which is a stated gap rather than a decision.
+        # It does not affect call COUNTS, so the counting pass can proceed, but
+        # it must be settled before any paid run.
+        RunnerConfig(
+            "zep_cross_encoder",
+            lambda: [ZepGraphOrganizer()],
+            _ZEP_RECIPE.memory_types,
+            run_ready=False,
+            per_type_k=ZEP_PER_TYPE_K,
+            store=_ZEP_RECIPE.config_kwargs(),
+            keyword_queries=False,
         ),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:
         RunnerConfig(
