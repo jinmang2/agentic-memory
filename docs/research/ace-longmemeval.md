@@ -410,3 +410,173 @@ LongMemEval/
 - Mem0: https://mem0.ai/research (자체 발표)
 - Supermemory: https://supermemory.ai/research/longmembench/ (자체 발표)
 - MemoryOS: https://arxiv.org/abs/2506.06326
+
+---
+
+# 3. LongMemEval 재검토 — 취득 provenance · 계보 · 실측 · 외부 비판 (2026-08-07)
+
+> 이 절은 §2를 **대체하지 않고 보정**한다. §2는 2026-07-26 포팅 시점의 문헌·코드 조사이고,
+> 여기는 **데이터를 실제로 받아 우리 포트로 열어본 뒤**의 기록이다. 세 가지가 §2와 다르다:
+> 원본 데이터셋의 **폐기 사실**, "빠르고 저렴"의 **적용 범위**, 그리고 이 벤치의 **판별 해상도**.
+
+## A. 취득 provenance (재현에 필요한 전부)
+
+| | |
+|---|---|
+| 받은 곳 | HuggingFace `xiaowu0162/longmemeval-cleaned` |
+| URL | `https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/<file>` |
+| repo SHA | `98d7416c24c7` (조회 2026-08-07) |
+| 받은 날짜 | 2026-08-07 |
+| 라이선스 | MIT (데이터셋 카드 기준) |
+
+| 파일 | bytes | sha256 |
+|---|---|---|
+| `longmemeval_s_cleaned.json` | 277,383,467 | `d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442` |
+| `longmemeval_oracle.json` | 15,388,478 | `821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c` |
+
+저장 위치 `~/.agmem/datasets/` (locomo10.json과 같은 관례). `longmemeval_m`은 **받지 않았다** —
+§2 함정 목록의 "`max_history_tokens`는 opt-in이고 켜는 드라이버가 없다"가 아직 유효해서,
+받아두는 것만으로 무제한 `_m` 실행 사고의 재료가 된다.
+
+## B. 계보 — 논문 수치를 낸 데이터가 저자에 의해 철회됐다
+
+`xiaowu0162/longmemeval`(원본)의 데이터셋 카드 전문:
+
+> ⚠️ This dataset is deprecated. It is replaced by `longmemeval-cleaned`
+> (https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned) which noisy history sessions
+> that interfere with the answer correctness.
+
+`longmemeval-cleaned` 카드:
+
+> This dataset replaces the original LongMemEval dataset. The main difference is that this version
+> removes noisy history sessions that interfere with the answer correctness.
+
+두 repo 모두 `lastModified` 2025-09-19 — 같은 날 cleaned 공개와 원본 폐기가 동시에 일어났다.
+다운로드 수는 원본 3,073 vs cleaned 12,585 (2026-08-07 조회)로 이관이 진행된 상태다.
+
+**이것이 §2의 "cleaned와 원본의 수치가 다를 수 있음"보다 강한 사실이다.** 다를 수 있는 게 아니라,
+**원본은 저자가 결함으로 철회했고 논문의 GPT-4o full-context 60.6%는 그 철회된 데이터에서 나온
+수치다.** 따름정리 두 개:
+
+1. **비폐기본으로 돌면 60.6%와 대조할 수 없다.** LongMemEval을 쓰려면 full-context 기준선을
+   **우리가 cleaned에서 새로 만들어야** 한다(비용 항목 추가). 폐기본으로 돌아 60.6과 맞추는 것은
+   저자가 결함이라고 말한 데이터를 재현하는 것이다.
+2. **§2 SOTA 표(Zep 71.2 / Nemori 64.2 / Mem0 94.4 / Supermemory 95 …)는 전부 어느 릴리스인지
+   불명이다.** 대부분 2025-09 이전 발표라 원본(폐기본) 기준일 가능성이 높으나 확인 전 인용 금지.
+   이 표에 릴리스 열이 없다는 것 자체가 결함이며, 원장 C-5(누구의 코드도 아닌 인용 결함)의 형태다.
+
+원장 **C-4에는 이 폐기 사실이 없다** — C-4는 "두 accuracy·abstention 이중계상·judge 핀·
+`has_answer` 누출"까지만 담고 있다. 편입 후보.
+
+## C. 포트 불변식 — 실데이터로 검증 (2026-08-07)
+
+`load_longmemeval` + `iter_turns`로 `longmemeval_s_cleaned.json`을 전수 통과시킨 결과:
+
+| 검증 | 기대 | 실측 | |
+|---|---|---|---|
+| 인스턴스 수 | 500 | **500** | ✅ |
+| question_type 종류 | 6 | **6** | ✅ |
+| 포트가 모르는 타입 | 0 | **0** | ✅ |
+| abstention 문항 | 30 | **30** | ✅ |
+| 세션/인스턴스 | ~40 | **38–62 (중앙값 48)** | 문헌치보다 큼 |
+
+abstention 카운트는 **upstream의 substring 판정**(`'_abs' in question_id`, §2 교정 참조)으로 30이고,
+`endswith`로 세어도 30이다 — 이 릴리스에는 `_abs`가 중간에 든 id가 하나도 없다.
+즉 §2가 경고한 substring↔endswith 차이는 **이 데이터에서는 잠복 상태**이고, 포트가 upstream 의미를
+유지하는 이유는 "지금 값이 달라서"가 아니라 "언제든 달라질 수 있어서"다. 이 구분을 기록해두는 편이
+"두 방식이 같으니 아무거나 써도 된다"는 오독을 막는다.
+
+타입별 분포(실측): multi-session 133 · temporal-reasoning 133 · knowledge-update 78 ·
+single-session-user 70 · single-session-assistant 56 · single-session-preference 30.
+**타입 간 4.4배 불균형** — §2 함정 1("두 accuracy가 다르다")이 왜 실질적인지 보여주는 수치다.
+
+## D. 규모 실측 — §2의 "빠르고 저렴"은 full-context 한정이다
+
+§2 C절은 *"S(115k tokens)는 128k 컨텍스트 모델 단일 pass로 가능(빠르고 저렴)"* 이라고 적었다.
+**읽기(full-context) 관점에서는 맞고, 쓰기(메모리 시스템 ingest) 관점에서는 반대다.**
+
+실측(4.045 chars/token, 이 코퍼스 기준):
+
+| | 실측 |
+|---|---|
+| haystack 토큰/인스턴스 | 중앙값 **121,086** (문헌 "~115k"와 정합) |
+| 턴/인스턴스 | 평균 **493.5** |
+| **전체 턴 수 (500 인스턴스)** | **246,750** |
+| 전체 haystack 토큰 | 60,481,794 |
+
+**LoCoMo 전체 캠페인이 5,882턴이므로 LongMemEval_s는 그 42.0배다.**
+full-context는 인스턴스당 1콜이라 500콜로 끝나지만, 메모리 시스템은 **턴마다 write 경로를 돈다.**
+A-Mem 실측 단가(LoCoMo ingest $2.814497 / 5,882턴 = $0.000478/턴)로 환산하면
+**arm당 ingest ≈ $118**. Zep은 완주한 두 대화에서 **4.59–5.20 콜/턴**(파일럿 conv0 2,177콜/419턴,
+캠페인 conv1 1,692콜/369턴)이라 A-Mem(2콜/턴)의 2.3–2.6배이고, 그만큼 더 든다.
+
+⚠️ 이 $118은 **차용 단가**다. Track 2에서 차용 캘리브레이션은 2.1× 틀렸고, Zep에서 검증된
+CountingLLM 실측 기법이 정답이다. 유료 게이트 전 필수 절차.
+
+## E. 판별 해상도 — 이 벤치가 가릴 수 있는 갭
+
+LongMemEval은 judge yes/no 이진 채점이므로 문항별 노이즈가 베르누이다. 같은 문항을 두 arm에
+주는 paired 설계에서 McNemar 근사(α=0.05, power=0.8):
+
+| 문항 수 | 분간 가능한 최소 갭 (불일치율 0.30 / 0.15) |
+|---|---|
+| 120 (유형당 20) | 14.0pp / 9.9pp |
+| 240 (유형당 40) | 9.9pp / 7.0pp |
+| **500 (`_s` 전체)** | **6.9pp / 4.9pp** |
+
+우리 LoCoMo 실측 갭과 대조:
+
+| 비교 | 갭 | 필요 문항 수 |
+|---|---|---|
+| A-Mem 61.23 vs Mem0 31.82 | 29.41pp | 28 ✅ |
+| Nemori A 67.60 vs A-Mem 61.23 | 6.37pp | 581 ⚠️ (전체 500보다 많다) |
+| Nemori A 67.60 vs Nemori B 65.78 | 1.82pp | 7,109 ❌ |
+
+**결론: LongMemEval_s는 500문항 전부를 써도 우리 인접 순위를 가리지 못한다.** subset은 더 나쁘다.
+"싸게 subset으로 순위를 확인한다"는 설계는 돈을 아끼는 게 아니라 **답이 안 나오는 것을 싸게 사는
+것**이다. 이 벤치가 값을 하는 곳은 순위가 아니라 **큰 효과(≥10pp)의 메커니즘**이다.
+
+## F. 외부 피드백의 약점 지적 5건과 판정
+
+> **출처 성격 (인용 전 필독).** 원문은 `docs/_external/2026-08-07-claude-feedback.md` —
+> 2026-08-07 시점 **미커밋 작업 문서**이고 레인 B 소유라 이 리포 tree에 없을 수 있다.
+> 그리고 아래 지적들이 근거로 드는 3자 수치(Mastra 60.20/84.23, MemPalace 감사, MemoryArena)는
+> **우리가 독립 검증하지 않았다.** 아래 표의 "우리 판정" 열은 *지적의 논리가 우리 실측과 맞는가*에
+> 대한 판정이지, 3자 수치의 사실 확인이 아니다. 이 구분을 흐리면 원장 C-5(누구의 코드도 아닌
+> 인용 결함)를 우리가 새로 만드는 것이 된다.
+
+| # | 지적 | 우리 판정 |
+|---|---|---|
+| 1 | **"LongMemEval은 메모리 테스트가 아닐 수 있다."** _s는 115K 토큰 안에서 정보를 찾는 능력을 테스트한다. Mastra 사례 — gpt-4o full-context 60.20%(115K 임계 근접)인데 같은 모델의 observational memory가 컨텍스트를 압축해 84.23%. 즉 측정되는 것은 **컨텍스트 윈도 관리 효율**이다 | **부분 수용, 그리고 우리에게 직접 걸린다.** 우리 실측 haystack 중앙값이 **121,086 토큰**으로 128K 윈도에 아슬아슬하다 — full-context 베이스라인이 윈도 압박을 받는 구간이 맞다. 다만 abstention은 윈도 크기와 비교적 독립(환각 억제)이라 이 비판이 덜 닿는다 |
+| 2 | **벤치마크가 대체당했다.** 115K haystack vs Sonnet 200K·1M 윈도 모델들. 검색 프레이밍이 이제 존재하지 않을 수 있는 제약을 테스트한다. 진짜 문제는 1M+ (BEAM 10M)와 write/manage 단계 | **수용.** 이 리포의 관심이 write 경로 비용·구조(원장 A/B/C 전부)라는 점에서 특히 아프다. LongMemEval은 read 쪽 벤치다 |
+| 3 | **채점 타깃을 바꾸면 순위가 바뀐다** (Raw/Source/Canonical 감사 연구) | **수용, 그리고 §2 함정 1과 같은 뿌리.** 우리 포트가 두 accuracy를 모두 반환하는 것이 최소 방어이고 충분하지는 않다 |
+| 4 | **정적 recall이 agentic 성능을 예측하지 못한다** (MemoryArena 2026). LongMemEval은 스크립트된 상호작용이고, 사용자가 세션 중간에 마음을 바꿨을 때 갱신하는지는 알려주지 않는다 | **부분 반박.** `knowledge-update` 타입 78문항이 정확히 갱신을 테스트한다. 다만 "세션 중간 번복"이 아니라 "세션 간 갱신"이라 지적의 핵심은 남는다 |
+| 5 | **독립 감사에서 벤더 주장 붕괴** (MemPalace: LongMemEval 100%가 LLM 리랭킹 다회 반복 결과인데 단일 실행처럼 제시) | **수용.** §2 SOTA 표의 벤더 자체 발표치(Mem0 94.4 / Supermemory 95)에 이 경고를 붙여야 한다 |
+
+## G. 종합 판정
+
+세 갈래 증거가 같은 방향을 가리킨다 — **순위 목적의 LongMemEval 실행은 값을 하지 않는다:**
+
+- **해상도**: 전체 500으로도 우리 인접 갭(1.8–6.4pp)을 못 가린다 (§E)
+- **비용**: arm당 ingest ~$118+ (차용 단가), LoCoMo 캠페인 전체의 42배 물량 (§D)
+- **구성 타당도**: 외부 비판 1·2가 "이건 컨텍스트 윈도 관리 측정"이라 지적하고, 우리 실측
+  121K 토큰이 그 지적을 뒷받침한다 (§F)
+
+값을 하는 용도는 남아 있다:
+
+1. **커버리지·기권 메커니즘.** Track 2에서 `J = (1−기권) × 답변정답률`이 전 arm에서 성립했고
+   Mem0 기권률 55.6% vs 다른 arm 19–27%이었다. **~30pp 효과**라 §E 표에서 28문항이면 갈린다.
+   LongMemEval은 기권을 **설계에 명시**한 유일한 벤치다(30문항 + 교차절단면).
+2. **압축-품질 관계의 부호 검증.** LoCoMo에서 우리는 *컨텍스트가 적으면 손해*(Mem0 837 tok/문항,
+   J 31.82 최하위)를 봤다. 피드백의 Mastra 사례는 LongMemEval에서 *압축이 이득*이라고 말한다.
+   **같은 방법론이 두 벤치에서 부호가 반대라면 그 자체가 발견이다.**
+
+⇒ 실행한다면 **순위표를 늘리는 목적이 아니라 위 두 질문 중 하나에 답하는 설계**여야 하고,
+그 경우 arm 선택도 인접 순위가 아니라 **커버리지 거동이 가장 다른 쌍**이 된다.
+
+## H. 미해결 (실행 전 필수)
+
+- **CountingLLM 실측 견적** — §D의 $118은 차용 단가다
+- **드라이버 부재** — `run_instance` 호출부가 테스트 밖에 0개 (C-4가 명시한 $0 선행 작업)
+- **cleaned 기준 full-context 베이스라인** — §B에 따라 60.6%를 못 쓴다
+- **C-4에 폐기 사실 편입** 여부 (원장은 레인 A 소유)
