@@ -1,7 +1,7 @@
 [project]
 name = "agmem"
 version = "0.1.0"
-description = "Eight agentic-memory methodologies behind one capability-gated API, each pinned to the lineage it reproduces"
+description = "An agentic-memory framework with an MCP server, and nine methodologies behind one capability-gated API, each pinned to the lineage it reproduces"
 authors = [
     { name = "MyungHoon Jin", email = "jinmang2@gmail.com" }
 ]
