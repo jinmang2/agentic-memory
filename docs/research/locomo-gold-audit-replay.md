@@ -24,8 +24,13 @@ of the *same* runs, not a re-measurement.
 |---|---|
 | Source | [`dial481/locomo-audit`](https://github.com/dial481/locomo-audit) — *LoCoMo Benchmark Audit*, an independent audit of the LoCoMo benchmark and the EverMemOS evaluation framework |
 | Pin | `9493fb4b4af4256ed17a18e8fd0b3cfdeec29539` (subject: *feat: add statistical validity analysis, expand Category 5 evaluation gap*) |
-| License | **CC BY-NC 4.0** — the same license as the underlying LoCoMo dataset, which was created by Maharana, A., Lee, D. H., Tuber, S., & Bansal, M. and published by SNAP Research. The audit repository contains annotations and analysis derived from that dataset; this document reuses those annotations non-commercially and attributes them here. |
+| License | **CC BY-NC 4.0** — the same license as the underlying LoCoMo dataset, which was created by Maharana, A., Lee, D. H., Tulyakov, S., & Bansal, M.[^attr] and published by SNAP Research. The audit repository contains annotations and analysis derived from that dataset; this document reuses those annotations non-commercially and attributes them here. |
 | Local clone | `~/.agmem/upstream/locomo-audit` (annotations at `errors.json`) |
+
+[^attr]: The audit repository renders the third author as "Tuber, S." in both its `README.md`
+and its `THIRD-PARTY-NOTICES.md`. That is a typo for **Sergey Tulyakov**, and it is corrected
+here rather than transcribed, because propagating it would misname a real researcher. It is the
+only place this document departs from the audit's own wording.
 
 **The dataset the audit annotates is byte-identical to ours.** `sha256sum` on the audit's
 `data/locomo10.json` and on our `~/.agmem/datasets/locomo10.json` both give
@@ -59,9 +64,9 @@ empirically rather than assumed — all four candidate conventions were run agai
 ids and the error's own `question` text compared against the mapped text. 0-based cross-checks on
 **156 / 156** with zero mismatches; 1-based produces 155 mismatches and one absent id. The
 include-or-exclude-adversarial half of the question is unresolvable on this catalogue and
-harmlessly so: category-5 rows sit at the tail of every conversation's qa list and every flagged
-index falls strictly below its conversation's first category-5 index, so the two enumerations agree
-on every id the audit uses. The full-list reading is the one implemented, and it is pinned by a
+harmlessly so: every flagged index falls strictly below its conversation's first category-5 index
+(checked for all ten conversations and all 156 flagged ids), so the prefix the two enumerations
+share contains no adversarial row and they agree on every id the audit uses. The full-list reading is the one implemented, and it is pinned by a
 test so a future re-pin that shifts ordering fails loudly instead of replaying quietly wrong.
 
 Measured against the headline `e3sA` records:
@@ -172,10 +177,12 @@ correlation would shrink the variance of each gap. Both readings of "the arm's r
 | `unflagged` (as if graded as fairly as the rest) | **0.9999** | 0.0000 | `e3sB > e3sA > e3sPH > e3sM` at 0.0001 |
 | `flagged` (jitter around the status quo) | **1.0000** | 0.0000 | none |
 
-Zero flips in 10,000 simulations bounds a flip probability at roughly `3.00e-04` (rule of three,
-one-sided 95%) — it is not evidence that a flip is impossible. Ties break toward the observed
-order, so each figure is an upper bound wherever ties occur; `P(any tie)` is 0 on both bases, so
-none do here.
+Five of the six pair-and-basis cells saw no flip at all across the 10,000 simulations. The
+exception is the one visible in the table: `e3sA` over `e3sB` on the `unflagged` basis flipped
+once. **Where a cell's flip count is zero, that is a bound rather than an impossibility** — the
+rule of three (one-sided 95%) puts the flip probability at roughly `3.00e-04`, which is as sharp
+as 10,000 simulations can be. Ties break toward the observed order, so each figure is an upper
+bound wherever ties occur; `P(any tie)` is 0 on both bases, so none do here.
 
 ### 4.3 Seeds, and the lever seeds do not provide
 
