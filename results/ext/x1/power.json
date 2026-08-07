@@ -1,0 +1,431 @@
+{
+  "meta": {
+    "records_dir": "results/repro",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "errors_path": "/home/jinmang2/.agmem/upstream/locomo-audit/errors.json",
+    "n_judged": 1540,
+    "n_flagged": 99,
+    "flagged_keys": 99,
+    "n_boot": 10000,
+    "n_sim": 10000,
+    "seed": 0,
+    "seed_sd_pp": 0.35,
+    "canonical_order_verified": true,
+    "anchors": {
+      "e3sA": {
+        "stem": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA",
+        "anchor_J": 67.6,
+        "recomputed_J_2dp": 67.6
+      },
+      "e3sB": {
+        "stem": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB",
+        "anchor_J": 65.78,
+        "recomputed_J_2dp": 65.78
+      },
+      "e3sPH": {
+        "stem": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH",
+        "anchor_J": 61.23,
+        "recomputed_J_2dp": 61.23
+      },
+      "e3sM": {
+        "stem": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM",
+        "anchor_J": 31.82,
+        "recomputed_J_2dp": 31.82
+      }
+    }
+  },
+  "arms": {
+    "e3sA": {
+      "stem": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA",
+      "J_full": 67.5974,
+      "J_full_2dp": 67.6,
+      "J_excluded": 70.0208,
+      "n_judged": 1540,
+      "n_judged_excluded": 1441,
+      "correct_full": 1041,
+      "correct_on_flagged": 32
+    },
+    "e3sB": {
+      "stem": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB",
+      "J_full": 65.7792,
+      "J_full_2dp": 65.78,
+      "J_excluded": 68.2165,
+      "n_judged": 1540,
+      "n_judged_excluded": 1441,
+      "correct_full": 1013,
+      "correct_on_flagged": 30
+    },
+    "e3sPH": {
+      "stem": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH",
+      "J_full": 61.2338,
+      "J_full_2dp": 61.23,
+      "J_excluded": 63.9139,
+      "n_judged": 1540,
+      "n_judged_excluded": 1441,
+      "correct_full": 943,
+      "correct_on_flagged": 22
+    },
+    "e3sM": {
+      "stem": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM",
+      "J_full": 31.8182,
+      "J_full_2dp": 31.82,
+      "J_excluded": 32.8938,
+      "n_judged": 1540,
+      "n_judged_excluded": 1441,
+      "correct_full": 490,
+      "correct_on_flagged": 16
+    }
+  },
+  "rank_order_full": [
+    "e3sA",
+    "e3sB",
+    "e3sPH",
+    "e3sM"
+  ],
+  "rank_order_excluded": [
+    "e3sA",
+    "e3sB",
+    "e3sPH",
+    "e3sM"
+  ],
+  "paired_delta_ci": {
+    "full_gold": [
+      {
+        "delta_pp": 1.8182,
+        "lo": -0.3247,
+        "hi": 3.8961,
+        "se_pp": 1.0699,
+        "p_boot": 0.0972,
+        "excludes_zero": false,
+        "n": 1540,
+        "n_disagree": 274,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sA",
+          "e3sB"
+        ]
+      },
+      {
+        "delta_pp": 4.5455,
+        "lo": 1.8831,
+        "hi": 7.1429,
+        "se_pp": 1.3538,
+        "p_boot": 0.001,
+        "excludes_zero": true,
+        "n": 1540,
+        "n_disagree": 434,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sB",
+          "e3sPH"
+        ]
+      },
+      {
+        "delta_pp": 29.4156,
+        "lo": 26.5584,
+        "hi": 32.2078,
+        "se_pp": 1.4396,
+        "p_boot": 0.0,
+        "excludes_zero": true,
+        "n": 1540,
+        "n_disagree": 629,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sPH",
+          "e3sM"
+        ]
+      }
+    ],
+    "audit_excluded_gold": [
+      {
+        "delta_pp": 1.8043,
+        "lo": -0.4164,
+        "hi": 4.025,
+        "se_pp": 1.1294,
+        "p_boot": 0.1162,
+        "excludes_zero": false,
+        "n": 1441,
+        "n_disagree": 264,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sA",
+          "e3sB"
+        ]
+      },
+      {
+        "delta_pp": 4.3026,
+        "lo": 1.5961,
+        "hi": 7.009,
+        "se_pp": 1.4023,
+        "p_boot": 0.0024,
+        "excludes_zero": true,
+        "n": 1441,
+        "n_disagree": 414,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sB",
+          "e3sPH"
+        ]
+      },
+      {
+        "delta_pp": 31.0201,
+        "lo": 28.0361,
+        "hi": 33.9348,
+        "se_pp": 1.5048,
+        "p_boot": 0.0,
+        "excludes_zero": true,
+        "n": 1441,
+        "n_disagree": 607,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0,
+        "pair": [
+          "e3sPH",
+          "e3sM"
+        ]
+      }
+    ]
+  },
+  "rank_stability": {
+    "unflagged": {
+      "rate_basis": "unflagged",
+      "n_sim": 10000,
+      "seed": 0,
+      "n_total": 1540,
+      "n_flagged": 99,
+      "arms": {
+        "e3sA": {
+          "J_full": 67.5974,
+          "fixed_correct": 1009,
+          "p_resample": 0.700208,
+          "mean_sim_J": 70.0215,
+          "sd_sim_J": 0.2967
+        },
+        "e3sB": {
+          "J_full": 65.7792,
+          "fixed_correct": 983,
+          "p_resample": 0.682165,
+          "mean_sim_J": 68.22,
+          "sd_sim_J": 0.3014
+        },
+        "e3sPH": {
+          "J_full": 61.2338,
+          "fixed_correct": 921,
+          "p_resample": 0.639139,
+          "mean_sim_J": 63.9118,
+          "sd_sim_J": 0.3089
+        },
+        "e3sM": {
+          "J_full": 31.8182,
+          "fixed_correct": 474,
+          "p_resample": 0.328938,
+          "mean_sim_J": 32.8923,
+          "sd_sim_J": 0.303
+        }
+      },
+      "observed_order": [
+        "e3sA",
+        "e3sB",
+        "e3sPH",
+        "e3sM"
+      ],
+      "p_observed_order": 0.9999,
+      "p_any_tie": 0.0,
+      "permutations": [
+        {
+          "order": [
+            "e3sA",
+            "e3sB",
+            "e3sPH",
+            "e3sM"
+          ],
+          "count": 9999,
+          "prob": 0.9999
+        },
+        {
+          "order": [
+            "e3sB",
+            "e3sA",
+            "e3sPH",
+            "e3sM"
+          ],
+          "count": 1,
+          "prob": 0.0001
+        }
+      ],
+      "pairs": [
+        {
+          "high": "e3sA",
+          "low": "e3sB",
+          "p_flip": 0.0001,
+          "p_tie": 0.0,
+          "mean_gap_pp": 1.8015,
+          "sd_gap_pp": 0.424
+        },
+        {
+          "high": "e3sB",
+          "low": "e3sPH",
+          "p_flip": 0.0,
+          "p_tie": 0.0,
+          "mean_gap_pp": 4.3083,
+          "sd_gap_pp": 0.4274
+        },
+        {
+          "high": "e3sPH",
+          "low": "e3sM",
+          "p_flip": 0.0,
+          "p_tie": 0.0,
+          "mean_gap_pp": 31.0194,
+          "sd_gap_pp": 0.4365
+        }
+      ]
+    },
+    "flagged": {
+      "rate_basis": "flagged",
+      "n_sim": 10000,
+      "seed": 0,
+      "n_total": 1540,
+      "n_flagged": 99,
+      "arms": {
+        "e3sA": {
+          "J_full": 67.5974,
+          "fixed_correct": 1009,
+          "p_resample": 0.323232,
+          "mean_sim_J": 67.5898,
+          "sd_sim_J": 0.3047
+        },
+        "e3sB": {
+          "J_full": 65.7792,
+          "fixed_correct": 983,
+          "p_resample": 0.30303,
+          "mean_sim_J": 65.7832,
+          "sd_sim_J": 0.297
+        },
+        "e3sPH": {
+          "J_full": 61.2338,
+          "fixed_correct": 921,
+          "p_resample": 0.222222,
+          "mean_sim_J": 61.2335,
+          "sd_sim_J": 0.2698
+        },
+        "e3sM": {
+          "J_full": 31.8182,
+          "fixed_correct": 474,
+          "p_resample": 0.161616,
+          "mean_sim_J": 31.8158,
+          "sd_sim_J": 0.2392
+        }
+      },
+      "observed_order": [
+        "e3sA",
+        "e3sB",
+        "e3sPH",
+        "e3sM"
+      ],
+      "p_observed_order": 1.0,
+      "p_any_tie": 0.0,
+      "permutations": [
+        {
+          "order": [
+            "e3sA",
+            "e3sB",
+            "e3sPH",
+            "e3sM"
+          ],
+          "count": 10000,
+          "prob": 1.0
+        }
+      ],
+      "pairs": [
+        {
+          "high": "e3sA",
+          "low": "e3sB",
+          "p_flip": 0.0,
+          "p_tie": 0.0,
+          "mean_gap_pp": 1.8066,
+          "sd_gap_pp": 0.4256
+        },
+        {
+          "high": "e3sB",
+          "low": "e3sPH",
+          "p_flip": 0.0,
+          "p_tie": 0.0,
+          "mean_gap_pp": 4.5498,
+          "sd_gap_pp": 0.4002
+        },
+        {
+          "high": "e3sPH",
+          "low": "e3sM",
+          "p_flip": 0.0,
+          "p_tie": 0.0,
+          "mean_gap_pp": 29.4176,
+          "sd_gap_pp": 0.3623
+        }
+      ]
+    }
+  },
+  "seeds_needed": [
+    {
+      "pair": [
+        "e3sA",
+        "e3sB"
+      ],
+      "delta_pp_full": 1.8182,
+      "seeds_full": 1,
+      "delta_pp_excluded": 1.8043,
+      "seeds_excluded": 1,
+      "questions_needed_full": 4186,
+      "separable_full": false,
+      "separable_excluded": false
+    },
+    {
+      "pair": [
+        "e3sB",
+        "e3sPH"
+      ],
+      "delta_pp_full": 4.5455,
+      "seeds_full": 1,
+      "delta_pp_excluded": 4.3026,
+      "seeds_excluded": 1,
+      "questions_needed_full": 1073,
+      "separable_full": true,
+      "separable_excluded": true
+    },
+    {
+      "pair": [
+        "e3sPH",
+        "e3sM"
+      ],
+      "delta_pp_full": 29.4156,
+      "seeds_full": 1,
+      "delta_pp_excluded": 31.0201,
+      "seeds_excluded": 1,
+      "questions_needed_full": 29,
+      "separable_full": true,
+      "separable_excluded": true
+    }
+  ],
+  "detection_bands": {
+    "seed_sd_pp": 0.35,
+    "alpha": 0.05,
+    "power": 0.8,
+    "min_detectable_delta_pp": {
+      "1": 1.3867,
+      "2": 0.9806,
+      "4": 0.6934,
+      "8": 0.4903,
+      "16": 0.3467
+    }
+  },
+  "conclusion": "Only part of the ranking e3sA > e3sB > e3sPH > e3sM is claimable. The paired 95% bootstrap CIs separate e3sB over e3sPH (+4.55pp, [+1.88, +7.14], p=0.001); e3sPH over e3sM (+29.42pp, [+26.56, +32.21], p<0.0001), but not e3sA over e3sB (+1.82pp, [-0.32, +3.90], p=0.097) -- that interval covers zero, so at 1,540 questions the gap is inside question-sampling noise. Dropping the 99 audited questions does not rescue it (+1.80pp [-0.42, +4.03]). More seeds would not fix it, because rerunning the same questions does not add questions: at the measured paired SE, e3sA over e3sB would need roughly 4,186 questions (vs 1,540) to be powered at alpha=0.05 / power=0.80. The other two noise sources are not the binding constraint and must not be read as agreement: every gap clears the 1.39pp a single seed resolves at alpha=0.05 / power=0.80 given the +/-0.35pp replicate SD, and redrawing the 99 disputed verdicts leaves the order intact in at least 99.99% of 10,000 simulations under both resampling rates, with the order unchanged when those questions are dropped instead. Both of those checks are narrower than the bootstrap: the gold-noise simulation perturbs only 99 of 1,540 verdicts and holds the rest fixed, which is why it reports a stability the bootstrap over all 1,540 does not support. So: the ranking is claimable at one seed and under either gold for the pairs listed as separated above, and for those pairs only; any future arm landing within 1.39pp of another is a tie at one seed before question sampling is even considered, and one at the 0.35pp replicate SD would need 16 seeds."
+}
