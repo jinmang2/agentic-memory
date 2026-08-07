@@ -1,0 +1,182 @@
+{
+  "config": "zep_cross_encoder",
+  "convs": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+  ],
+  "model": "gpt-4o-mini",
+  "scope": "INGEST (write path) only \u2014 eval generate/judge calls are NOT counted",
+  "tokens_in": "MEASURED from real prompt strings at 4.045 chars/token",
+  "tokens_out": "ASSUMED per call site (see site_output_assumption); no Zep run exists to calibrate from",
+  "site_output_assumption_low_mid_high": {
+    "extract:extract_the_distinct_real_world_entities_mention": [
+      70,
+      120,
+      200
+    ],
+    "extract:extract_relationship_facts_between_these_entitie": [
+      80,
+      140,
+      260
+    ],
+    "extract:decide_for_each_new_entity_whether_it_is_the_sam": [
+      40,
+      70,
+      140
+    ],
+    "distill:a_new_fact_arrived_decide_two_things": [
+      12,
+      15,
+      30
+    ],
+    "distill:synthesize_the_information_from_the_following_tw": [
+      100,
+      170,
+      250
+    ],
+    "distill:create_a_short_one_sentence_description_of_the_s": [
+      20,
+      35,
+      60
+    ]
+  },
+  "points": {
+    "zep_low": {
+      "turns": 5882,
+      "calls_total": 19571,
+      "calls_per_role": {
+        "distill": 6996,
+        "extract": 12575
+      },
+      "calls_per_site": {
+        "distill:a_new_fact_arrived_decide_two_things": 5862,
+        "distill:create_a_short_one_sentence_description_of_the_s": 992,
+        "distill:synthesize_the_information_from_the_following_tw": 142,
+        "extract:decide_for_each_new_entity_whether_it_is_the_sam": 811,
+        "extract:extract_relationship_facts_between_these_entitie": 5882,
+        "extract:extract_the_distinct_real_world_entities_mention": 5882
+      },
+      "tokens_in_measured": 14662551,
+      "cost": {
+        "low": {
+          "tokens_out_est": 1019124,
+          "tokens_out_per_call": {
+            "distill": 14.9,
+            "extract": 72.7
+          },
+          "cost_usd_est": 2.8109
+        },
+        "mid": {
+          "tokens_out_est": 1732880,
+          "tokens_out_per_call": {
+            "distill": 21.0,
+            "extract": 126.1
+          },
+          "cost_usd_est": 3.2391
+        },
+        "high": {
+          "tokens_out_est": 3090140,
+          "tokens_out_per_call": {
+            "distill": 38.7,
+            "extract": 224.2
+          },
+          "cost_usd_est": 4.0535
+        }
+      }
+    },
+    "zep": {
+      "turns": 5882,
+      "calls_total": 24982,
+      "calls_per_role": {
+        "distill": 11818,
+        "extract": 13164
+      },
+      "calls_per_site": {
+        "distill:a_new_fact_arrived_decide_two_things": 10041,
+        "distill:create_a_short_one_sentence_description_of_the_s": 643,
+        "distill:synthesize_the_information_from_the_following_tw": 1134,
+        "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1400,
+        "extract:extract_relationship_facts_between_these_entitie": 5882,
+        "extract:extract_the_distinct_real_world_entities_mention": 5882
+      },
+      "tokens_in_measured": 20400787,
+      "cost": {
+        "low": {
+          "tokens_out_est": 1185052,
+          "tokens_out_per_call": {
+            "distill": 20.9,
+            "extract": 71.3
+          },
+          "cost_usd_est": 3.7711
+        },
+        "mid": {
+          "tokens_out_est": 1993220,
+          "tokens_out_per_call": {
+            "distill": 31.0,
+            "extract": 123.6
+          },
+          "cost_usd_est": 4.2561
+        },
+        "high": {
+          "tokens_out_est": 3525030,
+          "tokens_out_per_call": {
+            "distill": 52.7,
+            "extract": 220.4
+          },
+          "cost_usd_est": 5.1751
+        }
+      }
+    },
+    "zep_high": {
+      "turns": 5882,
+      "calls_total": 28142,
+      "calls_per_role": {
+        "distill": 15082,
+        "extract": 13060
+      },
+      "calls_per_site": {
+        "distill:a_new_fact_arrived_decide_two_things": 12924,
+        "distill:create_a_short_one_sentence_description_of_the_s": 593,
+        "distill:synthesize_the_information_from_the_following_tw": 1565,
+        "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1296,
+        "extract:extract_relationship_facts_between_these_entitie": 5882,
+        "extract:extract_the_distinct_real_world_entities_mention": 5882
+      },
+      "tokens_in_measured": 26143043,
+      "cost": {
+        "low": {
+          "tokens_out_est": 1257588,
+          "tokens_out_per_call": {
+            "distill": 21.4,
+            "extract": 71.5
+          },
+          "cost_usd_est": 4.676
+        },
+        "mid": {
+          "tokens_out_est": 2100705,
+          "tokens_out_per_call": {
+            "distill": 31.9,
+            "extract": 124.0
+          },
+          "cost_usd_est": 5.1819
+        },
+        "high": {
+          "tokens_out_est": 3701710,
+          "tokens_out_per_call": {
+            "distill": 54.0,
+            "extract": 221.1
+          },
+          "cost_usd_est": 6.1425
+        }
+      }
+    }
+  }
+}

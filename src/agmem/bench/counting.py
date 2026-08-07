@@ -108,12 +108,201 @@ def _mem0_canned(role: str, prompt: str) -> str:
     return "stub answer"
 
 
+# -- zep -----------------------------------------------------------------------
+#
+# Zep is the first organizer here whose call count is NOT fixed by its control
+# flow. The other three profiles can claim their counts are real because every
+# branch they leave unexercised costs nothing: mem0's decision call is
+# unconditional, nemori's merge-content call is the only data-dependent one and
+# "new" suppresses it. Zep has three data-dependent sites and two of them are
+# unbounded per message:
+#
+#   1. entity extraction   1/message, UNCONDITIONAL           -> exact
+#   2. entity resolution    <=1/message (batched over all unresolved entities;
+#                          fires when some entity has a semantic candidate the
+#                          deterministic stage could not match)  -> bounded exact
+#   3. fact extraction     1/message, but ONLY when >= 2 distinct entities
+#                          resolved (`organizer.py`: `if len(name_to_id) < 2`)
+#   4. edge resolution     1 per surviving NEW fact, once the graph holds any
+#                          fact at all (the invalidation-candidate search is
+#                          top-k with NO score floor, so it is non-empty from
+#                          the second fact onward)      -> scales with fact yield
+#   5/6. community summarize+describe  ~1 per entity per rebuild
+#                                                     -> scales with entity yield
+#
+# Sites 4-6 are therefore a function of how many entities and facts a message
+# yields, which is a property of the MODEL AND THE CORPUS, not of the code — no
+# canned profile can measure it. So the profile takes those yields as explicit
+# parameters and the quote reports a BAND across them, instead of one number
+# that would read as measured. Sites 1-3 are exact under any setting.
+#
+# Entity names come from the message text (proper-noun-shaped tokens plus the
+# speaker) rather than from a synthetic vocabulary: the real corpus is the one
+# thing available at zero spend that carries realistic NAME RECURRENCE, and
+# recurrence is what decides site 2 — a name already in the store resolves
+# deterministically and costs nothing, a near-miss escalates to the LLM.
+
+_ZEP_CURRENT_MESSAGE = re.compile(r"<CURRENT MESSAGE>\n(.*?)\n</CURRENT MESSAGE>", re.DOTALL)
+_ZEP_SPEAKER = re.compile(r"^\([^)]*\)\s*([^:]+):")
+_ZEP_PROPER = re.compile(r"\b[A-Z][a-z]{2,}\b")
+_ZEP_FACT_NAMES = re.compile(r"as subject/object: \[(.*?)\]")
+_ZEP_REF_TIME = re.compile(r"REFERENCE TIME: (\S+)")
+# Sentence-initial function words match the proper-noun shape but are not
+# entities; leaving them in would inflate the entity yield with tokens that
+# recur in every message and so resolve deterministically forever, quietly
+# biasing site 2 toward zero.
+_ZEP_STOPWORDS = (
+    "The That This These Those There Then They Their Yeah Yes Not And But For You Your Its "
+    "Well Also What When Where Which While With Have Just Like Really Sure Wow Now Own "
+    "How Why Who She Her His Him Was Were Are Did Does Been Being Because Maybe Might Must "
+    "Some Such Thanks Thank Actually Absolutely Definitely Sorry Hey Hello Let Get Got "
+    "Can Could Would Should Will Say Said See Look Feel Know Think Want Need Even Ever"
+)
+_ZEP_NOT_A_NAME = frozenset(_ZEP_STOPWORDS.split())
+
+
+def _zep_message_names(prompt: str, cap: int) -> list[str]:
+    """Entity names for the CURRENT MESSAGE: the speaker first (the prompt tells
+    the model to "Always include the speaker"), then proper-noun-shaped tokens
+    in order of appearance, deduped, capped at `cap`. A message with fewer than
+    two of these yields fewer than two entities and so skips fact extraction —
+    which is the organizer's real behaviour for entity-poor turns, not a
+    shortcut of this profile's."""
+    body = _ZEP_CURRENT_MESSAGE.search(prompt)
+    text = body.group(1) if body else ""
+    names: list[str] = []
+    speaker = _ZEP_SPEAKER.match(text)
+    if speaker:
+        names.append(speaker.group(1).strip())
+    for token in _ZEP_PROPER.findall(text):
+        if token in _ZEP_NOT_A_NAME or token in names:
+            continue
+        names.append(token)
+    return names[:cap]
+
+
+def _zep_facts(prompt: str, per_message: int) -> list[dict]:
+    """`per_message` facts over consecutive pairs of the entity names the FACT
+    prompt was given, dated at the message's reference time.
+
+    Each statement carries a slice of the CURRENT MESSAGE, so two messages about
+    the SAME entity pair produce DIFFERENT statements. That is not decoration:
+    the organizer's verbatim fast path (`edge_operations.py:687-700`) skips the
+    edge-resolution call only when the normalized statement text matches an
+    existing edge's exactly, and a pair-derived placeholder like "A is related
+    to B" matches on every recurrence of the pair. Measured on conv0, that
+    placeholder suppressed 79% of site 4 (160 calls where the corpus-derived
+    statement yields 752) — a canned response that looked harmless was quietly
+    quoting a fifth of the real bill. Real extraction says
+    something different about a pair each time it comes up, so the fast path is
+    the exception there; making it near-never here is the conservative side of
+    that, and the band's high point is where the residual uncertainty lives."""
+    listed = _ZEP_FACT_NAMES.search(prompt)
+    names = re.findall(r"'([^']*)'", listed.group(1)) if listed else []
+    body = _ZEP_CURRENT_MESSAGE.search(prompt)
+    # Statement length feeds the prompt-size measurement downstream (existing
+    # facts are rendered back into the edge-resolution prompt), so it is taken
+    # from the corpus rather than invented: one sentence's worth of the message.
+    said = re.sub(r"\s+", " ", (body.group(1) if body else "").split(":", 1)[-1]).strip()[:120]
+    ref = _ZEP_REF_TIME.search(prompt)
+    valid_at = ref.group(1) if ref else None
+    facts = []
+    for i in range(min(per_message, max(len(names) - 1, 0))):
+        subject, obj = names[i], names[i + 1]
+        facts.append(
+            {
+                "subject": subject,
+                "predicate": "RELATED_TO",
+                "object": obj,
+                "statement": f"{subject} and {obj}: {said}",
+                "valid_at": valid_at,
+                "invalid_at": None,
+            }
+        )
+    return facts
+
+
+def zep_profile(
+    entities_per_message: int = 4, facts_per_message: int = 2, merge_duplicates: bool = True
+) -> Callable[[str, str], str]:
+    """Build a schema-valid canned profile for `ZepGraphOrganizer` at a stated
+    yield. Every response validates against the organizer's schemas
+    (`ENTITY_SCHEMA`, `RESOLVE_SCHEMA`, `FACT_SCHEMA`, `EDGE_RESOLVE_SCHEMA`,
+    `SUMMARY_SCHEMA`, `DESCRIPTION_SCHEMA`); a parse failure would silently
+    change which branch runs and so which calls are counted.
+
+    `merge_duplicates` decides the entity-resolution verdict. It does NOT change
+    how often site 2 fires (that call is already made when the verdict is asked
+    for), but it decides whether the graph accumulates one node per mention or
+    one per real entity, which drives the community bill at sites 5/6 — the
+    single widest term in the quote. True is the paper's intent (dedup is what
+    the call is for); False is the degenerate upper bound. Both are quoted.
+
+    Edge resolution always answers "not a duplicate, contradicts nothing", for
+    the same reason `_mem0_canned` always answers ADD: it keeps the graph
+    GROWING, so later messages face realistic candidate pools, and it cannot
+    change this call's own count."""
+
+    def _canned(role: str, prompt: str) -> str:
+        if role == "extract":
+            if "Extract the distinct real-world entities" in prompt:  # ENTITY_PROMPT
+                names = _zep_message_names(prompt, entities_per_message)
+                return json.dumps(
+                    {
+                        "entities": [
+                            {"name": n, "type": "Person", "summary": f"a participant named {n}"}
+                            for n in names
+                        ]
+                    }
+                )
+            if "Decide for each NEW entity" in prompt:  # RESOLVE_PROMPT
+                ids = [int(m) for m in re.findall(r"(?m)^- id=(\d+)", prompt)]
+                n_candidates = len(re.findall(r"(?m)^- candidate_id=(\d+)", prompt))
+                # One candidate PER unresolved entity where the pool allows it.
+                # Answering 0 for all of them would collapse every entity of a
+                # message onto a single node — a graph so much smaller than any
+                # real one that sites 5/6 would quote near zero.
+                return json.dumps(
+                    {
+                        "resolutions": [
+                            {
+                                "id": i,
+                                "duplicate_candidate_id": (
+                                    min(i, n_candidates - 1) if merge_duplicates else -1
+                                ),
+                                "name": f"entity {i}",
+                                "summary": "a canned merged summary",
+                            }
+                            for i in ids
+                        ]
+                    }
+                )
+            if "Extract relationship facts" in prompt:  # FACT_PROMPT
+                return json.dumps({"facts": _zep_facts(prompt, facts_per_message)})
+            return '{"entities": []}'
+        if role == "distill":
+            if "A new fact arrived" in prompt:  # EDGE_RESOLVE_PROMPT
+                return '{"duplicate_of": null, "contradicts": []}'
+            if "Synthesize the information" in prompt:  # SUMMARIZE_PAIR_PROMPT
+                return '{"summary": "A canned community summary of the member entities."}'
+            if "one sentence description" in prompt:  # SUMMARY_DESCRIPTION_PROMPT
+                return '{"description": "Canned description of a community of entities."}'
+            return "{}"
+        return "stub answer"
+
+    return _canned
+
+
 CANNED_RESPONSES: dict[str, Callable[[str, str], str]] = {
     "amem": _amem_canned,
     "nemori": _nemori_canned,
     "mem0": _mem0_canned,
-    # "zep": registered by its track plan, with responses valid against the
-    # organizer's structured-output schemas (else call branching is wrong).
+    # Three points of the same Zep profile, not three profiles: the middle one
+    # is what `zep_cross_encoder` maps to, the outer two exist so the quote can
+    # state a band over the yields no canned response can measure (see above).
+    "zep": zep_profile(),
+    "zep_low": zep_profile(entities_per_message=3, facts_per_message=1),
+    "zep_high": zep_profile(entities_per_message=6, facts_per_message=4, merge_duplicates=False),
 }
 
 

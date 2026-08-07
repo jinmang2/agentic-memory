@@ -1,0 +1,86 @@
+{
+  "zep_low": {
+    "turns": 5882,
+    "calls_total": 19571,
+    "calls_per_role": {
+      "distill": 6996,
+      "extract": 12575
+    },
+    "calls_per_site": {
+      "distill:a_new_fact_arrived_decide_two_things": 5862,
+      "distill:create_a_short_one_sentence_description_of_the_s": 992,
+      "distill:synthesize_the_information_from_the_following_tw": 142,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 811,
+      "extract:extract_relationship_facts_between_these_entitie": 5882,
+      "extract:extract_the_distinct_real_world_entities_mention": 5882
+    },
+    "prompt_chars_measured": {
+      "distill": 34751041,
+      "distill:a_new_fact_arrived_decide_two_things": 34346265,
+      "distill:create_a_short_one_sentence_description_of_the_s": 286593,
+      "distill:synthesize_the_information_from_the_following_tw": 118183,
+      "extract": 24558979,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 773146,
+      "extract:extract_relationship_facts_between_these_entitie": 14664543,
+      "extract:extract_the_distinct_real_world_entities_mention": 9121290
+    },
+    "tokens_in_measured": 14662551,
+    "wall_s": 331.8
+  },
+  "zep": {
+    "turns": 5882,
+    "calls_total": 24982,
+    "calls_per_role": {
+      "distill": 11818,
+      "extract": 13164
+    },
+    "calls_per_site": {
+      "distill:a_new_fact_arrived_decide_two_things": 10041,
+      "distill:create_a_short_one_sentence_description_of_the_s": 643,
+      "distill:synthesize_the_information_from_the_following_tw": 1134,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1400,
+      "extract:extract_relationship_facts_between_these_entitie": 5882,
+      "extract:extract_the_distinct_real_world_entities_mention": 5882
+    },
+    "prompt_chars_measured": {
+      "distill": 57311080,
+      "distill:a_new_fact_arrived_decide_two_things": 56174068,
+      "distill:create_a_short_one_sentence_description_of_the_s": 187078,
+      "distill:synthesize_the_information_from_the_following_tw": 949934,
+      "extract": 25210104,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1404576,
+      "extract:extract_relationship_facts_between_these_entitie": 14684238,
+      "extract:extract_the_distinct_real_world_entities_mention": 9121290
+    },
+    "tokens_in_measured": 20400787,
+    "wall_s": 352.1
+  },
+  "zep_high": {
+    "turns": 5882,
+    "calls_total": 28142,
+    "calls_per_role": {
+      "distill": 15082,
+      "extract": 13060
+    },
+    "calls_per_site": {
+      "distill:a_new_fact_arrived_decide_two_things": 12924,
+      "distill:create_a_short_one_sentence_description_of_the_s": 593,
+      "distill:synthesize_the_information_from_the_following_tw": 1565,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1296,
+      "extract:extract_relationship_facts_between_these_entitie": 5882,
+      "extract:extract_the_distinct_real_world_entities_mention": 5882
+    },
+    "prompt_chars_measured": {
+      "distill": 80564674,
+      "distill:a_new_fact_arrived_decide_two_things": 79074890,
+      "distill:create_a_short_one_sentence_description_of_the_s": 175380,
+      "distill:synthesize_the_information_from_the_following_tw": 1314404,
+      "extract": 25183934,
+      "extract:decide_for_each_new_entity_whether_it_is_the_sam": 1368398,
+      "extract:extract_relationship_facts_between_these_entitie": 14694246,
+      "extract:extract_the_distinct_real_world_entities_mention": 9121290
+    },
+    "tokens_in_measured": 26143043,
+    "wall_s": 331.1
+  }
+}
