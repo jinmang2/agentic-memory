@@ -839,6 +839,39 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
             assert "lexical_types" not in (cfg.store or {}), name
 
 
+def test_zep_recipe_power_imports_its_statistics_and_never_compares_across_subgraph_counts():
+    """Two properties this analysis must not lose.
+
+    One: the bootstrap is imported from the expansion lane's `x1_power`, not
+    restated. Two implementations of a confidence interval is how two numbers in
+    one repository come to disagree about what 95% means.
+
+    Two: the facts-only arms are never paired against the three-subgraph arms.
+    Such a pair would differ in how many subgraphs are served, not in the recipe,
+    and reporting it as a recipe effect would be the "two things at once" error
+    the sweep was designed to avoid.
+    """
+    import importlib.util as ilu
+
+    root = Path(__file__).resolve().parent.parent
+    path = root / "scripts" / "repro" / "zep_recipe_power.py"
+    spec = ilu.spec_from_file_location("zep_recipe_power", path)
+    mod = ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    src = path.read_text()
+    assert "x1_power" in src and "def paired_delta_ci" not in src
+
+    facts_only = {"edge_rrf", "edge_episode_mentions"}
+    for hi, lo, _what in mod.PAIRS:
+        assert (hi in facts_only) == (lo in facts_only), (
+            f"{hi} vs {lo} compares a facts-only arm against a three-subgraph arm"
+        )
+    # every arm the module scores must carry an anchor, or the fail-closed check
+    # silently degrades to "no check" for the arm that lacks one
+    assert set(mod.ARM_STEMS) == set(mod.HEADLINE_ANCHORS)
+
+
 def _load_reconstruct():
     """Load the trace-reconstruction script the same flat-module way the other
     scripts/repro helpers are loaded in this file."""

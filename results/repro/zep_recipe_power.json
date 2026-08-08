@@ -1,0 +1,80 @@
+{
+  "n_judged": 1540,
+  "n_boot": 10000,
+  "seed": 0,
+  "anchors": {
+    "cross_encoder": {
+      "anchor_J": 42.73,
+      "recomputed_J": 42.73,
+      "j_n": 1540
+    },
+    "rrf": {
+      "anchor_J": 41.62,
+      "recomputed_J": 41.62,
+      "j_n": 1540
+    },
+    "mmr": {
+      "anchor_J": 40.78,
+      "recomputed_J": 40.78,
+      "j_n": 1540
+    },
+    "edge_rrf": {
+      "anchor_J": 34.87,
+      "recomputed_J": 34.87,
+      "j_n": 1540
+    },
+    "edge_episode_mentions": {
+      "anchor_J": 33.05,
+      "recomputed_J": 33.05,
+      "j_n": 1540
+    }
+  },
+  "pairs": [
+    {
+      "pair": "cross_encoder - rrf",
+      "isolates": "\u00a74.1 operating point vs upstream default family (reranker AND BFS)",
+      "delta_pp": 1.1039,
+      "lo": -0.7143,
+      "hi": 2.8571,
+      "se_pp": 0.9068,
+      "p_boot": 0.2414,
+      "excludes_zero": false,
+      "n": 1540,
+      "n_disagree": 199,
+      "n_boot": 10000,
+      "alpha": 0.05,
+      "seed": 0
+    },
+    {
+      "pair": "rrf - mmr",
+      "isolates": "reranker alone, both BFS-less; MMR at upstream's lambda=1",
+      "delta_pp": 0.8442,
+      "lo": -0.7792,
+      "hi": 2.4675,
+      "se_pp": 0.8182,
+      "p_boot": 0.3222,
+      "excludes_zero": false,
+      "n": 1540,
+      "n_disagree": 159,
+      "n_boot": 10000,
+      "alpha": 0.05,
+      "seed": 0
+    },
+    {
+      "pair": "edge_rrf - edge_episode_mentions",
+      "isolates": "episode-mentions reranker alone, both facts-only",
+      "delta_pp": 1.8182,
+      "lo": 0.2597,
+      "hi": 3.3766,
+      "se_pp": 0.7919,
+      "p_boot": 0.0244,
+      "excludes_zero": true,
+      "n": 1540,
+      "n_disagree": 150,
+      "n_boot": 10000,
+      "alpha": 0.05,
+      "seed": 0
+    }
+  ],
+  "note": "Statistics imported from scripts/ext/x1_power.py; not restated here. Facts-only arms are never compared against three-subgraph arms."
+}
