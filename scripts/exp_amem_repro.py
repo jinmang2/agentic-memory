@@ -65,11 +65,21 @@ CAT5_TEMPERATURE = 0.5
 # Memory types the snapshot enumerates. `episodic` is dumped from the episodes
 # table (list_episodes); the rest are derived item types across all methodologies
 # — empty types are skipped, so listing extras is harmless and future-proof.
+# Listing too FEW is not harmless: a type missing here is one the durable record
+# claims does not exist, since this file is what a reader gets when the store is
+# gone.
+#
+# `communities` was missing for the whole Zep campaign: the run wrote 1,243 of
+# them and `*.memory.jsonl` recorded none, so the artifact showed a two-subgraph
+# arm while the eval served three. The store kept them (conv0 holds 123), so
+# nothing measured is wrong and no re-ingest is owed — but "the store still has
+# it" is exactly the excuse the full-capture rule exists to refuse.
 SNAPSHOT_ITEM_TYPES = (
     "notes",
     "semantic",
     "facts",
     "entities",
+    "communities",
     "episodes",
     "pages",
     "playbook",
@@ -855,7 +865,9 @@ def _merge_run_budgets(budgets: list[dict]) -> dict:
     return merged
 
 
-def check_run_ready(cfg_entry, config_name: str, allow_unverified: bool, conv: str) -> None:
+def check_run_ready(
+    cfg_entry, config_name: str, allow_unverified: bool, conv: str, eval_only: bool = False
+) -> None:
     """Refuse a config whose threading has never survived a real run, and bound
     the escape hatch to one conversation.
 
@@ -866,12 +878,22 @@ def check_run_ready(cfg_entry, config_name: str, allow_unverified: bool, conv: s
     conversation keeps the escape hatch from becoming the thing it guards
     against.
 
+    `eval_only` is exempt, and the docstring above is why: an --eval-only run
+    reloads a store somebody else already paid for and issues no write calls, so
+    it cannot incur the spend this gate names. The exemption is what makes a
+    read-recipe sweep possible at all — Zep's four sibling arms
+    (`ZEP_SWEEP_RECIPES`) re-read the cross-encoder store for an eval apiece
+    instead of an ingest apiece, and gating them to one conversation would
+    charge the campaign's own structure for a risk it does not carry. It stays
+    narrow deliberately: the ingest those arms have never piloted is still
+    refused, so `run_ready` keeps meaning exactly what it attests.
+
     A function rather than an inline block so it is testable without spawning a
     subprocess against whichever arm happens to be gated today — that coupling
     made the first version of this test fail the moment its example arm passed
     its pilot.
     """
-    if cfg_entry.run_ready:
+    if cfg_entry.run_ready or eval_only:
         return
     if not allow_unverified:
         raise SystemExit(
@@ -962,7 +984,7 @@ def main() -> None:
         ap.error("--ingest-only and --eval-only are mutually exclusive")
 
     cfg_entry = get_config(args.config)
-    check_run_ready(cfg_entry, args.config, args.allow_unverified_config, args.conv)
+    check_run_ready(cfg_entry, args.config, args.allow_unverified_config, args.conv, args.eval_only)
 
     load_env_local()
     spec = get_model(args.model)

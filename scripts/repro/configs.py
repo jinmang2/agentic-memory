@@ -154,6 +154,53 @@ _ZEP_RECIPE = zep_search_recipe(ZEP_RECIPE_NAME)
 # table, so the scalar is expanded here to the shape RunnerConfig speaks.
 ZEP_PER_TYPE_K = {t: _ZEP_RECIPE.limit for t in _ZEP_RECIPE.memory_types}
 
+
+def zep_read_recipe_arm(recipe_key: str) -> RunnerConfig:
+    """A Zep arm differing from `zep_cross_encoder` ONLY in its read recipe.
+
+    This is the shape Track 3 was selected for and only ever half-collected:
+    "LoCoMo ingest 1 time (sentinel) + read recipe sweep" (rescope design §3).
+    The 27,449-call ingest is already paid for and its store is on disk, so a
+    second recipe costs an eval and nothing else — the reason a recipe TABLE is
+    worth having at all rather than a single pinned operating point.
+
+    Every field the recipe determines is DERIVED from `ZEP_SEARCH_RECIPES`
+    rather than restated, the same rule `rb_upstream` follows for its k: an arm
+    and the recipe it claims to be cannot disagree if only one of them holds the
+    value. What is deliberately NOT derived is the write side — role temps and
+    `structured_reply_retries` are shared with the flagship entry verbatim,
+    because these arms re-read a store that entry produced and a write-side
+    difference would silently make them a different arm's read.
+
+    `run_ready=False` is exact rather than cautious: no ingest has ever been
+    threaded through these entries, which is the only thing that flag attests.
+    They are built for `--eval-only` against the `zep_cross_encoder` store, and
+    `check_run_ready` lets that through for every conversation while still
+    refusing the ingest none of them has piloted.
+    """
+    recipe = zep_search_recipe(recipe_key)
+    return RunnerConfig(
+        f"zep_{recipe_key}",
+        lambda: [ZepGraphOrganizer()],
+        recipe.memory_types,
+        run_ready=False,
+        role_temps=ZEP_ROLE_TEMPS,
+        per_type_k={t: recipe.limit for t in recipe.memory_types},
+        store={**recipe.config_kwargs(), "structured_reply_retries": 4},
+        keyword_queries=False,
+    )
+
+
+# The sweep, minus one. `node_distance` is absent DELIBERATELY: its reranker
+# reorders by graph distance from a per-query centroid, and with no centroid it
+# degrades to "no-op truncation" by its own contract (`rerank.py:282-292`) —
+# upstream reaches it only from a config that supplies one, and nothing in the
+# LoCoMo harness does. Wiring it would buy a run that stamps
+# `NodeDistanceReranker` while measuring entities-only fusion order, which is
+# the exact failure the `degradations` stamp field exists to make impossible.
+# It belongs to a centroid-bearing read path, not to this sweep.
+ZEP_SWEEP_RECIPES = ("rrf", "mmr", "edge_rrf", "edge_episode_mentions")
+
 CONFIGS: dict[str, RunnerConfig] = {
     c.name: c
     for c in (
@@ -257,6 +304,28 @@ CONFIGS: dict[str, RunnerConfig] = {
             store={**_ZEP_RECIPE.config_kwargs(), "structured_reply_retries": 4},
             keyword_queries=False,
         ),
+        # Track 3's read-recipe sweep — four siblings of the entry above, each
+        # re-reading ITS store. What each one isolates, since a sweep whose rows
+        # differ in two things at once measures neither:
+        #   rrf   vs cross_encoder : reranker AND the BFS channel (upstream ties
+        #                            them — the RRF family has no BFS anywhere,
+        #                            which is what makes it a distinct recipe
+        #                            rather than a cheaper reranker)
+        #   mmr   vs rrf           : the reranker alone, both BFS-less. Upstream
+        #                            ships mmr_lambda=1, i.e. the diversity term
+        #                            OFF, so this measures MMR as configured, not
+        #                            MMR as described
+        #   edge_episode_mentions
+        #         vs edge_rrf      : the episode-mentions reranker alone, both
+        #                            facts-only. NOT comparable to the three-
+        #                            subgraph rows above — a single-subgraph
+        #                            recipe serves a different memory
+        # The mentions arm carries a KNOWN divergence: our reranker sorts mention
+        # count DESCENDING, following the paper sentence, while upstream's sorts
+        # ascending and lands the most-mentioned item last (ledger B-4, round-12
+        # #10). Its row measures the paper's mechanism, not the shipped one, and
+        # must say so wherever it is cited.
+        *(zep_read_recipe_arm(key) for key in ZEP_SWEEP_RECIPES),
         # factory + memory_types verbatim from exp_locomo_conv0.py:386-393:
         RunnerConfig(
             "nemori_upstream",

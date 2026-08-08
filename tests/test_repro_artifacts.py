@@ -829,9 +829,100 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
     assert store["overrides"] == {"reranker": "CrossEncoderReranker"}
     assert "bge-reranker" in store["reranker_params"]["model_name"]
 
+    # The property is "no NON-Zep arm was re-channelled", so the exemption is
+    # every Zep arm rather than this one name — the read-recipe sweep landed
+    # four more, and narrowing the loop to the flagship would have turned a
+    # guard about the other lineages into a guard about the roster's size.
     for name, cfg in cfgmod.CONFIGS.items():
-        if name != "zep_cross_encoder":
+        if not name.startswith("zep_"):
             assert "lexical_types" not in (cfg.store or {}), name
+
+
+def test_every_memory_type_an_arm_can_serve_is_in_the_snapshot():
+    """The snapshot must cover every type some arm retrieves from, or the durable
+    record contradicts the run that produced it.
+
+    This failed silently for the whole Zep campaign: `communities` is one of the
+    three subgraphs its recipe serves, the ingest wrote 1,243 of them, and
+    `*.memory.jsonl` recorded zero — the artifact described a two-subgraph arm.
+    Driven off the config roster rather than a hand-kept list so the next arm
+    that serves a new type cannot reintroduce the gap.
+    """
+    H = _load_repro()
+    cfgmod = _load_configs()
+
+    served = {t for cfg in cfgmod.CONFIGS.values() for t in cfg.memory_types}
+    # episodic is dumped by its own branch (list_episodes), not from this tuple
+    missing = served - set(H.SNAPSHOT_ITEM_TYPES) - {"episodic"}
+    assert not missing, f"arms retrieve {sorted(missing)} but the snapshot never writes them"
+
+
+def test_zep_read_recipe_sweep_arms_derive_everything_from_the_recipe_table():
+    """Track 3's sweep arms: same ingest, different read recipe.
+
+    The entry these siblings copy took 27,449 write calls and $4.71 to produce a
+    store; a second recipe against that store costs an eval. That asymmetry is
+    the whole reason Zep was picked for a recipe TABLE rather than a single
+    pinned operating point, and it went uncollected for a campaign — so these
+    assertions pin the derivation, not the values: an arm may not restate what
+    the recipe already says, because two copies of a number are two chances to
+    disagree.
+    """
+    cfgmod = _load_configs()
+    from agmem.organizers.zep_graph import zep_search_recipe
+
+    for key in cfgmod.ZEP_SWEEP_RECIPES:
+        cfg = cfgmod.get_config(f"zep_{key}")
+        recipe = zep_search_recipe(key)
+        assert type(cfg.factory()[0]).__name__ == "ZepGraphOrganizer", key
+        # derived, never restated
+        assert cfg.memory_types == recipe.memory_types, key
+        assert cfg.per_type_k == dict.fromkeys(recipe.memory_types, recipe.limit), key
+        assert (cfg.store or {})["lexical_types"] == recipe.lexical_types, key
+        assert (cfg.store or {})["bfs_types"] == recipe.bfs_types, key
+        # shared with the flagship verbatim: these arms re-read ITS store, so a
+        # write-side difference would quietly make them a different arm's read
+        assert cfg.role_temps == cfgmod.ZEP_ROLE_TEMPS, key
+        assert (cfg.store or {})["structured_reply_retries"] == 4, key
+        assert cfg.keyword_queries is False, key
+        # exact, not cautious: no ingest has been threaded through these entries
+        assert cfg.run_ready is False, key
+
+    # what each pair isolates — a sweep whose rows differ in two things at once
+    # measures neither, so the comparable pairs are pinned here
+    rrf = cfgmod.get_config("zep_rrf")
+    mmr = cfgmod.get_config("zep_mmr")
+    assert rrf.memory_types == mmr.memory_types == ("facts", "entities", "communities")
+    assert (rrf.store or {})["bfs_types"] == (mmr.store or {})["bfs_types"] == ()
+    assert "overrides" not in (rrf.store or {})  # NoopReranker keeps RRF fusion order
+    assert (mmr.store or {})["overrides"] == {"reranker": "MMRReranker"}
+    # upstream ships the diversity term OFF; this measures MMR as configured
+    assert (mmr.store or {})["reranker_params"]["lambda_"] == 1.0
+
+    edge_rrf = cfgmod.get_config("zep_edge_rrf")
+    mentions = cfgmod.get_config("zep_edge_episode_mentions")
+    assert edge_rrf.memory_types == mentions.memory_types == ("facts",)
+    assert "overrides" not in (edge_rrf.store or {})
+    assert (mentions.store or {})["overrides"] == {"reranker": "EpisodeMentionsReranker"}
+
+
+def test_node_distance_is_left_out_of_the_sweep_because_it_would_measure_nothing():
+    """`node_distance` is implemented and NOT wired, deliberately.
+
+    Its reranker reorders by graph distance from a per-query centroid and is a
+    no-op truncation without one; nothing in the LoCoMo harness supplies a
+    centroid. Wiring it would produce a run stamped `NodeDistanceReranker` that
+    actually measured entities-only fusion order — a recipe filed under a name
+    it is not, which is the failure the `degradations` field was added to make
+    impossible. Pinned as a test so a future sweep does not "complete the table"
+    by adding the one entry whose absence is the finding.
+    """
+    cfgmod = _load_configs()
+    from agmem.organizers.zep_graph import ZEP_SEARCH_RECIPES
+
+    assert "node_distance" in ZEP_SEARCH_RECIPES  # implemented upstream-side
+    assert "node_distance" not in cfgmod.ZEP_SWEEP_RECIPES
+    assert "zep_node_distance" not in cfgmod.CONFIGS
 
 
 def test_zep_write_temperature_is_the_paper_era_value_not_the_pinned_sha_one():
@@ -1398,6 +1489,25 @@ def test_pilot_override_is_bounded_to_one_conversation():
     assert H.check_run_ready(ready, "x", allow_unverified=False, conv="all") is None
 
 
+def test_eval_only_is_exempt_from_the_pilot_bound_but_ingest_still_is_not():
+    """An --eval-only run reloads a store somebody already paid for and issues no
+    write calls, so it cannot incur the spend the gate names.
+
+    This is what makes a read-recipe sweep possible: Zep's sibling arms re-read
+    the cross-encoder store for an eval apiece, and bounding them to one
+    conversation would charge the campaign's own structure for a risk it does
+    not carry. The exemption has to stay narrow, though — the same gated entry
+    must still be refused when it would INGEST, because that is the threading
+    `run_ready` attests and these arms have never piloted it.
+    """
+    H = _load_repro()
+    gated = SimpleNamespace(run_ready=False)
+
+    assert H.check_run_ready(gated, "x", allow_unverified=False, conv="all", eval_only=True) is None
+    with pytest.raises(SystemExit, match="not run-ready"):
+        H.check_run_ready(gated, "x", allow_unverified=False, conv="all", eval_only=False)
+
+
 def test_parallel_orchestrator_refuses_a_multi_conv_pilot_before_spawning():
     """Same bound, enforced by the orchestrator too. The worker would refuse each
     conversation anyway, but only after a subprocess spawn apiece; here it costs
@@ -1502,9 +1612,13 @@ def test_zep_raises_reply_retries_because_its_call_volume_demands_it():
     cfgmod = _load_configs()
     zep = cfgmod.get_config("zep_cross_encoder")
     assert (zep.store or {})["structured_reply_retries"] == 4
-    # and no other arm's timing is touched
+    # and no arm measured before this budget existed has its timing touched.
+    # Zep's read-recipe siblings share it on purpose (they re-read ITS store, so
+    # they must not differ on the write side); the property being guarded is
+    # that the OTHER lineages were left alone, not that exactly one name carries
+    # the key.
     for name, cfg in cfgmod.CONFIGS.items():
-        if name != "zep_cross_encoder":
+        if not name.startswith("zep_"):
             assert "structured_reply_retries" not in (cfg.store or {}), name
 
 
