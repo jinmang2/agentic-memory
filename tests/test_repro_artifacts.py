@@ -11,6 +11,7 @@ import importlib.util as _ilu
 import json
 import subprocess
 import sys
+import tempfile
 
 import pytest
 from pathlib import Path
@@ -836,6 +837,112 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
     for name, cfg in cfgmod.CONFIGS.items():
         if not name.startswith("zep_"):
             assert "lexical_types" not in (cfg.store or {}), name
+
+
+def _load_reconstruct():
+    """Load the trace-reconstruction script the same flat-module way the other
+    scripts/repro helpers are loaded in this file."""
+    import importlib.util
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    sys.path.insert(0, str(root / "scripts"))
+    spec = importlib.util.spec_from_file_location(
+        "reconstruct_from_trace", root / "scripts" / "repro" / "reconstruct_from_trace.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_trace_reconstruction_pairs_judges_to_their_own_question():
+    """Off-by-one in the generate/judge pairing would shift every verdict onto a
+    neighbouring question and still produce plausible output, so the pairing
+    raises rather than assumes.
+
+    The reconstruction only exists because a run can finish measuring and die
+    before writing; its whole value is that its output is the run's, so a silent
+    misalignment is worse than no reconstruction at all.
+    """
+    R = _load_reconstruct()
+
+    def trace(tmp_path, calls):
+        p = tmp_path / "t.jsonl"
+        p.write_text("\n".join(json.dumps(c) for c in calls) + "\n")
+        return p
+
+    def gen(q, pred):
+        return {
+            "role": "generate",
+            "messages": [{"role": "user", "content": f"ctx\nQuestion: {q}\nShort answer:"}],
+            "response_text": pred,
+        }
+
+    def judge(gold, label):
+        return {
+            "role": "judge",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Question: q\nGold answer: {gold}\nGenerated answer: p\n",
+                }
+            ],
+            "response_text": json.dumps({"label": label}),
+        }
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        # a judged question, then an UNjudged one (category 5), then judged
+        turns = R.parse_trace(
+            trace(
+                tmp,
+                [
+                    gen("q1", "a1"),
+                    judge("g1", "CORRECT"),
+                    gen("q2", "a2"),
+                    gen("q3", "a3"),
+                    judge("g3", "WRONG"),
+                ],
+            )
+        )
+        assert [t["q_from_prompt"] for t in turns] == ["q1", "q2", "q3"]
+        assert [R.verdict(t["judge_raw"]) for t in turns] == [True, None, False]
+
+        with pytest.raises(SystemExit, match="no preceding generate"):
+            R.parse_trace(trace(tmp, [judge("g", "CORRECT")]))
+        with pytest.raises(SystemExit, match="second judge"):
+            R.parse_trace(trace(tmp, [gen("q", "a"), judge("g", "CORRECT"), judge("g", "WRONG")]))
+
+
+def test_trace_reconstruction_grades_a_verdict_exactly_as_the_live_judge_does():
+    """`judge_answer` treats CORRECT and nothing else as True. A reconstruction
+    that also accepted 'correct.' or 'Yes' would score higher than the run it
+    claims to restore — the failure would look like a better result, which is
+    the direction nobody double-checks."""
+    R = _load_reconstruct()
+
+    assert R.verdict(json.dumps({"label": "CORRECT"})) is True
+    assert R.verdict(json.dumps({"label": "correct"})) is True  # upper()d, as upstream does
+    assert R.verdict(json.dumps({"label": "WRONG"})) is False
+    assert R.verdict(json.dumps({"label": "yes"})) is False
+    assert R.verdict(None) is None
+    assert R.verdict("not json") is None
+
+
+def test_scoring_aggregation_has_exactly_one_implementation():
+    """`evaluate` and the reconstruction must not each own a copy of the
+    scoring arithmetic. Several copies with one of them read is the defect class
+    this repo catalogs in upstream projects; it applies here too."""
+    from agmem.bench import locomo as L
+
+    assert callable(L.aggregate_cells)
+    src = (Path(__file__).resolve().parent.parent / "src/agmem/bench/locomo.py").read_text()
+    assert "def aggregate_cells" in src
+    assert src.count("def agg(") == 0, "the closure came back — that is the second copy"
+
+    rows = [{"f1": 1.0, "b1": 0.5, "j": True}, {"f1": 0.0, "b1": None, "j": False}]
+    out = L.aggregate_cells(rows)
+    assert out == {"f1": 50.0, "n": 2, "bleu1": 50.0, "bleu1_n": 1, "j_score": 50.0, "j_n": 2}
 
 
 def test_mmr_scores_are_json_serializable_python_floats():

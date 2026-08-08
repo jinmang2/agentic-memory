@@ -428,6 +428,41 @@ def resolve_cat5_reply(reply: str, options: tuple[str, str]) -> str:
     return r
 
 
+def aggregate_cells(rows: list[dict[str, Any]]) -> dict[str, float]:
+    """Mean F1/BLEU-1 as 0-100 percentages, plus the row count. When any
+    row carries a judge verdict, also emits `j_score` (mean of the judged
+    rows as a 0-100 percentage) and `j_n` (count of judged rows).
+
+    `bleu1` is OMITTED entirely when no row scored one — `bleu1_wujiang`
+    returns None without nltk, and reporting 0.0 (or the `ours` BLEU) for
+    an unavailable metric is exactly the mislabeling this path exists to
+    stop. A wujiang result JSON with no `bleu1` key means "not measured",
+    not "measured as zero".
+
+    Module-level rather than a closure inside `evaluate` because a second
+    caller exists: `scripts/repro/reconstruct_from_trace.py` rebuilds a run's
+    records from its LLM trace when the run finished measuring but died before
+    writing its artifacts. A reconstruction that re-implemented this arithmetic
+    would be a second copy of the scoring rule, and "several copies, one of them
+    read" is the defect class this project catalogs in others. One function, two
+    callers, no chance of drift.
+    """
+    out = {
+        "f1": round(100 * sum(r["f1"] for r in rows) / len(rows), 2),
+        "n": len(rows),
+    }
+    scored_bleu = [r["b1"] for r in rows if r["b1"] is not None]
+    if scored_bleu:
+        out["bleu1"] = round(100 * sum(scored_bleu) / len(scored_bleu), 2)
+        if len(scored_bleu) != len(rows):
+            out["bleu1_n"] = len(scored_bleu)
+    judged = [r["j"] for r in rows if r["j"] is not None]
+    if judged:
+        out["j_score"] = round(100 * sum(judged) / len(judged), 2)
+        out["j_n"] = len(judged)
+    return out
+
+
 def judge_answer(mem: AgenticMemory, question: str, gold: str, pred: str) -> bool | None:
     """Mem0-style binary LLM judge. Returns True/False, or None if no judge
     client (``mem.structured``) is configured or the call yields nothing."""
@@ -825,34 +860,9 @@ def evaluate(
         per_cat[cat].append(cell)
         records.append(row)
 
-    def agg(rows: list[dict[str, Any]]) -> dict[str, float]:
-        """Mean F1/BLEU-1 as 0-100 percentages, plus the row count. When any
-        row carries a judge verdict, also emits `j_score` (mean of the judged
-        rows as a 0-100 percentage) and `j_n` (count of judged rows).
-
-        `bleu1` is OMITTED entirely when no row scored one — `bleu1_wujiang`
-        returns None without nltk, and reporting 0.0 (or the `ours` BLEU) for
-        an unavailable metric is exactly the mislabeling this path exists to
-        stop. A wujiang result JSON with no `bleu1` key means "not measured",
-        not "measured as zero"."""
-        out = {
-            "f1": round(100 * sum(r["f1"] for r in rows) / len(rows), 2),
-            "n": len(rows),
-        }
-        scored_bleu = [r["b1"] for r in rows if r["b1"] is not None]
-        if scored_bleu:
-            out["bleu1"] = round(100 * sum(scored_bleu) / len(scored_bleu), 2)
-            if len(scored_bleu) != len(rows):
-                out["bleu1_n"] = len(scored_bleu)
-        judged = [r["j"] for r in rows if r["j"] is not None]
-        if judged:
-            out["j_score"] = round(100 * sum(judged) / len(judged), 2)
-            out["j_n"] = len(judged)
-        return out
-
     all_rows = [r for rows in per_cat.values() for r in rows]
     return {
-        "overall": agg(all_rows) if all_rows else {},
-        "by_category": {cat: agg(rows) for cat, rows in sorted(per_cat.items())},
+        "overall": aggregate_cells(all_rows) if all_rows else {},
+        "by_category": {cat: aggregate_cells(rows) for cat, rows in sorted(per_cat.items())},
         "records": records,
     }
