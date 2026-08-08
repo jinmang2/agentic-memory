@@ -88,7 +88,7 @@ Recurring defect classes this process surfaced — useful beyond this repo — a
 
 **Measurement is deliberately deferred.** No benchmark result is claimed on this page.
 
-LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). The fidelity fixes from the latest audit round changed write-path behavior in seven of the methodologies, which invalidated the pre-audit numbers; **four write paths have since been re-measured post-fix on the full LoCoMo 10-conversation set under one harness and one judge — A-Mem, Nemori (both arms of the ledger's B-3 pair) and Mem0 — and are tabulated in [`docs/18-locomo-4way.md`](docs/18-locomo-4way.md).** The remaining six methodologies have no post-fix number, and LongMemEval has never been run at all (ledger C-4). The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first and an unmeasured row stays visibly empty.
+LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). The fidelity fixes from the latest audit round changed write-path behavior in seven of the methodologies, which invalidated the pre-audit numbers; **five write paths have since been re-measured post-fix on the full LoCoMo 10-conversation set under one harness and one judge — A-Mem, Nemori (both arms of the ledger's B-3 pair), Mem0 and Zep — and are tabulated in [`docs/18-locomo-4way.md`](docs/18-locomo-4way.md).** The remaining five methodologies have no post-fix number, and LongMemEval has never been run at all (ledger C-4). The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first and an unmeasured row stays visibly empty.
 
 ---
 
@@ -144,7 +144,7 @@ tests/           441 tests, incl. fidelity pinning suites
 | Doc | What's in it |
 |---|---|
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
-| [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational four-way on LoCoMo: one harness, one judge, four write paths, with the footnotes that must travel with it |
+| [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |

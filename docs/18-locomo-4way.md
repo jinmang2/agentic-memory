@@ -1,13 +1,13 @@
-# The conversational four-way — LoCoMo, one harness, one judge
+# The conversational five-way — LoCoMo, one harness, one judge
 
-Four write paths measured against the same 10 LoCoMo conversations, through the same retrieval
+Five write paths measured against the same 10 LoCoMo conversations, through the same retrieval
 harness, scored by the same judge at the same pin. Every row was produced by this repository's
 runner (`scripts/exp_amem_repro.py` / `scripts/repro/ingest_parallel.py`) from a committed artifact
 set; nothing here is transcribed from a paper.
 
 **What this table is for, and what it is not.** It compares *mechanisms under one measurement
 protocol*. **No row here is an attempt to reproduce a published number**, and every system in it
-has one — A-Mem's Table 1, Nemori's 73.0 LoCoMo headline, Mem0's vendor figures. Where our row and
+has one — A-Mem's Table 1, Nemori's 73.0 LoCoMo headline, Mem0's vendor figures, Zep's 71.2 (which is LongMemEval, not LoCoMo — Zep reports no LoCoMo number at all). Where our row and
 a published number disagree, the disagreement is documented in
 [`17-defect-ledger.md`](17-defect-ledger.md) rather than explained away here.
 
@@ -18,7 +18,7 @@ a published number disagree, the disagreement is documented in
 | Benchmark | LoCoMo, all 10 conversations, 5,882 turns, 1,986 questions |
 | Answer model | `gpt-4o-mini`, temperature per role from each arm's canned profile |
 | Judge | Mem0-J binary judge @ `gpt-4o-mini`, 1,540 questions (categories 1-4; category 5 is answered but not judged — see ledger C-1) |
-| Embedder | `text-embedding-3-small` for **all four arms** |
+| Embedder | `text-embedding-3-small` for **all five arms** |
 | Metrics | J = judge accuracy; F1 / BLEU-1 = our uniform lexical scorers (ledger C-2 on what those are and are not comparable to) |
 | Seeds | **one** |
 
@@ -29,8 +29,8 @@ a published number disagree, the disagreement is documented in
 | **Nemori** arm A (upstream) | **67.60** | 46.79 | 41.74 | 3,579 | 0.87 | 1.37 | **2.24** |
 | **Nemori** arm B (0.85 filter live) | 65.78 | 45.79 | 40.68 | 2,759 | 0.69 | 1.12 | **1.82** |
 | **A-Mem** | 61.23 | 42.92 | 38.03 | 11,754 | 2.81 | 1.09 | **3.90** |
+| **Zep** `cross_encoder` | 42.73 | 28.80 | 24.48 | 27,449 | 4.71 | 0.38 | **5.09** |
 | **Mem0** `v0.1.94` | 31.82 | 24.71 | 21.57 | 5,890 | 1.87 | 0.30 | **2.17** |
-| **Zep** | *not measured* | | | | | | |
 
 Each row runs its own lineage's read path. For A-Mem that means two things its paper does not
 describe but its evaluation harness does: an LLM keyword rewrite before every search, and a
@@ -48,14 +48,23 @@ made, and the single most important thing to know before citing any row against 
 |---|---|---|---|---|---|---|
 | A-Mem | `notes` | 10 | on, per hit | LLM-generated keywords | **1,986** | 3,322 tok/question |
 | Nemori (both arms) | `episodes` + `semantic` | 10 + 20 | off | original question | 0 | 3,574–4,409 tok/question |
+| Zep | `facts` + `entities` + `communities` | 10 + 10 + 10 | off | original question | 0 | 1,086 tok/question |
 | Mem0 | `semantic` | 30 | off | original question | 0 | **837** tok/question |
 
 A-Mem is the only arm paying an LLM call to read, and that asymmetry is upstream's, not ours: its
 harness rewrites each question into keywords before searching while Nemori's and Mem0's read the
 question as written. Costing that step is the ablation below.
 
-Item *count* at read time is 30 for Nemori and Mem0 and 10 for A-Mem, so the spread in the last
-column is not a k difference — it is what a "memory" is in each system. Mem0's unit is an atomic
+Zep's row is the one recipe in this table that is a *published configuration* rather than a set
+of knobs we chose: `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` supplies its three subgraphs, their BM25
+channels, a BFS channel for facts and entities, `rrf_k=1`, `dense_min_score=0.6` and a BGE
+cross-encoder reranker as one object. It is the paper's §4.1 operating point, and the run's stamp
+records `reranker: CrossEncoderReranker` with `degradations: []` — that reranker is the arm's whole
+identity, and a silent fall back to no reranking would have turned this into a different upstream
+recipe while still filing under this name.
+
+Item *count* at read time is 30 for Nemori, Mem0 and Zep, and 10 for A-Mem, so the spread in the
+last column is not a k difference — it is what a "memory" is in each system. Mem0's unit is an atomic
 fact averaging **46.0 characters** over all 5,427 of them (per-conversation means 43.2–48.9);
 Nemori's is a narrative episode.
 
@@ -189,13 +198,20 @@ a NOOP all leave a store that looks the same afterwards.
 | A-Mem | ADD 5,882 · LINK 5,866 · UPDATE 16,342 | 5,882 notes |
 | Nemori arm A | ADD 555 episodes + 1,926 semantic · MERGE 223 · INVALIDATE 223 | 2,704 |
 | Nemori arm B | ADD 763 episodes + 1,745 semantic · MERGE 22 · INVALIDATE 22 | 2,530 |
+| Zep | ADD 8,778 facts + 2,599 entities + 1,243 communities · UPDATE 4,373 facts + 895 entities · **INVALIDATE 1,293** | 11,377 (8,778 facts + 2,599 entities) |
 | Mem0 | ADD 5,654 · **NOOP 26,209** · UPDATE 1,077 · DELETE 227 | 5,427 facts |
 
-`ADD:episodic` is excluded from the table above: all four arms log exactly 5,882 of them, one per
+`ADD:episodic` is excluded from the table above: all five arms log exactly 5,882 of them, one per
 turn, because that row is our harness's own raw-turn write rather than anything the methodology
 decided. Where the arms differ is whether those turns *survive* as retrievable items — A-Mem and
 Mem0's stores keep them (they are the `episodic` entry in each store's per-type counts), while
-Nemori's keep none, its turns having been folded into episodes.
+Nemori's keep none, its turns having been folded into episodes. Zep keeps its raw episodes too
+(verbatim-loss defense) but does not retrieve them: its recipe serves only the three subgraphs.
+
+Zep's 1,293 INVALIDATEs are the paper's flagship bi-temporal mechanism firing — an edge whose
+`valid_at` is strictly older than a contradicting new fact gets its `invalid_at` stamped rather than
+being deleted. This is the first count of it we have. What it bought is the subject of the temporal
+row below, and the answer is not what the mechanism's prominence predicts.
 
 Mem0's 2,945 decision calls returned 33,167 semantic verdicts, **79.0% of them NOOP** — the model
 was asked what to do about a candidate fact and answered "nothing" four times out of five. That
@@ -203,7 +219,7 @@ ratio is the reason this repo added `OpType.NOOP` to the core vocabulary for thi
 non-mutation is a log row, and counting it as a discard or not counting it at all both lose the
 measurement.
 
-## Where Mem0's deficit comes from
+## Where the deficits come from
 
 The gap is not the answering model being wrong more often. It is the answering model **not being
 given the answer**. Same prompt, same judge, same 1,540 questions:
@@ -213,6 +229,7 @@ given the answer**. Same prompt, same judge, same 1,540 questions:
 | Nemori arm A | 19.5% | 84.0% | 67.60 |
 | Nemori arm B | 20.6% | 82.9% | 65.78 |
 | A-Mem | 26.9% | 82.0% | 59.87 |
+| Zep | 32.2% | **62.5%** | 42.73 |
 | Mem0 | **55.6%** | 71.7% | 31.82 |
 
 `J ≈ (1 − abstention) × accuracy-when-answered` holds on every row (Mem0: 0.444 × 0.717 = 31.8).
@@ -224,6 +241,20 @@ how small the kept units are, not a retrieval bug.
 The shape is counter-intuitive and worth stating plainly: **Mem0 stores twice as many retrievable
 items as Nemori and retrieves the maximum k, and still hands the answerer a quarter of the
 context.** More memories, less memory.
+
+**Zep fails differently, and it is the only arm that does.** Its abstention (32.2%) sits between
+A-Mem and Mem0, roughly where its context size predicts. Its accuracy *when it answered* — 62.5% —
+is the **lowest of the five**, below even Mem0's 71.7%. Every other arm in this table answers
+correctly 72-84% of the time once it has something to say; Zep does not. So its deficit is not only
+coverage: it also gets the question wrong more often having decided to try.
+
+The candidate explanation is what Zep hands over. The other four arms serve text the participants
+actually produced — raw notes, narrative episodes, extracted sentences. Zep serves an *abstraction*:
+SCREAMING_SNAKE_CASE triples and LLM-written community summaries, with the raw episodes deliberately
+excluded from its recipe. Something is lost in that projection, and the paper says so itself about
+its own weakest category (§ single-session-assistant, "verbatim detail is lost in the abstraction").
+This table does not isolate that — doing so would mean serving Zep's episodes alongside its
+subgraphs, which is a different recipe and a different run.
 
 ## Footnotes that must travel with any citation of this table
 
@@ -262,10 +293,66 @@ context.** More memories, less memory.
    on MiniLM (which replicated, and which the embedder change then reversed). The A-Mem read-path
    ablation is single-seed too; its +5.26 J is large against the ±0.35 pp per-arm seed stability
    Track 1 measured, but that stability figure was measured on Nemori, not on A-Mem.
-8. **What the ranking is sensitive to.** Three of the four rows sit inside a 2.5-point band
+8. **Zep's row carries four conditions the others do not.** (a) Its write temperature is **0**,
+   dated from pypi wheels to the paper's own release rather than read off the pinned clone, whose
+   `DEFAULT_TEMPERATURE = 1` arrived with the release that made `gpt-5-mini` the default model —
+   GPT-5 accepts only 1, so that constant tracks the model, not extraction. (b) It ran under a
+   **0.1% drop tolerance** (`max_drop_rate`, stamped), not the zero-drop bar the other four met: at
+   ~2,745 structured calls per conversation a clean conversation is a 37% event, and the binary gate
+   made a healthy run wipe and re-pay. All ten conversations came in at **zero drops** anyway. (c)
+   Its reranker is the only non-`Noop` one in the table, and it ran on GPU. (d) It is the only arm
+   whose retrieved units are **abstractions rather than participant text** — see the accuracy
+   discussion above.
+
+9. **The ordering of the top three is not separated by the evidence.** A paired bootstrap over the
+   per-question verdicts puts Nemori arm A over arm B at ΔJ +1.82 pp with a 95% CI of
+   **[-0.32, +3.90]** (p = 0.097) — the interval includes zero. Arm B over A-Mem (+4.55) and A-Mem
+   over the rest are separated. Re-scoring without the 99 questions an external audit flags as
+   score-corrupting moves every arm up 1.07-2.68 pp and changes **no rank** (adjacent-pair flip
+   probability ≤ 0.0001). Both analyses, their method, and the reruns are in
+   [`research/locomo-gold-audit-replay.md`](research/locomo-gold-audit-replay.md).
+
+10. **What the ranking is sensitive to.** Three of the five rows sit inside a 2.5-point band
    (67.60 / 65.78 / 65.13) and two harness choices — the embedder and the read query — moved a
    single arm by 15.13 points across this campaign. Treat the ordering among those three as
    unresolved at this precision; the gap that *is* robust is the one to Mem0.
+
+## Per category — and the one result that runs against a paper's own claim
+
+Same 1,540 judged questions, same judge, same category labels from LoCoMo's gold. The counts are
+identical down every column (841 / 282 / 321 / 96), which is what makes the columns comparable at
+all; it was checked rather than assumed before this table was written.
+
+| arm | single-hop (841) | multi-hop (282) | temporal (321) | open-domain (96) |
+|---|---|---|---|---|
+| Nemori arm A | **75.51** | **69.86** | 56.39 | **29.17** |
+| Nemori arm B | 73.60 | 65.25 | 57.32 | 27.08 |
+| A-Mem | 65.64 | 57.45 | **62.62** | **29.17** |
+| Zep | 47.32 | 47.16 | 33.64 | 19.79 |
+| Mem0 | 34.96 | 32.27 | 26.48 | 20.83 |
+
+**The temporal column is the finding.** Zep is the only arm here built around time: a bi-temporal
+graph that separates when a fact became true from when the system learned it, and an invalidation
+rule that fired 1,293 times during this ingest. It places **fourth of five** on temporal questions,
+**29 points below A-Mem**, which has no temporal mechanism whatsoever — A-Mem's notes carry a
+timestamp and nothing reads it.
+
+Three things this does NOT say, each worth stating because the result invites all three:
+
+- **It is not a failed reproduction of Zep's published number.** Zep reports 71.2 on LongMemEval and
+  **no LoCoMo figure at all**. There is nothing here to disagree with.
+- **It is not evidence the mechanism is broken.** The invalidations happened; `resolve_edge_
+  contradictions` and `expire_new_edge` transcribe upstream's truth table and are tested against it.
+  What the row shows is that firing 1,293 times did not convert into answering LoCoMo's temporal
+  questions, which is a claim about this benchmark and this operating point.
+- **It is not isolated from the arm's general deficit.** Zep is fourth on *every* category. Temporal
+  is its worst relative showing, not its only one, and a mechanism-specific conclusion would need an
+  ablation (Zep with invalidation off) that this campaign did not run.
+
+What it does say is narrower and still worth having: **on LoCoMo, at the paper's own §4.1 operating
+point, an explicit temporal knowledge graph did not beat a flat note store on temporal questions.**
+Any claim that temporal structure is what buys temporal accuracy now has one measurement standing
+against it, and the benchmark it was measured on is one its authors chose not to report.
 
 ## Artifacts
 
