@@ -21,7 +21,9 @@ eval_mode (agmem/bench/locomo.py:704-781).
 """
 
 import json
+import subprocess
 import sys
+from pathlib import Path
 
 from _common import REPO, proven, skip
 
@@ -35,10 +37,32 @@ EXPECTED_QUESTIONS = 12314  # pin: total records scored
 EXPECTED_DIVERGING = 2804  # pin: |{q : |f1_wujiang - f1_ours| > 1e-9}|
 
 
+def tracked_records() -> list[Path]:
+    """The COMMITTED record files, which is what the pins above are pins on.
+
+    A bare glob was wrong: `results/repro/` is also where in-flight campaigns
+    write, those artifacts are gitignored rather than absent, and the counts
+    below then trip on a local working tree while CI (which only ever has the
+    committed set) passed. Both directions of that were bad — a false local
+    failure, and a pin whose meaning would have shifted silently the day a new
+    artifact was committed. Falling back to the glob keeps the script runnable
+    outside a checkout; the assertions then say what they always said."""
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(REPO), "ls-files", "results/repro/*.records.jsonl"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+    except (OSError, subprocess.CalledProcessError):
+        return sorted((REPO / "results" / "repro").glob("*.records.jsonl"))
+    return sorted(REPO / p for p in out)
+
+
 def main() -> None:
-    records = sorted((REPO / "results" / "repro").glob("*.records.jsonl"))
+    records = tracked_records()
     if not records:
-        skip("no results/repro/*.records.jsonl artifacts present")
+        skip("no committed results/repro/*.records.jsonl artifacts present")
 
     total = diverging = 0
     drift_max = 0.0
