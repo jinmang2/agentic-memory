@@ -44,13 +44,42 @@ class SentenceTransformerEmbedder:
         from sentence_transformers import SentenceTransformer  # gated by requires
 
         self.name = model_name
-        self._model = SentenceTransformer(model_name, device=device)
+        self._model = self._load(SentenceTransformer, model_name, device)
         get_dim = (
             getattr(self._model, "get_embedding_dimension", None)
             or self._model.get_sentence_embedding_dimension
         )
         self.dim = get_dim() or KNOWN_MODELS.get(model_name, 384)
         self._prefixes = PREFIXES.get(model_name, {})
+
+    @staticmethod
+    def _load(ctor, model_name: str, device: str | None):
+        """Construct the model from cache when possible, from the hub when not.
+
+        Measured 2026-08-08 against the shipped `agmem-mcp` over stdio: the
+        client handshake took 15.5-16.0 s with the network reachable and
+        10.8-12.2 s with `HF_HUB_OFFLINE=1`, for a model already on disk in
+        both runs. The difference is a revision check — sentence-transformers
+        asks the hub whether the cached snapshot is current every time a model
+        is constructed, and pays a round trip to be told it is.
+
+        That cost lands on the two surfaces a user actually feels: the MCP
+        server, which pays it before it can answer anything, and the capture
+        hook, which pays it per prompt. Neither wants it. A local memory store
+        that gets slower when the network is bad, and would stall behind a
+        hanging DNS resolver, has the dependency backwards.
+
+        So: ask for the cache first, and fall back to the ordinary path when
+        that raises — which is what happens on a cold machine (nothing cached),
+        and also on a sentence-transformers old enough not to accept the
+        keyword. The fallback deliberately does not swallow anything: whatever
+        the second attempt raises reaches the caller, so a genuinely broken
+        model still fails loudly rather than as a mysteriously empty store.
+        """
+        try:
+            return ctor(model_name, device=device, local_files_only=True)
+        except Exception:
+            return ctor(model_name, device=device)
 
     def embed(self, texts: list[str], kind: EmbedKind = "passage") -> list[list[float]]:
         """L2-normalized vectors; applies the model's role prefix from

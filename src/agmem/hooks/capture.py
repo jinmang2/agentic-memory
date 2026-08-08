@@ -20,14 +20,19 @@ this hook specifically: the model deciding when to remember is the failure mode
 that MCP tools already have. Here the harness decides, on every prompt, whether
 or not anyone thought about it.
 
-KNOWN COST, MEASURED 2026-08-07, AND NOT YET FIXED. Unlike `recall`, this hook
+KNOWN COST, MEASURED 2026-08-08, AND STILL NOT FIXED. Unlike `recall`, this hook
 needs the embedder — an episode written without a vector is invisible to every
-semantic search, including the MCP server's `search_memory`. Constructing one
-costs ~15 s in a fresh process on this machine, and it does not decompose into
-a hot spot worth tuning: `import torch` 1.7 s, `import sentence_transformers`
-4.4 s, loading the model 8.8 s. `async: true` keeps that off the user's turn,
-but it is still ~15 s of CPU per prompt, and prompts arriving closer together
-than that will overlap.
+semantic search, including the MCP server's `search_memory` (verified end to
+end: a prompt captured here comes back from that tool). A fresh process costs
+10.8 s wall, decomposing into `import torch` 2.1 s, `import
+sentence_transformers` 4.4 s, constructing the model 3.7 s. `async: true` keeps
+that off the user's turn, but it is still ~11 s of CPU per prompt, and prompts
+arriving closer together than that will overlap.
+
+That is down from ~15 s: loading the model cache-first removed a hub revision
+check worth ~5 s of the construction (`SentenceTransformerEmbedder._load`).
+Worth having, and it does not change the paragraph below — halving a cost that
+should not be paid per prompt at all leaves it still paid per prompt.
 
 The honest fix is architectural, not a tweak: either capture through a
 long-lived process that loads the model once (the MCP server already is one), or

@@ -101,13 +101,17 @@ def open_doc_store(namespace: str | None = None, data_dir: str | None = None):
     """The doc store alone — no embedder, no vector store, no organizers.
 
     This exists because of a measurement, not a preference. Opening a full
-    `AgenticMemory` costs 15.1 s on this machine, and 15.1 of those seconds are
-    `SentenceTransformerEmbedder` loading its weights; `import agmem` plus
-    interpreter startup is 0.22 s. A hook that only READS episodes by recency
-    never touches a vector, so paying for the embedder makes it 70x slower than
-    its job requires — and at that speed the recall hook exceeds any sane
-    `timeout` and is killed, which presents as no memory rather than as an
-    error.
+    `AgenticMemory` costs 9.1 s on this machine, essentially all of it
+    `SentenceTransformerEmbedder` reaching its weights; the doc store alone is
+    0.18 s. A hook that only READS episodes by recency never touches a vector,
+    so paying for the embedder makes it 50x slower than its job requires — and
+    at that speed the recall hook exceeds any sane `timeout` and is killed,
+    which presents as no memory rather than as an error.
+
+    Those figures are from 2026-08-08, after `SentenceTransformerEmbedder`
+    began loading cache-first; the same measurement read 15.1 s and 0.21 s
+    (70x) before that. The ratio moved and the conclusion did not, which is the
+    point — 0.18 s against 9.1 s is not a margin any tuning closes.
 
     Assumes the lite profile's `SqliteDocStore` layout (`<data_dir>/<namespace>/
     memory.db`), which is what `open_memory` pins, so the two agree by
