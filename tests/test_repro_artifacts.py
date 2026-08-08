@@ -1588,5 +1588,15 @@ def test_stamp_records_the_read_path_through_the_runners_actual_call(tmp_path):
 
     stamp = H._stamp(args, H.get_model("gpt-4o-mini"), "sha", "t0", "t1", None)
     assert stamp["reranker"] == "NoopReranker"
-    assert stamp["degradations"] == []
     assert stamp["reranker_skipped_ingest_only"] is True
+
+    # The field must be PRESENT and a list. Not empty: whether anything degraded
+    # is a property of the machine, and CI has no `kuzu`, so the graph slot
+    # legitimately falls back and says so. Asserting emptiness pinned this host's
+    # installed packages as the contract and, worse, asserted that a field whose
+    # entire job is recording degradations never records one. What this arm can
+    # claim is narrower and is what matters here: nothing degraded the RERANKER,
+    # because the ingest path chose NoopReranker deliberately rather than losing
+    # one it wanted.
+    assert isinstance(stamp["degradations"], list)
+    assert not [d for d in stamp["degradations"] if "reranker" in d]
