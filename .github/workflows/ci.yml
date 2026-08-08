@@ -15,7 +15,8 @@ jobs:
   # no local embedder, no LLM endpoint. That is deliberate: it is the cheapest
   # standing proof that capability gating actually degrades (docs/01), since
   # every optional path has to skip rather than fail. The full install adds
-  # real backends and is exercised locally (441 passed / 1 skipped).
+  # real backends and is exercised locally (2026-08-08: 711 passed / 1 skipped
+  # full, 687 passed / 24 skipped core-only — the 24 are what this job proves).
   test:
     runs-on: ubuntu-latest
     steps:

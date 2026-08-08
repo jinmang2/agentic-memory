@@ -78,7 +78,7 @@ The interesting engineering in this repo is not that nine systems were written; 
 - Findings then went through an **adversarial verification pass** whose job was to *refute* them, using **zero LLM/API/model calls**: code-line citation, and deterministic reproductions with hand-made vectors and stubs.
 - **96 verdicts: 94 confirmed, 2 sub-claims refuted** — and the refutations were honored in the fixes.
 - Everything confirmed was either fixed to match upstream or kept and **disclosed as a deliberate deviation at the code site** (e.g. we skip an evolution call the published A-Mem edition wastes on an empty store — so our per-conversation call count is exactly −1, and the docstring says so).
-- **441 tests**, many of them pinning tests written specifically so a fidelity property cannot silently regress.
+- **711 tests** (measured 2026-08-08, `uv run pytest -q`: 711 passed, 1 skipped), many of them pinning tests written specifically so a fidelity property cannot silently regress.
 
 Recurring defect classes this process surfaced — useful beyond this repo — are catalogued in `docs/16-abstraction-study.md`: *the same constant applied to different math*, *reviving a knob that is dead upstream*, *reading one variant when the benchmark ran another*, and *a docstring that outlived its code*.
 
@@ -98,7 +98,7 @@ LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are
 uv sync                     # full install (real vector/graph backends + local embedder)
 uv sync --no-default-groups --group dev   # core-only: suite still runs, heavy paths skip
 
-uv run pytest tests/ -q     # 441 passed (core-only: 417 passed, 24 skipped)
+uv run pytest tests/ -q     # 711 passed, 1 skipped (core-only: 687 passed, 24 skipped)
 ```
 
 ```python
@@ -113,6 +113,18 @@ Serve it over MCP (registration details in `docs/05-api-design.md` §2.3):
 
 ```bash
 uv run agmem-mcp --namespace main --organizers nemori,reasoning_bank
+```
+
+MCP exposes memory as *tools*, which the model has to decide to call. The hooks
+in `src/agmem/hooks/` fire whether or not anyone decided anything — `recall` on
+`SessionStart` (0.18 s, reads the doc store only) and `capture` on
+`UserPromptSubmit` (10.8 s, needs the embedder, so `async`). Wiring is
+`docs/05-api-design.md` §2.4. That both layers really share one store — a
+prompt the hook captured comes back from the server's `search_memory` — is
+checked end to end by:
+
+```bash
+uv run python scripts/smoke_product_stack.py
 ```
 
 Run a reproduction experiment (needs an LLM endpoint — see `docs/07-local-llm-setup.md`):
@@ -135,8 +147,9 @@ src/agmem/
   capabilities/  hardware detection and profile resolution (lite · standard · full)
   bench/         LoCoMo and LongMemEval harnesses
   mcp/           MCP server
-docs/            design record (00–16) + docs/research/ paper↔code forensics
-tests/           441 tests, incl. fidelity pinning suites
+  hooks/         Claude Code SessionStart recall and UserPromptSubmit capture
+docs/            design record (00–18) + docs/research/ paper↔code forensics
+tests/           711 tests, incl. fidelity pinning suites
 ```
 
 ## Documentation

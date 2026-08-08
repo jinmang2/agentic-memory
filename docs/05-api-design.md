@@ -149,13 +149,57 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 {
   "mcpServers": {
     "agmem": {
-      "command": "uvx",
-      "args": ["agmem-mcp", "--profile", "lite", "--namespace", "jinmang2"],
-      "env": { "AGMEM_LLM_ENDPOINT": "http://localhost:8000/v1" }
+      "command": "/absolute/path/to/agentic_memory/.venv/bin/agmem-mcp",
+      "args": ["--profile", "lite", "--namespace", "jinmang2"]
     }
   }
 }
 ```
+
+**이 블록은 2026-08-08에 실제로 stdio 위에서 구동해 확인한 형태다.** 이전 판은 두 군데가 틀려
+있었고 둘 다 조용히 틀리는 종류였다.
+
+- `uvx agmem-mcp`은 **이 리포의 코드를 실행하지 않는다** — uvx는 PyPI에서 `agmem`을 받아 온다.
+  로컬 설치를 가리키려면 venv의 콘솔 스크립트를 **절대경로**로 줘야 한다. MCP 클라이언트는 리포를
+  cwd로 갖지 않으므로 `agmem-mcp`이라고만 쓰면 클라이언트 PATH에 있을 때만 우연히 동작한다.
+- `"env": {"AGMEM_LLM_ENDPOINT": ...}`의 그 변수는 **`src/` 어디에서도 읽히지 않는다.** LLM
+  엔드포인트는 §2.2의 `[llm.<role>]` 테이블에서 오므로 `--config /path/to/agmem.toml`로 준다.
+  존재하지 않는 변수를 설정하는 것은 실패하지 않고 무시되므로, 따라 한 사람은 엔드포인트를 줬다고
+  믿는 서버를 얻는다.
+
+기동 비용: 핸드셰이크까지 **9.4–9.8초**(2026-08-08 실측, lite 프로파일, 모델 캐시 있음). 대부분이
+임베더고, `SentenceTransformerEmbedder`가 캐시 우선으로 로드하기 전에는 15.5–16.0초였다.
+
+### 2.4 Claude Code 훅 등록
+
+MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은 결정 없이 발화하며, 그게 자동 캡처의
+전제다. `~/.claude/settings.json`(또는 프로젝트 `.claude/settings.json`):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command",
+                    "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.recall",
+                    "timeout": 10 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command",
+                    "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.capture",
+                    "async": true }] }
+    ]
+  }
+}
+```
+
+- 네임스페이스·저장 위치는 `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`로 준다(기본 `claude-code`,
+  `~/.agmem/data`). 이 둘은 §2.3의 그 변수와 달리 **실제로 읽힌다**(`hooks/__init__.py`).
+- **예산 실측(2026-08-08)**: recall **0.18초**(블로킹이라 `timeout` 안에 반드시 들어와야 함,
+  doc store만 열기 때문에 이 값), capture **10.8초**(임베더 필요 — `async: true`가 필수인 이유).
+- 진단은 `AGMEM_HOOK_LOG=/path/to/log`. 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
+  고장이 침묵으로 나타난다 — 세션을 망가뜨리지 않기 위한 설계이고, 그 대가다.
+- **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다(같은 namespace·data-dir
+  기준). 두 층이 한 스토어를 공유한다는 주장은 각 층의 테스트로는 확인되지 않아 별도로 구동해 확인했다.
 
 ## 3. 벤치 실행
 
