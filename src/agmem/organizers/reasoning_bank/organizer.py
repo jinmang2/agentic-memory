@@ -69,7 +69,11 @@ logger = logging.getLogger("agmem.organizers.reasoning_bank")
 
 # Upstream's read operating point, pinned the way GMEMORY_READ_RECIPE and the
 # Zep search recipes are: a named constant for runs to cite — it changes no
-# behavior and NO preset auto-applies it. Both shipped harnesses retrieve the
+# behavior on the default read path. One preset now applies it: `rb_upstream`
+# (scripts/repro/configs.py) derives its per-type k from this dict, and carries
+# run_ready=False because RB's write path is task-trajectory-shaped and this
+# repo has no agent-bench threading for it (round-12 #10). Every other arm and
+# every default run is unaffected. Both shipped harnesses retrieve the
 # top-1 EXPERIENCE by task-query embedding (`select_memory(n=1, ...,
 # cur_query=<task>)`, WebArena/run.py:177-193; minisweagent
 # run/extra/swebench.py:182) and inject every member of its "memory_items"

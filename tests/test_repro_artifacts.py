@@ -981,6 +981,35 @@ def test_mem0_config_fields_are_all_threaded():
     assert org.top_k == 5  # upstream's hardcoded limit=5
 
 
+def test_rb_upstream_preset_is_bound_to_the_read_recipe_constant():
+    """round-12 #10: the preset must DERIVE the operating point, never restate it.
+
+    `RB_READ_RECIPE` is the citable form of upstream's WebArena read loop
+    (top-1 experience by task-query embedding, no item-level channel); the
+    preset is how a run selects it by name. Binding them here is the whole
+    point — if the recipe is ever re-read and its numbers change, a preset that
+    silently kept the old literals would be the drift the constant exists to
+    prevent. The `strategies` pair is asserted from BOTH sides for the same
+    reason: `strategies_topk: 0` is expressed as the type's ABSENCE from
+    memory_types, so a future nonzero topk would leave no trace in the preset
+    unless this test forces it to be revisited.
+
+    run_ready is False and stays False until an agent-bench harness exists —
+    RB's write path is `add_task_result`-shaped, not conversation ingest, so
+    this arm is a citable operating point, not a runnable row (ledger C-4).
+    """
+    from agmem.organizers.reasoning_bank.organizer import RB_READ_RECIPE
+
+    cfg = _load_configs().get_config("rb_upstream")
+    assert cfg.per_type_k["experiences"] == RB_READ_RECIPE["experiences_topk"]
+    assert "strategies" not in cfg.memory_types
+    assert RB_READ_RECIPE["strategies_topk"] == 0
+    orgs = cfg.factory()
+    assert len(orgs) == 1
+    assert type(orgs[0]).__name__ == "ReasoningBankOrganizer"
+    assert cfg.run_ready is False
+
+
 def test_op_log_artifact_captures_every_op_including_noop(tmp_path):
     """The evolution log becomes a durable artifact.
 

@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.mem0 import Mem0Organizer
 from agmem.organizers.nemori import NemoriOrganizer
+from agmem.organizers.reasoning_bank.organizer import RB_READ_RECIPE, ReasoningBankOrganizer
 from agmem.organizers.zep_graph import ZepGraphOrganizer, zep_search_recipe
 
 
@@ -296,6 +297,36 @@ CONFIGS: dict[str, RunnerConfig] = {
             per_type_k=MEM0_PER_TYPE_K,
             store=MEM0_STORE,
             keyword_queries=False,
+        ),
+        # round-12 #10, closed. ReasoningBank's read operating point had a name
+        # but no arm: `RB_READ_RECIPE` sat in the organizer as a constant to
+        # cite while `default_memory_types` served episodic + experiences +
+        # strategies at k=10, so reproducing upstream meant hand-assembling
+        # top-1-experiences-only from a docstring — and a recipe nobody can
+        # select by name is a recipe that drifts. The recipe itself is
+        # upstream's WebArena loop (`select_memory(n=1, ..., cur_query=<task>)`,
+        # run.py:177-193, injecting every member of the single experience it
+        # hits), already documented at the constant, so this entry DERIVES its k
+        # from the constant instead of restating it: the two cannot disagree.
+        # `strategies` is absent from memory_types deliberately — that absence
+        # IS `strategies_topk: 0`, because upstream has no item-level channel at
+        # all (round-12 #16; our item-level mode has no upstream counterpart).
+        #
+        # run_ready=False here is a standing fact, not threading that hasn't
+        # landed yet: RB's write path is task-trajectory-shaped (`on_task_end` /
+        # `on_scaled_task_end`, driven by `mem.add_task_result`), not
+        # conversation ingest, and this repo has no agent-bench harness for it
+        # to run through. Read that the way ledger C-4 insists code presence be
+        # read — this arm pins an operating point for citation and tests, it
+        # does NOT claim a runnable LoCoMo row. What it buys is that the first
+        # agent-bench run cites `--config rb_upstream` rather than reassembling
+        # the operating point by hand at the call site.
+        RunnerConfig(
+            "rb_upstream",
+            lambda: [ReasoningBankOrganizer()],
+            ("experiences",),
+            run_ready=False,
+            per_type_k={"experiences": RB_READ_RECIPE["experiences_topk"]},
         ),
     )
 }
