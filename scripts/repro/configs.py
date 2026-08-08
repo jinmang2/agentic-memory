@@ -321,6 +321,21 @@ CONFIGS: dict[str, RunnerConfig] = {
         # does NOT claim a runnable LoCoMo row. What it buys is that the first
         # agent-bench run cites `--config rb_upstream` rather than reassembling
         # the operating point by hand at the call site.
+        #
+        # What this preset does NOT reproduce: upstream's retrieval GEOMETRY.
+        # Upstream embeds BOTH sides as `RETRIEVAL_DOCUMENT` — the stored queries
+        # (`memory_management.py:49`) and the incoming query alike (`:83`);
+        # `RETRIEVAL_QUERY` appears nowhere in the file — and it prefixes the
+        # query with a handwritten domain instruction,
+        # `f'Instruct: {task_description}\nQuery: {query}'` (`:128`). That prefix
+        # is authored domain text of the same nature as the persona sentence the
+        # organizer already parameterizes, not embedding infrastructure, so the
+        # round-12 #16 disclosure (we substitute the embedder) does not cover it.
+        # This entry pins TYPES and K only; a `retrieval_instruction`
+        # parameterization is deferred DELIBERATELY, recorded here rather than
+        # forgotten. The point of writing it down: a run citing
+        # `--config rb_upstream` may claim upstream's read operating POINT — it
+        # may not claim upstream's search geometry.
         RunnerConfig(
             "rb_upstream",
             lambda: [ReasoningBankOrganizer()],
