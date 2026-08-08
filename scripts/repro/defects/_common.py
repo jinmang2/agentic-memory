@@ -22,6 +22,7 @@ PINS = {
     "GMemory": "7b581c51d993bd600df14691d101d7e601040cc6",
     "MemMachine": "18f1211290c50ae30e9960b90bbe57d89bf68600",
     "nemori": "d2a6dff6e5481214a0be6a2d10147feccfc16244",
+    "reasoning-bank": "ed80611788292ea739f1effd31f16c53823b8a0d",
 }
 
 

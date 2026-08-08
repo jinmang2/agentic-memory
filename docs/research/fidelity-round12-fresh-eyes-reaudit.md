@@ -5,6 +5,15 @@
 지시: 결함 유형 5종 헌팅([[audit-defect-classes]] + 사문 knob + 동명 함수 다른 수식), 수정 금지.
 주의: 아래는 단일 에이전트 보고 원문이며 아직 교차 검증 전이다. 조치 전 각 건의 재현 확인 필요.
 
+> **상태 (2026-08-08 추가).** 이 문서는 **감사 시점의 스냅샷**이고, 이후 조치를 반영하지 않는다.
+> 특히 각 섹션 말미의 "load-bearing items to act on later" 목록은 **당시** 열려 있던 것이며 지금은
+> 상당수가 닫혔다 — 예: `[ace-rb]` #18(G-Memory→RB score 오염)은 커밋 `6fad7bb`에서, #14의 나머지
+> 절반(judge 게이트)은 이번 라운드에서 닫혔다. **현재 상태의 정본은 `docs/17-defect-ledger.md`와
+> `docs/research/upstream-defect-catalog.md`이며, 이 문서는 그 근거 로그다.**
+> 이 배너 자체가 이번 라운드의 자기교정 항목이다: 외부 리뷰어가 이 문서의 열린-항목 목록을 현재
+> 코드 상태로 읽고 이미 닫힌 결함을 미조치로 보고했고, 그 오독의 원인은 문서에 닫힘 표시가 없다는
+> 것이었다. 닫힌 항목이 열린 것처럼 읽히는 감사 문서는 그 자체로 결함이다.
+
 ---
 
 # [amem]
@@ -405,6 +414,14 @@ Upstream `CURATOR_PROMPT` (`ace/prompts/curator.py:6-67`) vs our `CURATE_PROMPT`
 - **ReasoningBank:** success/failure SIs; judge-reason append; experiences-as-retrieval-unit with member expansion; MaTTS parallel hook real, wired, and tested, with all three upstream deltas (5 items / 1-5 sentences / t=0.7) correctly mapped; dead per-trajectory label correctly reproduced-as-dead; sequential scaling correctly excluded; item schema title/description/content; both upstream variants (WebArena + SWE-Bench minisweagent) checked and consistent.
 
 The load-bearing items to act on later (no fixes made, per instructions): #1/#2 (ACE prompt/mechanism deltas vs the published operating point), #5 (playbook reachable via default top-k search), #18 (mixed-config feedback leak + gmemory docstring), #10 (RB operating point unpinned).
+
+> **Status as of 2026-08-08** (see the banner at the top of this file — this list is a snapshot, not a live tracker):
+> - **#18 CLOSED** by commit `6fad7bb`. `gmemory.on_retrieval` now records only `kind == "insight"` ids and the empty-`_served` bypass is gone, so a ReasoningBank item cannot acquire a `score` in a mixed config. Catalog GM-11.
+> - **#12 CLOSED** as documentation (ledger B-7) and now carries a Tier-0 proof; **read with ledger A-5**, which shows the whole function it lives in raises before reaching a model.
+> - **#14 CLOSED in full.** The `self_judge=False` half landed in round 12; the judge-GATE half (a recognized label such as `"correct"` being discarded and re-judged under the default `self_judge=True`) landed 2026-08-08 via `_is_labeled`.
+> - **#13 UPGRADED from argument to fact**: sequential MaTTS is not merely "the generator's loop" — `SEQUENTIAL_PROMPT` has **zero references** in the pinned snapshot. Proof: `repro_reasoningbank_matts_inert.py`.
+> - **#10 STILL OPEN**: `RB_READ_RECIPE` exists as a citable constant, but no preset applies it and `default_memory_types` still serves episodic + experiences + strategies at k=10. Blocked behind the in-flight campaign, not behind a decision — `scripts/repro/configs.py` is shared with running measurements.
+> - **#1/#2/#5 (ACE)** unchanged by this round.
 
 ---
 

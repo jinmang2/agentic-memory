@@ -179,6 +179,78 @@ def test_scaled_single_trajectory_fallback_routes_outcome_by_the_same_normalizat
         mem.close()
 
 
+def test_recognized_outcome_is_trusted_instead_of_re_judged():
+    """Round-12 #14's other half: the judge GATE has to ask the same question the
+    SI selection asks. It used to be exact membership in ("success", "failure"),
+    so a caller passing "correct" with the DEFAULT `self_judge=True` had its
+    label discarded and paid for a judge call to re-derive it — the same
+    inconsistency #14 fixed on the `self_judge=False` side."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm(success=False)  # the judge would flip a trusted "correct"
+    mem = make_mem(ReasoningBankOrganizer(), llm)  # self_judge=True (default)
+    try:
+        mem.add_task_result(trajectory=[], outcome="correct", task="t")
+        assert [r for r, _ in llm.calls] == ["distill"], "recognized label was re-judged"
+        assert "SUCCEEDED" in llm.systems[0]
+    finally:
+        mem.close()
+
+
+def test_unrecognized_outcome_still_goes_to_the_judge():
+    """The flip side: widening the trusted set must not swallow strings we do not
+    recognize. A typo is not a label — it goes to the judge when one is
+    available, rather than silently taking the failure SI."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm(success=True)
+    mem = make_mem(ReasoningBankOrganizer(), llm)
+    try:
+        mem.add_task_result(trajectory=[], outcome="corrct", task="t")
+        roles = [r for r, _ in llm.calls]
+        assert roles == ["judge", "distill"]
+        # the judge's verdict decides the SI, not the unrecognized string
+        assert "SUCCEEDED" in llm.systems[roles.index("distill")]
+    finally:
+        mem.close()
+
+
+def test_experience_record_keeps_the_trajectories_it_distilled_from():
+    """Upstream's bank entry keeps `think_list`/`action_list` beside its
+    `memory_items` (induce_memory.py:177-186) and the paper's A.2 schema says an
+    entry is "task query, original trajectory, memory items". Ours stores the
+    attempts on the experience record so re-extraction under a different SI, and
+    a Synapse-style arm, do not require re-running the agent. Always a LIST of
+    attempts, so a consumer never branches on which induction path wrote it."""
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(self_judge=False), llm)
+    try:
+        mem.add_task_result(trajectory=[{"step": "a"}], outcome="success", task="t")
+        exp = [o for o in mem.log.tail(10) if o.target_type == "experiences"]
+        assert len(exp) == 1
+        assert exp[0].payload["trajectories"] == [[{"step": "a"}]]
+        # and it is never what gets embedded — the task query is (upstream's unit)
+        assert exp[0].payload["embedding_text"] == "t"
+    finally:
+        mem.close()
+
+
+def test_scaled_experience_record_keeps_every_attempt():
+    from agmem.organizers.reasoning_bank import ReasoningBankOrganizer
+
+    llm = rb_llm()
+    mem = make_mem(ReasoningBankOrganizer(), llm)
+    try:
+        mem.add_scaled_task_result(trajectories=[[{"s": 1}], [{"s": 2}]], task="t")
+        exp = [o for o in mem.log.tail(20) if o.target_type == "experiences"]
+        assert len(exp) == 1
+        assert exp[0].payload["trajectories"] == [[{"s": 1}], [{"s": 2}]]
+    finally:
+        mem.close()
+
+
 def test_reasoning_bank_max_items_drives_schema_and_prompt_and_cap():
     """Round-12 #15: `max_items` is wired end to end — the schema's maxItems AND
     the SI's "at most N" sentence derive from the knob (default 3 = upstream's

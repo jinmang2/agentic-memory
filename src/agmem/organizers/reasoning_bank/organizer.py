@@ -14,15 +14,37 @@ no upstream counterpart — upstream embeds only task queries, never items
 
 on_scaled_task_end: MaTTS parallel induction (paper §3.3) — several
 trajectories of ONE task distilled by self-contrast into up to 5 items
-(upstream ``induce_scaling.py`` + ``PARALLEL_SI``), a separate module
-upstream and a separate hook here. MaTTS's OTHER half, sequential
-scaling, is deliberately absent and that is the correct call: its
-``SEQUENTIAL_PROMPT`` tells the AGENT to re-examine and rewrite its own
-trajectory ("Output must stay in the same <think>...</think><action>
-format"), so it is the generator's loop, not the memory layer's — the
-same line ACE's multi-round reflection falls on (docs/10, round-8 §A3).
-The memory layer then sees the refined trajectory through the ordinary
-``on_task_end``.
+(``PARALLEL_SI``), a separate module upstream and a separate hook here.
+
+This hook is PAPER-faithful, not RELEASE-faithful, and the distinction is
+forced rather than chosen: the released ``induce_scaling.py`` does not
+run. It calls ``one_step_chat`` on the CLASS from ``CLIENT_DICT`` without
+instantiating it (the sibling ``induce_memory.py`` does instantiate), so
+the unbound call takes the trajectory text as ``self`` and raises
+TypeError before any model is reached; behind that crash sit three more
+faults — the N "trajectories" it assembles are N reads of ONE directory,
+the return tuple is stored unpacked, and the bank entry skips the
+``split("\\n\\n")`` its own consumer relies on. So the elsewhere-standing
+rule "reproduce it as shipped" (docs/17 §297, dead knobs stay dead) has
+nothing to reproduce here — a crash is not an arm — and the only
+available referent is the paper plus the ``PARALLEL_SI`` text itself.
+Proof: ``scripts/repro/defects/repro_reasoningbank_matts_inert.py``;
+catalog §8 RB-9.
+
+MaTTS's OTHER half, sequential scaling, is absent for a reason of its
+own, and it is also the half upstream never wired: ``SEQUENTIAL_PROMPT``
+and ``SEQUENTIAL_FOLLOWING_PROMPT`` are defined in
+``memory_instruction.py`` and referenced NOWHERE else in the snapshot
+(same repro script). Independently of that, the prompt tells the AGENT to
+re-examine and rewrite its own trajectory ("Output must stay in the same
+<think>...</think><action> format"), so it is the generator's loop, not
+the memory layer's — the same line ACE's multi-round reflection falls on
+(docs/10, round-8 §A3). The memory layer then sees the refined trajectory
+through the ordinary ``on_task_end``, and a harness doing sequential
+scaling should hand it the ACCUMULATED rounds rather than only the final
+one: the paper counts the intermediate refinement notes as memory signal
+in their own right (§3.3; docs/research/nemori-reasoningbank.md §2A), so
+passing only the last rewrite discards what that half contributes.
 
 LLM roles used: ``judge`` (binary success call, t=0.0 in the paper),
 ``distill`` (extraction, t=1.0 in the paper AND in upstream
@@ -61,16 +83,34 @@ RB_READ_RECIPE = {
     "strategies_topk": 0,
 }
 
-# round-12 #14: outcome-string normalization for SI selection. When the caller
-# supplies the outcome (self_judge=False), {"success", "correct"} — any case —
-# select the success SI; every other string (including "") takes the failure
-# SI. ACE normalizes the same synonyms (ENVIRONMENT_FEEDBACK); before this, a
-# caller passing "correct" silently got the FAILURE instructions.
+# round-12 #14: outcome-string normalization. The synonym sets are ACE's
+# ENVIRONMENT_FEEDBACK keys verbatim, so the two organizers cannot disagree
+# about what a caller's label means.
+#
+# Two questions are asked of an outcome and they are NOT the same question:
+# `_is_success` picks the SI, `_is_labeled` decides whether the judge is needed
+# at all. Keeping the second as exact membership in ("success", "failure") was
+# the other half of #14 — a caller passing "correct" had its label silently
+# DISCARDED and paid for a judge call to re-derive it, which is the same
+# inconsistency #14 fixed on the `self_judge=False` side. An unrecognized label
+# (typo included) is not silently failure: it goes to the judge when one is
+# available, and only falls back to the failure SI when it is not.
 _SUCCESS_OUTCOMES = ("success", "correct")
+_FAILURE_OUTCOMES = ("failure", "incorrect", "wrong")
+
+
+def _norm(outcome: str) -> str:
+    return str(outcome).strip().lower()
 
 
 def _is_success(outcome: str) -> bool:
-    return str(outcome).strip().lower() in _SUCCESS_OUTCOMES
+    return _norm(outcome) in _SUCCESS_OUTCOMES
+
+
+def _is_labeled(outcome: str) -> bool:
+    """Whether the caller's string names an outcome we recognize — the judge is
+    for the ones it does not."""
+    return _norm(outcome) in _SUCCESS_OUTCOMES + _FAILURE_OUTCOMES
 
 
 JUDGE_SCHEMA = {
@@ -220,11 +260,12 @@ class ReasoningBankOrganizer(Organizer):
         self_judge: bool = True,
         persona: str | None = None,
     ) -> None:
-        """`self_judge=True` runs the judge role when `outcome` isn't already
-        "success"/"failure"; set False to always trust the caller-supplied `outcome`
-        and skip that LLM call — normalized via `_is_success`, so "correct" counts
-        as success (round-12 #14). `persona` is prepended to the extraction system
-        message verbatim when set (see module docstring).
+        """`self_judge=True` runs the judge role when `outcome` names no outcome
+        we recognize (`_is_labeled`); set False to always trust the caller-supplied
+        `outcome` and skip that LLM call. Both paths normalize the same way, so
+        "correct" counts as success and is trusted rather than re-judged
+        (round-12 #14 and its follow-up). `persona` is prepended to the extraction
+        system message verbatim when set (see module docstring).
 
         `max_items` drives the single-trajectory extraction budget end to end:
         the schema's ``maxItems`` AND the SI's "at most N" sentence (round-12
@@ -255,7 +296,7 @@ class ReasoningBankOrganizer(Organizer):
         traj_text = _format_trajectory(trajectory)
         reason = ""
 
-        if outcome not in ("success", "failure") and self.self_judge:
+        if not _is_labeled(outcome) and self.self_judge:
             verdict = ctx.llm.call(
                 "judge",
                 JUDGE_PROMPT.format(task=task, trajectory=traj_text),
@@ -288,13 +329,13 @@ class ReasoningBankOrganizer(Organizer):
         )
         if result is None or not isinstance(result.get("items"), list):
             return []
-        return self._emit(result["items"], outcome, task, self.max_items, ctx)
+        return self._emit(result["items"], outcome, task, self.max_items, ctx, [trajectory])
 
     def on_scaled_task_end(
         self, trajectories: list[list[dict]], task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
         """MaTTS parallel induction (paper §3.3): distil from the CONTRAST across
-        several trajectories of the same task, upstream ``induce_scaling.py``.
+        several trajectories of the same task.
 
         Not a variant of ``on_task_end`` with a bigger input — a different prompt
         (``SCALED_EXTRACT_SI``), a different budget (5 items, not 3) and a
@@ -302,20 +343,35 @@ class ReasoningBankOrganizer(Organizer):
         single-trajectory path, since contrasting a set of one is not the
         mechanism; an empty set is a no-op.
 
-        No self-judge and no outcome label, deliberately. Upstream derives a
-        per-trajectory correctness label from the harness reward and then **never
-        puts it in the prompt** — ``induce_scaling.main`` computes ``status``,
-        passes it to ``get_info``, and the resulting field is read by nothing;
-        the ``format_examples`` helper that would have rendered a "## Correctness
-        Signal" block is never called. The label is additionally INVERTED
-        (``induce_scaling.py:181-184`` sets ``status="success"`` when
-        ``reward == 0``, the opposite of ``induce_memory.py``'s mapping) —
-        extra evidence it is dead: it would be wrong if live (round-12 #12). The signal the mechanism actually uses is
-        the mixture itself ("Some may have succeeded and others may have
-        failed"), so judging each trajectory here would be inventing a channel
-        upstream does not have. Same family as the other dead upstream terms this
-        project reproduces rather than repairs (MemoryOS's R_recency, A-MAC's
-        N/R).
+        **Written against the paper, because the released induction does not
+        run** (module docstring; catalog §8 RB-9; repro
+        ``repro_reasoningbank_matts_inert.py``). Two consequences are specific to
+        this method:
+
+        - The N trajectories here are genuinely DIFFERENT attempts. Upstream's
+          are not: ``induce_scaling.main``'s ``res_dir``/``cur_task`` are
+          loop-invariant and its caller passes one trial directory
+          (``pipeline_scaling.py:73``, the spawn loop's leftover ``i``), so
+          ``**Trajectory 1..N :**`` are byte-identical copies and the
+          self-contrast the prompt asks for has nothing to contrast. Feeding
+          distinct attempts is therefore a DEVIATION from the released code and
+          a requirement of the mechanism — both, and it is recorded as such
+          rather than presented as reproduction.
+        - No self-judge and no outcome label, deliberately, and this one IS
+          upstream's shape: it derives a per-trajectory correctness label from
+          the harness reward and never puts it in the prompt — ``main`` computes
+          ``status``, passes it to ``get_info``, and nothing reads the field;
+          ``format_examples``, which would render the "## Correctness Signal"
+          block, is never called. The label is additionally INVERTED
+          (``induce_scaling.py:181-184`` sets ``status="success"`` when
+          ``reward == 0``, the opposite of ``induce_memory.py``'s mapping) —
+          extra evidence it is dead, since it would be wrong if live (round-12
+          #12, ledger B-7). The signal the mechanism actually uses is the
+          mixture itself ("Some may have succeeded and others may have failed"),
+          so judging each trajectory here would invent a channel neither the
+          paper nor the code has. Same family as the other dead upstream terms
+          this project reproduces rather than repairs (MemoryOS's R_recency,
+          A-MAC's N/R).
 
         The emitted items carry ``outcome="contrast"`` rather than
         success/failure: they are distilled from a mixed set, so neither label is
@@ -327,11 +383,10 @@ class ReasoningBankOrganizer(Organizer):
         if len(trajectories) == 1:
             # Not a contrast set — fall through to the ordinary single-trajectory
             # path. The empty outcome is deliberate and routed, not accidental
-            # (round-12 #14): with self_judge=True (default) the judge decides;
-            # with self_judge=False it goes through the same `_is_success`
-            # normalization as any caller-supplied outcome — "" is no success
-            # synonym, so the failure SI is an explicit choice here, no longer a
-            # silent artifact of exact string equality.
+            # (round-12 #14): "" is not a label `_is_labeled` recognizes, so with
+            # self_judge=True (default) the judge decides, and with
+            # self_judge=False `_is_success("")` is False and the failure SI is
+            # an explicit fallback rather than an artifact of string equality.
             return self.on_task_end(trajectories[0], "", task, ctx)
         if ctx.llm is None:
             logger.warning(
@@ -357,10 +412,16 @@ class ReasoningBankOrganizer(Organizer):
         )
         if result is None or not isinstance(result.get("items"), list):
             return []
-        return self._emit(result["items"], "contrast", task, SCALED_MAX_ITEMS, ctx)
+        return self._emit(result["items"], "contrast", task, SCALED_MAX_ITEMS, ctx, trajectories)
 
     def _emit(
-        self, items: list, outcome: str, task: str, cap: int, ctx: OrganizerContext
+        self,
+        items: list,
+        outcome: str,
+        task: str,
+        cap: int,
+        ctx: OrganizerContext,
+        trajectories: list[list[dict]],
     ) -> list[MemoryOp]:
         """Turn extracted items into ADD ops plus the experience record that ties
         them to the task query. Shared by both induction paths so they cannot
@@ -403,7 +464,23 @@ class ReasoningBankOrganizer(Organizer):
 
         if item_ids:
             # experience record: the retrieval unit upstream actually uses —
-            # task-query embedding, expanded to its member items at read time
+            # task-query embedding, expanded to its member items at read time.
+            #
+            # ``trajectories`` keeps the attempts the items were distilled from,
+            # as upstream's bank entry keeps ``think_list``/``action_list``
+            # beside its ``memory_items`` (induce_memory.py:177-186) and the
+            # paper's §A.2 schema says an entry is "task query, original
+            # trajectory, memory items". It is never embedded and never served
+            # (``ExpandExperiences`` replaces an experience with its items, so
+            # nothing here reaches a prompt) — it exists so that the two things
+            # upstream's file format supports stay possible for us: re-running
+            # extraction under a different SI without re-running the agent, and
+            # a Synapse-style arm, which reuses the raw trajectory and is the
+            # baseline the paper compares against on the SAME store.
+            #
+            # A list of attempts, always — the single-trajectory path stores a
+            # list of one — so a consumer never has to branch on which induction
+            # path wrote the record.
             experience_id = new_id()
             ops.append(
                 MemoryOp(
@@ -415,6 +492,7 @@ class ReasoningBankOrganizer(Organizer):
                         "task": task,
                         "outcome": outcome,
                         "item_ids": item_ids,
+                        "trajectories": trajectories,
                         "embedding_text": task,
                     },
                 )
