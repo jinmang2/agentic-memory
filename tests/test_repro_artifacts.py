@@ -838,6 +838,58 @@ def test_zep_config_takes_its_whole_read_path_from_the_recipe():
             assert "lexical_types" not in (cfg.store or {}), name
 
 
+def test_mmr_scores_are_json_serializable_python_floats():
+    """MMR's `(id, score)` pairs must not carry numpy dtypes.
+
+    `np.linalg.norm` of a float32 array returns np.float32, and a Python float
+    divided BY a numpy scalar is a numpy scalar — so casting only the dot-product
+    numerator left the scores np.float32. Those scores ride into the per-question
+    retrieval capture the harness records, and `json.dumps` has no encoder for
+    them: a finished 1,986-question run died at artifact-write time with every
+    model call already paid for.
+
+    Dormant from 518f788 until the first arm that actually resolved to this class,
+    which is why the sibling rerankers are asserted alongside it — the property is
+    "no reranker leaks a dtype", not "MMR was fixed once".
+    """
+    import json as _json
+
+    from agmem.retrieval.rerank import EpisodeMentionsReranker, MMRReranker, NoopReranker
+
+    vectors = {"a": [1.0, 0.0, 0.0], "b": [0.0, 1.0, 0.0]}
+    candidates = [("a", 0.9), ("b", 0.5)]
+    for reranker in (
+        MMRReranker(lambda_=1.0),
+        MMRReranker(lambda_=0.5),
+        NoopReranker(),
+        EpisodeMentionsReranker(),
+    ):
+        out = reranker.rerank([1.0, 0.0, 0.0], candidates, vectors, 2, meta={"a": {}, "b": {}})
+        for _cid, score in out:
+            assert type(score) is float, (type(reranker).__name__, type(score).__name__)
+        _json.dumps(out)  # the call that actually died
+
+
+def test_artifact_writer_survives_a_numpy_scalar_but_not_an_arbitrary_object():
+    """An artifact writer must not be the thing that loses a completed run.
+
+    By the time it runs the money is spent and the numbers are right, so a dtype
+    the encoder lacks a rule for is the worst possible place to fail. The
+    coercion stays narrow on purpose: a 0-d numpy scalar unwraps exactly via
+    `.item()`, and anything else still raises rather than being stringified into
+    an artifact that looks fine and is not.
+    """
+    H = _load_repro()
+    np = pytest.importorskip("numpy")
+
+    assert H.json_safe(np.float32(0.875)) == pytest.approx(0.875)
+    assert H.json_safe(np.int64(7)) == 7
+    with pytest.raises(TypeError):
+        H.json_safe(object())
+    with pytest.raises(TypeError):
+        H.json_safe(np.zeros(3))  # not 0-d: a real bug, not a dtype wrapper
+
+
 def test_every_memory_type_an_arm_can_serve_is_in_the_snapshot():
     """The snapshot must cover every type some arm retrieves from, or the durable
     record contradicts the run that produced it.

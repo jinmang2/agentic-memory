@@ -94,9 +94,20 @@ class MMRReranker:
             return candidates[:k]
 
         q = np.asarray(query_emb, dtype=np.float32)
-        qn = np.linalg.norm(q) or 1.0
+        # float() on every norm, not just on the dot products below. `np.linalg.norm`
+        # of a float32 array returns np.float32, and dividing a Python float BY a
+        # numpy scalar yields a numpy scalar — so casting the numerator alone still
+        # produced np.float32 scores. Those scores are part of this class's return
+        # contract, they ride into the retrieval capture the harness records per
+        # question, and `json.dumps` has no encoder for them: a completed 1,986-question
+        # run died at artifact-write time with "Object of type float32 is not JSON
+        # serializable", after every model call was paid for. MMR was the only reranker
+        # that leaked a numpy dtype (Noop and episode-mentions pass fusion scores
+        # through untouched), which is why the defect stayed dormant from 518f788 until
+        # the first arm that actually resolved to this class.
+        qn = float(np.linalg.norm(q)) or 1.0
         mat = {cid: np.asarray(vectors[cid], dtype=np.float32) for cid, _ in pool}
-        norms = {cid: (np.linalg.norm(v) or 1.0) for cid, v in mat.items()}
+        norms = {cid: float(np.linalg.norm(v)) or 1.0 for cid, v in mat.items()}
         rel = {cid: float(mat[cid] @ q) / (norms[cid] * qn) for cid, _ in pool}
 
         selected: list[tuple[str, float]] = []
@@ -111,7 +122,7 @@ class MMRReranker:
                 val = self.lambda_ * rel[cid] - (1 - self.lambda_) * redundancy
                 if val > best_val:
                     best_id, best_val = cid, val
-            selected.append((best_id, best_val))
+            selected.append((best_id, float(best_val)))
             remaining.remove(best_id)
 
         # candidates without stored vectors keep their fusion order at the tail

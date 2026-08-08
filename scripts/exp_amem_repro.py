@@ -624,6 +624,34 @@ def micro_average(results: list[dict]) -> dict:
     return {"overall": overall, "by_category": by_category}
 
 
+def json_safe(obj):
+    """`json.dumps(default=...)` for artifact writes: unwrap 0-d numpy scalars,
+    raise on everything else.
+
+    Defense in depth for a failure that already happened once. A reranker leaked
+    `np.float32` into the per-question retrieval capture, and the run — 1,986
+    questions answered and 1,540 judged, every call paid for — died at
+    artifact-write time on `Object of type float32 is not JSON serializable`.
+    The scores were finished and correct; only the encoder had no rule for them.
+
+    Fixing the reranker (rerank.py) removes that source. This removes the class:
+    an artifact writer must not be the thing that loses a completed run, because
+    by the time it runs the money is already spent and the numbers are already
+    right. Coercion is safe HERE and only here — `.item()` on a 0-d scalar is
+    exact, not a rounding — and it stays deliberately narrow: anything that is
+    not a numpy scalar still raises, so this cannot quietly stringify an object
+    that should have been caught (the `default=str` used for snapshot dumps
+    would have written "0.87" as a string and looked fine).
+
+    Discriminated by duck-typing rather than `import numpy` because this runner
+    must keep working in the core install, where numpy may be absent entirely.
+    """
+    item = getattr(obj, "item", None)
+    if callable(item) and getattr(obj, "shape", None) == ():
+        return item()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
 def write_records_sidecar(path: Path, runs_out: list[dict]) -> int:
     """Persist the per-question audit trail to a JSONL sidecar — one JSON object
     per line, each tagged with ``run`` (run number) and ``conv`` (conversation
@@ -636,7 +664,9 @@ def write_records_sidecar(path: Path, runs_out: list[dict]) -> int:
         for r in runs_out:
             run_no = r.get("run")
             for rec in r.get("records", []):
-                f.write(json.dumps({"run": run_no, **rec}, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps({"run": run_no, **rec}, ensure_ascii=False, default=json_safe) + "\n"
+                )
                 n += 1
     return n
 
@@ -1087,7 +1117,7 @@ def main() -> None:
                 args.data_dir, conv_indices, combined.get("per_conv") or [], sha
             )
         out_path = OUT / f"{tag}.json"
-        out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
+        out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=json_safe))
         print(f"[ingest-only] done ({conv_tag}); reload with --eval-only", flush=True)
         if sentinel is not None:
             print(f"[done] wrote {sentinel} (ingest-completion sentinel)", flush=True)
@@ -1207,7 +1237,7 @@ def main() -> None:
     }
 
     out_path = OUT / f"{tag}.json"
-    out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False))
+    out_path.write_text(json.dumps(result, indent=2, ensure_ascii=False, default=json_safe))
     print(f"[done] wrote {out_path}", flush=True)
     print(f"[done] wrote {OUT / records_name} ({n_records} question records)", flush=True)
     print(f"[done] wrote {trace_path} (full LLM I/O trace)", flush=True)
