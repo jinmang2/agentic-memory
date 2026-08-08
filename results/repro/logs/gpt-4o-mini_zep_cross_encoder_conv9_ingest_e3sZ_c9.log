@@ -1,0 +1,11 @@
+===== attempt 1 =====
+[conv9] ingested 568 turns, notes persisted under results/repro/stores/zep-ce-e3s
+[ingest-only] done (conv9); reload with --eval-only
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv9_ingest_e3sZ_c9.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv9_ingest_e3sZ_c9.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv9_ingest_e3sZ_c9.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv9_ingest_e3sZ_c9.memory.ops.jsonl (evolution log)
+INFO agmem.repro: ingest-only: skipping reranker CrossEncoderReranker (write path never reranks)
+WARNING agmem: reranker_params ['model_name'] not accepted by NoopReranker (resolved class); ignored
+WARNING agmem.organizers.zep_graph.community: label propagation is oscillating (2-cycle) after 7 rounds over 238 nodes; stopping. Upstream would loop forever here — the components involved cannot be clustered by this rule and stay singletons
+INFO agmem.organizers.zep_graph: community refresh: 238 entities -> 117 communities (117 rebuilt, 0 dropped)

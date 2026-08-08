@@ -1,0 +1,124 @@
+===== attempt 1 =====
+INFO agmem.repro: ingest-only: skipping reranker CrossEncoderReranker (write path never reranks)
+WARNING agmem: reranker_params ['model_name'] not accepted by NoopReranker (resolved class); ignored
+WARNING agmem.llm: LLM call failed (role=distill, attempt=0): Connection error.
+WARNING agmem.llm: LLM call failed (role=distill, attempt=0): Request timed out.
+WARNING agmem.llm: LLM call failed (role=extract, attempt=0): Request timed out.
+WARNING agmem.llm: LLM call failed (role=distill, attempt=0): Request timed out.
+WARNING agmem.llm: LLM call failed (role=distill, attempt=0): Request timed out.
+WARNING agmem.llm: LLM call failed (role=distill, attempt=0): Request timed out.
+WARNING agmem.llm: structured output dropped (role=distill, total_drops=1):  ...
+Traceback (most recent call last):
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 101, in map_httpcore_exceptions
+    yield
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 250, in handle_request
+    resp = self._pool.handle_request(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 256, in handle_request
+    raise exc from None
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_sync/connection_pool.py", line 236, in handle_request
+    response = connection.handle_request(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 101, in handle_request
+    raise exc
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 78, in handle_request
+    stream = self._connect(request)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_sync/connection.py", line 124, in _connect
+    stream = self._network_backend.connect_tcp(**kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_backends/sync.py", line 207, in connect_tcp
+    with map_exceptions(exc_map):
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpcore/_exceptions.py", line 14, in map_exceptions
+    raise to_exc(exc) from exc
+httpcore.ConnectError: [Errno 101] Network is unreachable
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_base_client.py", line 1037, in request
+    response = self._send_request(
+               ^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_client.py", line 478, in _send_request
+    response = self._send_with_auth_retry(request, stream=stream, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_client.py", line 456, in _send_with_auth_retry
+    response = super()._send_request(request, stream=stream, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_base_client.py", line 964, in _send_request
+    return self._client.send(request, stream=stream, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_client.py", line 914, in send
+    response = self._send_handling_auth(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_client.py", line 942, in _send_handling_auth
+    response = self._send_handling_redirects(
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_client.py", line 979, in _send_handling_redirects
+    response = self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_client.py", line 1014, in _send_single_request
+    response = transport.handle_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 249, in handle_request
+    with map_httpcore_exceptions():
+  File "/usr/lib/python3.12/contextlib.py", line 158, in __exit__
+    self.gen.throw(value)
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/httpx/_transports/default.py", line 118, in map_httpcore_exceptions
+    raise mapped_exc(message) from exc
+httpx.ConnectError: [Errno 101] Network is unreachable
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/jinmang2/agentic_memory/scripts/exp_amem_repro.py", line 1298, in <module>
+    main()
+  File "/home/jinmang2/agentic_memory/scripts/exp_amem_repro.py", line 1023, in main
+    combined = eval_conversations(
+               ^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/scripts/exp_amem_repro.py", line 674, in eval_conversations
+    n_turns = locomo.ingest(mem, sample)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/src/agmem/bench/locomo.py", line 456, in ingest
+    mem.add_message(
+  File "/home/jinmang2/agentic_memory/src/agmem/memory.py", line 381, in add_message
+    self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
+  File "/home/jinmang2/agentic_memory/src/agmem/memory.py", line 513, in _dispatch
+    work()
+  File "/home/jinmang2/agentic_memory/src/agmem/memory.py", line 381, in <lambda>
+    self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/src/agmem/memory.py", line 500, in _apply_from_all
+    ops = hook(org)
+          ^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/src/agmem/memory.py", line 381, in <lambda>
+    self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
+                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/src/agmem/organizers/zep_graph/organizer.py", line 973, in on_message
+    statement_embedding = ctx.embedder.embed([statement])[0]
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/src/agmem/embed/api_embedder.py", line 118, in embed
+    resp = self._client.embeddings.create(**kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/resources/embeddings.py", line 136, in create
+    return self._post(
+           ^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_base_client.py", line 1332, in post
+    return cast(ResponseT, self.request(cast_to, opts, stream=stream, stream_cls=stream_cls))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jinmang2/agentic_memory/.venv/lib/python3.12/site-packages/openai/_base_client.py", line 1072, in request
+    raise APIConnectionError(request=request) from err
+openai.APIConnectionError: Connection error.
+===== attempt 2 =====
+[conv2] ingested 663 turns, notes persisted under results/repro/stores/zep-ce-e3s
+[ingest-only] done (conv2); reload with --eval-only
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv2_ingest_e3sZ_c2.json
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv2_ingest_e3sZ_c2.llm-trace.jsonl (full LLM I/O trace)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv2_ingest_e3sZ_c2.memory.jsonl (memory snapshot)
+[done] wrote /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_zep_cross_encoder_conv2_ingest_e3sZ_c2.memory.ops.jsonl (evolution log)
+INFO agmem.repro: ingest-only: skipping reranker CrossEncoderReranker (write path never reranks)
+WARNING agmem: reranker_params ['model_name'] not accepted by NoopReranker (resolved class); ignored
+WARNING agmem.organizers.zep_graph.community: label propagation is oscillating (2-cycle) after 6 rounds over 281 nodes; stopping. Upstream would loop forever here — the components involved cannot be clustered by this rule and stay singletons
+INFO agmem.organizers.zep_graph: community refresh: 281 entities -> 135 communities (135 rebuilt, 0 dropped)

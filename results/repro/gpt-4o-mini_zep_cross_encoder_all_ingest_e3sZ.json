@@ -1,0 +1,187 @@
+{
+  "stamp": {
+    "profile": "lite",
+    "commit": "74c9528ffd5e0368a6f5e56bc6eb540f59ae030a",
+    "model": "gpt-4o-mini",
+    "judge": "wujiang",
+    "dataset_version": "sha256:79fa87e90f04",
+    "runs": 1,
+    "agmem_version": "0.1.0",
+    "python": "3.12.3",
+    "utc": "2026-08-07T22:05:09+0900",
+    "dataset": "locomo10",
+    "dataset_path": "/home/jinmang2/.agmem/datasets/locomo10.json",
+    "judge_model": "gpt-4o-mini",
+    "endpoint": "https://api.openai.com/v1",
+    "embedder": "text-embedding-3-small",
+    "k": {
+      "facts": 10,
+      "entities": 10,
+      "communities": 10
+    },
+    "eval_mode": "wujiang",
+    "temps": {
+      "extract": {
+        "temperature": 0.0,
+        "max_tokens": 16384
+      },
+      "distill": {
+        "temperature": 0.0,
+        "max_tokens": 16384
+      },
+      "generate": {
+        "temperature": 0.0
+      }
+    },
+    "expand_links": "off",
+    "conv": "all",
+    "workers": 1,
+    "n_questions": null,
+    "config": "zep_cross_encoder",
+    "memory_types": [
+      "facts",
+      "entities",
+      "communities"
+    ],
+    "keyword_queries": false,
+    "link_expansion_cap": null,
+    "link_expansion_per_hit": false,
+    "eval_only": false,
+    "git_sha": "74c9528ffd5e0368a6f5e56bc6eb540f59ae030a",
+    "utc_started": "2026-08-07T11:38:05.175805+00:00",
+    "utc_finished": "2026-08-07T13:05:09.513537+00:00",
+    "cost_rates": {
+      "model": "gpt-4o-mini",
+      "usd_per_1m_in": 0.15,
+      "usd_per_1m_out": 0.6
+    },
+    "cat5_seed": "md5(question)&1 — deterministic MCQ option order (locomo.cat5_options)",
+    "reranker": "NoopReranker",
+    "degradations": [],
+    "reranker_skipped_ingest_only": true,
+    "parallel_ingest": {
+      "workers": 2,
+      "convs": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "wall_s": 43063.6,
+      "max_drop_rate": 0.001
+    }
+  },
+  "ingest_only": true,
+  "per_conv": [
+    {
+      "conv": 0,
+      "n_turns": 419
+    },
+    {
+      "conv": 1,
+      "n_turns": 369
+    },
+    {
+      "conv": 2,
+      "n_turns": 663
+    },
+    {
+      "conv": 3,
+      "n_turns": 629
+    },
+    {
+      "conv": 4,
+      "n_turns": 680
+    },
+    {
+      "conv": 5,
+      "n_turns": 675
+    },
+    {
+      "conv": 6,
+      "n_turns": 689
+    },
+    {
+      "conv": 7,
+      "n_turns": 681
+    },
+    {
+      "conv": 8,
+      "n_turns": 509
+    },
+    {
+      "conv": 9,
+      "n_turns": 568
+    }
+  ],
+  "llm_budget": {
+    "extract": {
+      "calls": 12728,
+      "tokens_in": 6984366,
+      "tokens_out": 1622798,
+      "errors": 0,
+      "latency_ms_total": 30082271.5,
+      "latency_ms_avg": 2363.5
+    },
+    "distill": {
+      "calls": 14721,
+      "tokens_in": 15726084,
+      "tokens_out": 418065,
+      "errors": 0,
+      "latency_ms_total": 17567999.8,
+      "latency_ms_avg": 1193.4
+    },
+    "embed": {
+      "calls": 52688,
+      "tokens_in": 554144,
+      "tokens_out": 0,
+      "errors": 0,
+      "latency_ms_total": 0.0,
+      "latency_ms_avg": 0.0
+    }
+  },
+  "cost_usd": 4.714207,
+  "drops": {},
+  "timing": {
+    "ingest_s": 65295.7,
+    "wall_s": 43063.6,
+    "total_s": 65295.7
+  },
+  "memory_capacity": {
+    "per_type": {
+      "episodic": 5882,
+      "facts": 8778,
+      "entities": 2599
+    },
+    "total_items": 17259,
+    "memory_jsonl_bytes": 7808327,
+    "store_dir_bytes": 324042752
+  },
+  "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:entities": 2599,
+    "ADD:facts": 8778,
+    "UPDATE:facts": 4373,
+    "INVALIDATE:facts": 1293,
+    "UPDATE:entities": 895,
+    "ADD:communities": 1243
+  },
+  "per_conv_summaries": [
+    "gpt-4o-mini_zep_cross_encoder_conv0_ingest_e3sZ_c0.json",
+    "gpt-4o-mini_zep_cross_encoder_conv1_ingest_e3sZ_c1.json",
+    "gpt-4o-mini_zep_cross_encoder_conv2_ingest_e3sZ_c2.json",
+    "gpt-4o-mini_zep_cross_encoder_conv3_ingest_e3sZ_c3.json",
+    "gpt-4o-mini_zep_cross_encoder_conv4_ingest_e3sZ_c4.json",
+    "gpt-4o-mini_zep_cross_encoder_conv5_ingest_e3sZ_c5.json",
+    "gpt-4o-mini_zep_cross_encoder_conv6_ingest_e3sZ_c6.json",
+    "gpt-4o-mini_zep_cross_encoder_conv7_ingest_e3sZ_c7.json",
+    "gpt-4o-mini_zep_cross_encoder_conv8_ingest_e3sZ_c8.json",
+    "gpt-4o-mini_zep_cross_encoder_conv9_ingest_e3sZ_c9.json"
+  ]
+}
