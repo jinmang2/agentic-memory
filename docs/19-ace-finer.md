@@ -44,7 +44,8 @@ interval covers zero, so the claim this supports is *no measurable effect* — *
 hurts.
 
 The playbook was not empty and not junk. 441 curator calls produced **140 bullets** that survived
-0.90 dedup, reaching **43,699 characters**, injected in full into every generator call thereafter.
+0.90 dedup, **43,699 characters as rendered into the prompt** (35,920 of that bullet text, the rest
+the `[id] helpful=N harmful=M ::` prefixes), injected in full into every generator call thereafter.
 Its content was specific: *"Differentiate between `AmortizationOfFinancingCosts` and
 `AmortizationOfIntangibleAssets`"*, *"Clarify the distinction between `DeferredFinanceCostsGross` and
 `DeferredFinanceCostsNet`"*. It simply did not convert into answers.
@@ -53,6 +54,55 @@ The deficit narrows as the playbook accumulates (mean Δ per window **−2.44 pp
 fifteen, **−0.72 pp** over the second fifteen). That is consistent with no effect, and equally
 consistent with regression to the mean; with 15 windows a side it is a record, not a result, and
 nothing here rests on it.
+
+## What there was to learn, and what got learned
+
+A null result on an adaptive method has two very different readings, and the headline cannot
+separate them: either the task holds nothing transferable, or it does and the method missed it.
+Measured from the committed records (`scripts/repro/finer_error_structure.py`, no model calls), it is
+the second.
+
+**The task is repetitive.** 1,764 gold slots draw on **137 distinct tags**, of which only **3** appear
+once; the top 25 tags cover half of all slots. The base arm's 913 wrong slots concentrate the same
+way: the **top 50 confusions account for 51.5% of all errors**, and the single most common one recurs
+**34 times**.
+
+| recurs | gold tag | model answered instead |
+|---|---|---|
+| 34× | `DebtInstrumentBasisSpreadOnVariableRate1` | `DebtInstrumentInterestRateEffectivePercentage` |
+| 33× | `LineOfCreditFacilityMaximumBorrowingCapacity` | `LineOfCreditFacilityCurrentBorrowingCapacity` |
+| 28× | `DebtInstrumentInterestRateStatedPercentage` | `DebtInstrumentInterestRateEffectivePercentage` |
+| 20× | `ConcentrationRiskPercentage1` | `Revenues` |
+
+This is *exactly* the knowledge a playbook is shaped to hold — "when the sentence describes a spread
+over a variable rate, the tag is the basis-spread one, not the effective-rate one" is one bullet.
+
+**The playbook did not cover it.** Of the top 50 confusions — half of all errors — only **7 have both
+of their tags named anywhere** in the 140 surviving bullets. Of the 115 gold tags the model ever got
+wrong, **24** appear in the playbook at all. And that test is deliberately generous: naming both tags
+is not the same as containing a correct rule distinguishing them, so 7/50 is an *upper bound* on
+coverage.
+
+**Where it did cover, errors moved the right way.** Both covered confusions in the table above fell
+(33→29 and 18→13), while the largest uncovered one rose (28→43). Single seed, small counts, and
+uncovered pairs moved in both directions — this is a record, not a result. But it does mean the
+mechanism is not inert; the failure is upstream of it.
+
+**Two structural reasons the head went uncovered**, one upstream's and one ours:
+
+1. **Nothing in the loop can see that a confusion recurred.** The reflector diagnoses one sample at a
+   time, so a mistake made 34 times and a mistake made once look identical to it. The curator is then
+   instructed to add only what is *missing* and to avoid redundancy — which actively suppresses
+   re-stating a rule for a confusion that keeps coming back. There is no frequency signal anywhere in
+   the pipeline. This is upstream's design, reproduced faithfully.
+2. **Our dedup discarded 276 of 441 curated bullets** as near-duplicates at cosine 0.90. The curator
+   *was* re-proposing overlapping knowledge and our gate dropped it. **This is our deviation, not
+   upstream's** — upstream ships its analyzer off by default (ledger B-6), so the same run there
+   would have kept all 441. Whether the repetition our gate treated as redundancy was in fact
+   reinforcement is untested, and it is now the second open confound in this table.
+
+The playbook's own late-run statistics point the same way: 139 bullets, **96 of them never cited by
+the generator**, 18 marked high-performing, 0 problematic.
 
 ## Why the base arm is half the finding
 
@@ -128,8 +178,15 @@ interval narrower than the truth. Neither is worth an interval, so `finer_paired
 5. **Dedup is always on at 0.90 and drops the incoming bullet.** Upstream's analyzer is opt-in, off in
    `ace.py`, off in this harness's flag, and off again by silent fallback when its optional
    dependencies are missing, and when on it LLM-merges groups rather than dropping (ledger B-6). Ours
-   is a third behavior, not upstream's switched on.
+   is a third behavior, not upstream's switched on. **This is no longer only a fidelity note — it is
+   a candidate explanation for the null**: the gate discarded 276 of 441 curated bullets, and the
+   errors it left uncovered are the recurring ones. An `online_nodedup` arm at upstream's default
+   would settle it, and it is cheaper to run than the D4 arm because it needs no code change beyond a
+   threshold.
 6. **Single seed**, and no replication of the sign.
+7. **Coverage is measured by what the playbook says, not by what it means.** A confusion counts as
+   covered when both of its tags appear in the bullet text — an upper bound, since no check was made
+   that a correct distinguishing rule accompanies them.
 
 ## Two defects in the harness these numbers come from
 
@@ -162,6 +219,7 @@ because the scorer lowercases both sides, but it is noise in the labels rather t
 | base | `results/repro/gpt-4o-mini_ace_finer_base.json` |
 | online | `results/repro/gpt-4o-mini_ace_finer_online.json` |
 | paired analysis | `results/repro/finer_paired.json` (`scripts/repro/finer_paired.py`) |
+| error structure | `results/repro/finer_error_structure.json` (`scripts/repro/finer_error_structure.py`) |
 | pre-flight smokes | `..._ace_finer_smoke30{,b,c}.json` — the runs that caught the prompt defect below |
 | runner | `scripts/repro/exp_ace_finer.py`; adapter `src/agmem/bench/finer.py` |
 

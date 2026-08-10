@@ -1,0 +1,103 @@
+{
+  "gold": {
+    "slots": 1764,
+    "distinct_tags": 137,
+    "tags_seen_once": 3,
+    "top25_share_pct": 49.8,
+    "top50_share_pct": 68.9
+  },
+  "errors_base": {
+    "slots_wrong": 913,
+    "distinct_pairs": 325,
+    "pairs_seen_once": 166,
+    "concentration_pct": {
+      "5": 14.8,
+      "10": 22.8,
+      "20": 32.9,
+      "50": 51.5
+    }
+  },
+  "errors_online_slots_wrong": 940,
+  "playbook": {
+    "bullets": 140,
+    "chars": 35920
+  },
+  "coverage": [
+    {
+      "top_k": 10,
+      "pairs_with_both_tags_named": 3,
+      "share_of_all_errors": 22.8
+    },
+    {
+      "top_k": 25,
+      "pairs_with_both_tags_named": 5,
+      "share_of_all_errors": 36.7
+    },
+    {
+      "top_k": 50,
+      "pairs_with_both_tags_named": 7,
+      "share_of_all_errors": 51.5
+    }
+  ],
+  "gold_tags_ever_missed": 115,
+  "gold_tags_named_in_playbook": 24,
+  "top_confusions": [
+    {
+      "gold": "debtinstrumentbasisspreadonvariablerate1",
+      "pred": "debtinstrumentinterestrateeffectivepercentage",
+      "base": 34,
+      "online": 35,
+      "covered": false
+    },
+    {
+      "gold": "lineofcreditfacilitymaximumborrowingcapacity",
+      "pred": "lineofcreditfacilitycurrentborrowingcapacity",
+      "base": 33,
+      "online": 29,
+      "covered": true
+    },
+    {
+      "gold": "debtinstrumentinterestratestatedpercentage",
+      "pred": "debtinstrumentinterestrateeffectivepercentage",
+      "base": 28,
+      "online": 43,
+      "covered": false
+    },
+    {
+      "gold": "concentrationriskpercentage1",
+      "pred": "revenues",
+      "base": 20,
+      "online": 18,
+      "covered": false
+    },
+    {
+      "gold": "allocatedsharebasedcompensationexpense",
+      "pred": "sharebasedcompensation",
+      "base": 20,
+      "online": 7,
+      "covered": false
+    },
+    {
+      "gold": "lineofcredit",
+      "pred": "lineofcreditfacilitycurrentborrowingcapacity",
+      "base": 18,
+      "online": 13,
+      "covered": true
+    },
+    {
+      "gold": "sharebasedcompensationarrangementbysharebasedpaymentawardequityinstrumentsotherthanoptionsnonvestednumber",
+      "pred": "sharebasedcompensationarrangementbysharebasedpaymentawardnumberofsharesauthorized",
+      "base": 15,
+      "online": 12,
+      "covered": false
+    },
+    {
+      "gold": "sharebasedcompensationarrangementbysharebasedpaymentawardequityinstrumentsotherthanoptionsgrantsinperiod",
+      "pred": "sharebasedcompensationarrangementbysharebasedpaymentawardnumberofsharesauthorized",
+      "base": 15,
+      "online": 16,
+      "covered": false
+    }
+  ],
+  "coverage_note": "`covered` means both tags of the pair appear SOMEWHERE in the playbook text, not that a correct distinguishing rule is present. It is an upper bound on coverage; a low value is safe to cite, a high one would not be."
+}

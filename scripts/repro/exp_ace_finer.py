@@ -163,7 +163,7 @@ def build_memory(args, embedder, trace_path: Path | None, roles) -> AgenticMemor
     )
     mem = AgenticMemory(
         namespace=args.namespace,
-        organizers=[ACEOrganizer()],
+        organizers=[ACEOrganizer(dedup_threshold=args.dedup_threshold)],
         embedder=embedder,
         config=cfg,
     )
@@ -247,6 +247,16 @@ def main() -> None:
     ap.add_argument("--data-dir", default=None)
     ap.add_argument("--namespace", default=None)
     ap.add_argument("--tag", default=None, help="artifact tag; defaults to model_ace_finer_<arm>")
+    ap.add_argument(
+        "--dedup-threshold",
+        type=float,
+        default=0.90,
+        help=(
+            "curator dedup cosine gate. 0.90 is OUR always-on default (D5); any value above 1.0 "
+            "is unreachable by a cosine and therefore switches dedup OFF, which is upstream's "
+            "shipped default (ledger B-6)."
+        ),
+    )
     ap.add_argument("--dry-run", action="store_true", help="fake client, no network, $0")
     ap.add_argument(
         "--dry-run-growth",
@@ -349,12 +359,13 @@ def main() -> None:
             "window": args.window,
             "role_temps": ACE_ROLE_TEMPS,
             "organizers": ["ace"],
-            "dedup_threshold": 0.90,
+            "dedup_threshold": args.dedup_threshold,
+            "dedup_enabled": args.dedup_threshold <= 1.0,
             "deviations": [
                 "D1_structured_output",
                 "D3_one_attempt",
                 "D4_no_retries",
-                "D5_dedup_on",
+                "D5_dedup_on" if args.dedup_threshold <= 1.0 else "D5_dedup_off_upstream_default",
             ],
             "context_markers_absent": fell_through,
             "git_sha": helpers.git_sha(),
