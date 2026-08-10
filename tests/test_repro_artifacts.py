@@ -1964,3 +1964,48 @@ def test_finer_paired_imports_its_statistics_and_declines_to_interval_a_clustere
         assert "sample_accuracy_paired" in data
         # the two arms must have answered the same number of questions
         assert data["anchors"]["base"]["n"] == data["anchors"]["online"]["n"]
+
+
+def test_finer_resume_keeps_only_whole_windows_and_refuses_a_foreign_records_file(tmp_path):
+    """The host has taken three long runs down mid-flight, so the FiNER runner
+    resumes. Two properties decide whether a resumed number can be trusted.
+
+    The window is the atomic unit, not the sample: `run_arm` appends a window's
+    rows only AFTER adapting on them, so a window present in the file implies
+    the store learned from it. A partial window must therefore be discarded —
+    its samples were answered but never trained on, and keeping them would leave
+    the transcript ahead of the store it describes. And the kept prefix is
+    checked against the dataset rather than assumed, so a records file from
+    another split cannot be silently stitched onto this run.
+    """
+    import logging
+
+    script = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "exp_ace_finer.py"
+    spec = _ilu.spec_from_file_location("exp_ace_finer_resume", script)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    samples = [{"target": f"t{i},b,c,d", "question": f"q{i}", "context": ""} for i in range(45)]
+    path = tmp_path / "r.records.jsonl"
+    log = logging.getLogger("test.resume")
+
+    # 22 rows written: one whole window of 15, then 7 of the next
+    with path.open("w", encoding="utf-8") as fh:
+        for i in range(22):
+            fh.write(json.dumps({"target": samples[i]["target"], "index": i}) + "\n")
+    kept = mod.resume_state(path, samples, 15, log)
+    assert len(kept) == 15, "the 7 rows of the unfinished window must be dropped"
+
+    # a truncated final line is the shape a crash actually leaves
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write('{"target": "t22,b,c')
+    assert len(mod.resume_state(path, samples, 15, log)) == 15
+
+    # rows from a different split must stop the run, not be appended to
+    other = tmp_path / "other.records.jsonl"
+    with other.open("w", encoding="utf-8") as fh:
+        for i in range(15):
+            fh.write(json.dumps({"target": f"WRONG{i},b,c,d", "index": i}) + "\n")
+    with pytest.raises(SystemExit, match="resume refused"):
+        mod.resume_state(other, samples, 15, log)
+
+    assert mod.resume_state(tmp_path / "absent.jsonl", samples, 15, log) == []

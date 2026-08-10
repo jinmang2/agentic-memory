@@ -179,6 +179,8 @@ def run_arm(
     adapt: bool,
     window: int,
     log: logging.Logger,
+    sink=None,
+    skip_before: int = 0,
 ) -> tuple[list[dict], list[dict]]:
     """Walk the split. Returns (rows, per_window).
 
@@ -188,6 +190,8 @@ def run_arm(
     rows: list[dict] = []
     per_window: list[dict] = []
     for start, chunk in finer.windows(samples, window):
+        if start < skip_before:
+            continue
         w_rows: list[dict] = []
         for sample in chunk:
             capture: dict[str, Any] = {}
@@ -231,7 +235,62 @@ def run_arm(
             for sample, row in zip(chunk, w_rows):
                 finer.adapt(mem, sample, row)
             mem.flush()
+        # Persist AFTER adapt, never before: a window present in the records file
+        # must mean the store has also learned from it, or a resume would answer
+        # with a playbook that is behind the transcript. This ordering is what
+        # makes the window the atomic unit of progress.
+        if sink is not None:
+            for row in w_rows:
+                sink.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+            sink.flush()
     return rows, per_window
+
+
+def resume_state(records_path: Path, samples: list[dict], window: int, log) -> list[dict]:
+    """Rows from a previous attempt that may be kept, truncated to a window boundary.
+
+    This exists because the host has now taken three long runs down mid-flight —
+    the process leaves no traceback, the machine simply reboots — and re-buying a
+    measurement that was already paid for is the one cost this campaign refuses.
+
+    The unit of progress is the WINDOW, not the sample. `run_arm` appends a
+    window's rows only after adapting on them, so "window w is in the file"
+    implies "the store has learned from window w". A partial window is therefore
+    discarded rather than trusted: its samples were answered with the right
+    playbook but never trained on, and keeping them would leave the transcript
+    ahead of the store it claims to describe. Those few samples are re-answered
+    and re-paid for; that is the price of the invariant.
+
+    Kept rows are checked against the dataset prefix, not assumed: a records file
+    from a different split or a different order would otherwise be silently
+    stitched onto this run.
+    """
+    if not records_path.exists():
+        return []
+    rows = []
+    for lineno, line in enumerate(records_path.open(encoding="utf-8"), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            # The crash can land mid-write. Everything after the first bad line
+            # is unusable, and stopping here is what makes that safe.
+            log.warning("records line %d is truncated — resuming from before it", lineno)
+            break
+    if not rows:
+        return []
+    keep = (len(rows) // window) * window
+    if keep != len(rows):
+        log.info("discarding %d rows of an incomplete window", len(rows) - keep)
+    rows = rows[:keep]
+    for i, row in enumerate(rows):
+        if row.get("target") != samples[i]["target"]:
+            raise SystemExit(
+                f"resume refused: row {i} of {records_path.name} is not sample {i} of this split"
+            )
+    return rows
 
 
 def main() -> None:
@@ -255,6 +314,14 @@ def main() -> None:
             "curator dedup cosine gate. 0.90 is OUR always-on default (D5); any value above 1.0 "
             "is unreachable by a cosine and therefore switches dedup OFF, which is upstream's "
             "shipped default (ledger B-6)."
+        ),
+    )
+    ap.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "continue a run the host killed: keep whole windows already in the records file "
+            "and reuse the store under --data-dir. Requires the same --data-dir and --tag."
         ),
     )
     ap.add_argument("--dry-run", action="store_true", help="fake client, no network, $0")
@@ -324,12 +391,42 @@ def main() -> None:
         mem = build_memory(args, embedder, trace_path, roles)
         fake = None
 
+    records_path = OUT / f"{args.tag}.records.jsonl"
+    kept = resume_state(records_path, samples, args.window, log) if args.resume else []
+    if kept:
+        log.info(
+            "resuming: %d/%d samples already recorded (%d complete windows); "
+            "the store under %s carries their playbook",
+            len(kept),
+            len(samples),
+            len(kept) // args.window,
+            args.data_dir,
+        )
+    elif args.resume:
+        log.info("--resume given but nothing usable on disk; starting from the beginning")
+
     utc_started = datetime.now(UTC).isoformat()
     t0 = time.perf_counter()
+    sink = records_path.open("a" if kept else "w", encoding="utf-8")
+    if kept:
+        # Drop anything past the last complete window, including a half-written
+        # line, so the file we append to is exactly the prefix we validated.
+        sink.close()
+        with records_path.open("w", encoding="utf-8") as fh:
+            for row in kept:
+                fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+        sink = records_path.open("a", encoding="utf-8")
     try:
-        rows, per_window = run_arm(
-            mem, samples, adapt=(args.arm == "online"), window=args.window, log=log
+        new_rows, per_window = run_arm(
+            mem,
+            samples,
+            adapt=(args.arm == "online"),
+            window=args.window,
+            log=log,
+            sink=sink,
+            skip_before=len(kept),
         )
+        rows = kept + new_rows
         with (OUT / f"{args.tag}.memory.jsonl").open("w", encoding="utf-8") as fh:
             capacity = helpers.dump_memory_snapshot(mem, 0, fh)
         with (OUT / f"{args.tag}.memory.ops.jsonl").open("w", encoding="utf-8") as fh:
@@ -344,8 +441,24 @@ def main() -> None:
         # `cost_usd`'s `embed_model` argument exists to prevent.
         helpers.fold_embed_budget(budget, embedder)
     finally:
+        sink.close()
         mem.close()
     elapsed = round(time.perf_counter() - t0, 1)
+
+    if kept:
+        # The windows answered before the crash are re-aggregated from their
+        # rows rather than lost: the summary must describe the whole split, not
+        # only the part this process happened to run.
+        prefix = []
+        for w in range(len(kept) // args.window):
+            w_rows = kept[w * args.window : (w + 1) * args.window]
+            agg = finer.aggregate(w_rows)
+            agg["window"] = w
+            agg["start"] = w * args.window
+            agg["playbook_chars_at_test"] = w_rows[0].get("playbook_chars", 0)
+            agg["resumed"] = True
+            prefix.append(agg)
+        per_window = prefix + per_window
 
     overall = finer.aggregate(rows)
     summary = {
@@ -372,6 +485,7 @@ def main() -> None:
             "utc_started": utc_started,
             "utc_finished": datetime.now(UTC).isoformat(),
             "dry_run": bool(args.dry_run),
+            "resumed_from_records": len(kept),
         },
         "overall": overall,
         "per_window": per_window,
@@ -394,10 +508,6 @@ def main() -> None:
         )
         summary["stamp"]["embed_model_priced_as"] = helpers.embed_model_name(embedder)
 
-    records_path = OUT / f"{args.tag}.records.jsonl"
-    with records_path.open("w", encoding="utf-8") as fh:
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False, default=helpers.json_safe) + "\n")
     (OUT / f"{args.tag}.json").write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, default=helpers.json_safe)
     )
