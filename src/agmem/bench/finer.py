@@ -433,12 +433,26 @@ def adapt(mem: AgenticMemory, sample: dict[str, Any], row: dict[str, Any]) -> No
     the trajectory is the single attempt and the outcome is upstream's
     all-or-nothing `is_correct` — the same signal its loop branches on, which
     keeps the two comparable on what is learned from even though they differ on
-    how many calls it takes."""
+    how many calls it takes.
+
+    **The reasoning has to be in the trajectory.** Upstream passes
+    `reasoning_trace=gen_response` — the generator's whole chain of thought —
+    into `reflector.reflect` (ace.py:509-517), and that trace is the only thing
+    a reflection can actually diagnose. A first pass here sent the prediction
+    and the gold without it, and the curated bullets came back as
+    process-improvement filler ("establish a periodic training program", "run
+    scenario-based exercises") rather than tagging knowledge: with no reasoning
+    to fault, the reflector had nothing to be specific about and generalised.
+    The cited bullet ids travel with it for the same reason — they are what
+    upstream's reflector attributes helpful/harmful counters to
+    (`bullets_used=extract_playbook_bullets(playbook, bullet_ids)`, :506)."""
     trajectory = [
         {
             "step": 1,
             "action": "answer_finer_sample",
             "question": sample["question"][:2000],
+            "reasoning": str(row.get("reasoning", ""))[:4000],
+            "bullets_cited": row.get("bullet_ids", []),
             "prediction": row["pred"],
             "target": sample["target"],
             "tags_correct": f"{row['correct_tags']}/{row['total_tags']}",

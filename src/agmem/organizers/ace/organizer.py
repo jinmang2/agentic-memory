@@ -94,8 +94,19 @@ CURATE_SCHEMA = {
     "required": ["operations"],
 }
 
-REFLECT_PROMPT = """You are a reflector. Critique this task execution, diagnose what went wrong
-(or why it worked), and extract concrete insight.
+# The opening line is upstream's, not a paraphrase, and the difference is
+# load-bearing. REFLECTOR_PROMPT (prompts/reflector.py:6-18) says the subject is
+# "a MODEL's reasoning" and asks "what should THE MODEL have done instead". Our
+# first version said "critique this task execution", and on a QA task the
+# reflector duly personified a human operator — "the user may have overlooked
+# ..." — which the curator then turned into advice for that operator (training
+# programmes, mentorship pairings) instead of knowledge an answering model can
+# apply. Measured on FiNER 2026-08-10: every bullet in a 30-sample run was
+# process advice. Who the playbook is FOR is the whole mechanism.
+REFLECT_PROMPT = """You are an expert analyst and educator. Diagnose why a MODEL's reasoning
+went wrong by analyzing the gap between its predicted answer and the ground truth
+(or, on success, why it worked). Be specific about what the model should have
+done differently — the root cause, not the surface error.
 
 Task: {task}
 Outcome: {outcome}
@@ -113,8 +124,22 @@ Return JSON: {{"reasoning": "chain of thought / detailed analysis",
 "key_insight": "what strategy, formula, or principle should be remembered?",
 "bullet_tags": [{{"id": "<bullet id>", "tag": "helpful"}}]}}"""
 
-CURATE_PROMPT = """You are a curator of a playbook. Identify ONLY the NEW insights that are
-MISSING from the current playbook. Do NOT regenerate or rephrase existing bullets.
+# Upstream's Context block (prompts/curator.py:7-9) is reproduced verbatim in
+# substance because it is the sentence that decides what a bullet looks like:
+# the playbook's reader is a model answering a SIMILAR question WITHOUT the gold
+# answer the reflection was written against. Drop it and the curator writes
+# advice for whoever it imagines is reading — the failure measured above.
+CURATE_PROMPT = """You are a master curator of knowledge. Identify ONLY the NEW insights that are
+MISSING from the current playbook.
+
+The playbook you create will be used to help ANSWER SIMILAR QUESTIONS. The
+reflection below was written with access to the ground truth, which will NOT be
+available when the playbook is used — so every bullet must be content that helps
+the playbook's reader produce a prediction that lands on the ground truth by
+itself. Bullets must be actionable at answer time, not recommendations about
+process, training or tooling.
+
+Do NOT regenerate or rephrase existing bullets.
 Avoid redundancy — if similar advice already exists, only add content that
 complements it. Focus on quality over quantity. If there is nothing new to add,
 return an empty operations list.

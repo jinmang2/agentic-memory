@@ -1,0 +1,108 @@
+{
+  "arm": "online",
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "embedder": "text-embedding-3-small",
+    "endpoint": "https://api.openai.com/v1",
+    "split": "test",
+    "n_samples": 30,
+    "window": 15,
+    "role_temps": {
+      "generate": {
+        "temperature": 0.0
+      },
+      "distill": {
+        "temperature": 0.0,
+        "max_tokens": 4096
+      }
+    },
+    "organizers": [
+      "ace"
+    ],
+    "dedup_threshold": 0.9,
+    "deviations": [
+      "D1_structured_output",
+      "D3_one_attempt",
+      "D4_no_retries",
+      "D5_dedup_on"
+    ],
+    "context_markers_absent": 441,
+    "git_sha": "068fdc8e20f9826753365bb186e11fefbc48a90f",
+    "utc_started": "2026-08-10T01:03:53.062538+00:00",
+    "utc_finished": "2026-08-10T01:10:53.655268+00:00",
+    "dry_run": false,
+    "embed_model_priced_as": "text-embedding-3-small"
+  },
+  "overall": {
+    "tag_accuracy": 49.17,
+    "sample_accuracy": 20.0,
+    "n": 30,
+    "n_tags": 120,
+    "n_failed": 0,
+    "n_no_answer": 0,
+    "n_over_predicted": 0
+  },
+  "per_window": [
+    {
+      "tag_accuracy": 61.67,
+      "sample_accuracy": 33.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 0,
+      "start": 0,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 36.67,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 1,
+      "start": 15,
+      "playbook_chars_at_test": 4772
+    }
+  ],
+  "llm_budget": {
+    "generate": {
+      "calls": 30,
+      "tokens_in": 73194,
+      "tokens_out": 8148,
+      "latency_ms_avg": 4435.1,
+      "errors": 0
+    },
+    "distill": {
+      "calls": 60,
+      "tokens_in": 123258,
+      "tokens_out": 13403,
+      "latency_ms_avg": 2769.3,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 292,
+      "tokens_in": 20994,
+      "tokens_out": 0,
+      "latency_ms_avg": 392.3,
+      "errors": 0
+    }
+  },
+  "memory_capacity": {
+    "episodic": 30,
+    "playbook": 38
+  },
+  "op_counts": {
+    "ADD:episodic": 30,
+    "ADD:playbook": 38,
+    "UPDATE:playbook": 185
+  },
+  "timing": {
+    "eval_s": 414.2
+  },
+  "records_file": "gpt-4o-mini_ace_finer_smoke30b.records.jsonl",
+  "cost_usd": 0.042818
+}

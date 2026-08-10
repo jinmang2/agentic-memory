@@ -207,6 +207,10 @@ def run_arm(
             row["index"] = start + len(w_rows)
             row["playbook_chars"] = capture.get("playbook_chars", 0)
             row["bullet_ids"] = capture.get("bullet_ids", [])
+            # Carried on the row so `finer.adapt` can hand it to the reflector:
+            # the reasoning IS what a reflection diagnoses, and without it the
+            # curated bullets come back as generic process advice.
+            row["reasoning"] = capture.get("reasoning", "")
             w_rows.append(row)
         rows.extend(w_rows)
         agg = finer.aggregate(w_rows)
@@ -321,6 +325,14 @@ def main() -> None:
         with (OUT / f"{args.tag}.memory.ops.jsonl").open("w", encoding="utf-8") as fh:
             op_counts = helpers.dump_op_log(mem, 0, fh)
         budget = mem.budget.summary() if mem.budget else {}
+        # The embedder is a paid one on the real path and its calls are NOT in
+        # `mem.budget` — ACE embeds every curated bullet for dedup and every
+        # task episode on ingest, so leaving them out would under-report the
+        # bill and leave the artifact unable to explain its own total. Priced
+        # at the embedder's own registry rates, not the chat model's: those
+        # differ by 7.5x and pricing embeddings as chat tokens is the mistake
+        # `cost_usd`'s `embed_model` argument exists to prevent.
+        helpers.fold_embed_budget(budget, embedder)
     finally:
         mem.close()
     elapsed = round(time.perf_counter() - t0, 1)
@@ -366,7 +378,10 @@ def main() -> None:
             "reply_chars": fake.reply_chars,
         }
     else:
-        summary["cost_usd"] = helpers.cost_usd(budget, args.model)
+        summary["cost_usd"] = helpers.cost_usd(
+            budget, args.model, embed_model=helpers.embed_model_name(embedder)
+        )
+        summary["stamp"]["embed_model_priced_as"] = helpers.embed_model_name(embedder)
 
     records_path = OUT / f"{args.tag}.records.jsonl"
     with records_path.open("w", encoding="utf-8") as fh:

@@ -16,6 +16,7 @@ from agmem.bench.finer import (
     NO_ANSWER,
     SPLITS,
     TAGS_PER_SAMPLE,
+    adapt,
     aggregate,
     answer,
     answer_is_correct,
@@ -270,3 +271,28 @@ def test_answer_refuses_to_score_a_run_that_never_called_a_model():
             answer(mem, {"question": "q", "context": "c", "target": "a"})
     finally:
         mem.close()
+
+
+def test_the_generators_reasoning_reaches_the_reflector():
+    """Upstream reflects on `reasoning_trace=gen_response` (ace.py:509-517).
+    A first pass here passed only the prediction and the gold, and the curated
+    bullets came back as process-improvement filler — with no reasoning to
+    fault, a reflector has nothing to be specific about. Pinned so the trace
+    cannot quietly fall out of the trajectory again."""
+    captured = {}
+
+    class _Mem:
+        def add_task_result(self, trajectory, outcome, task):
+            captured["trajectory"] = trajectory
+            captured["outcome"] = outcome
+
+    sample = {"question": "q", "context": "c", "target": "a,b,c,d"}
+    row = score_sample(sample, "a,b,c,x")
+    row["reasoning"] = "I matched 231,312 to CommonStockSharesAuthorized because..."
+    row["bullet_ids"] = ["gaap-00007"]
+    adapt(_Mem(), sample, row)
+
+    step = captured["trajectory"][0]
+    assert step["reasoning"].startswith("I matched 231,312")
+    assert step["bullets_cited"] == ["gaap-00007"]
+    assert captured["outcome"] == "failure", "3-of-4 is a failure to learn from (trap 5)"

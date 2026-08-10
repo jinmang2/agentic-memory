@@ -152,17 +152,23 @@ def test_ace_curator_gets_the_token_budget_stats_and_progress():
     mem._ctx.llm = llm
     try:
         mem.add_task_result([{"step": 1}], "failure", "a task")
-        curator_prompt = next(p for role, p in llm.calls if "curator" in p)
+        curator_prompt = next(p for role, p in llm.calls if "Recent Reflection:" in p)
         assert f"Total token budget: {PLAYBOOK_TOKEN_BUDGET} tokens" in curator_prompt
         assert "step 1 of 50" in curator_prompt
         assert "Current Playbook Stats:" in curator_prompt
         # upstream's environment feedback replaces a recognised outcome word
-        reflect_prompt = next(p for role, p in llm.calls if "reflector" in p)
+        reflect_prompt = next(p for role, p in llm.calls if "Trajectory:" in p)
         assert "Predicted answer does not match ground truth" in reflect_prompt
     finally:
         mem.close()
 
 
+# The two prompts are located by a STRUCTURAL marker ("Trajectory:" for the
+# reflector, "Recent Reflection:" for the curator) rather than by the words
+# "reflector"/"curator". Those words are not in upstream's prompts either — its
+# reflector opens "You are an expert analyst and educator" — so keying on them
+# pinned a paraphrase of ours instead of the shape being asserted, and broke the
+# moment the opening line was brought back into line with upstream.
 def test_ace_curator_inputs_match_upstream_shape():
     """Round-12 #2: the curator's inputs are upstream CURATOR_PROMPT's, no more
     and no less — (a) it is told the token budget but NEVER the current playbook
@@ -173,7 +179,7 @@ def test_ace_curator_inputs_match_upstream_shape():
     mem = make_mem(llm)
     try:
         mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
-        curator_prompt = next(p for role, p in llm.calls if "curator" in p)
+        curator_prompt = next(p for role, p in llm.calls if "Recent Reflection:" in p)
         # (a) budget yes, current-size line no
         assert "Total token budget:" in curator_prompt
         assert "now uses about" not in curator_prompt
@@ -192,7 +198,7 @@ def test_ace_curator_inputs_match_upstream_shape():
             assert field_value in curator_prompt
         assert "lessons" not in curator_prompt
         # and the reflector was asked for upstream's five fields
-        reflect_prompt = next(p for role, p in llm.calls if "reflector" in p)
+        reflect_prompt = next(p for role, p in llm.calls if "Trajectory:" in p)
         for field in (
             "reasoning",
             "error_identification",
