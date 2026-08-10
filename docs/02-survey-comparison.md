@@ -108,7 +108,7 @@ LongMemEval temporal-reasoning에서 Zep이 +48% 상대개선을 보인 반면 k
 | 시스템 | 벤치마크 | 결과 |
 |---|---|---|
 | ACE | AppWorld (DeepSeek-V3.1) | ReAct 42.4% → offline 59.4% / online 59.5% (GPT-4.1 기반 IBM CUGA 60.3%와 동급) |
-| ACE | FiNER/Formula | 69.1% → 81.9%; 적응 latency **-86.9%** (vs GEPA/DC) |
+| ACE | FiNER/Formula | 69.1% → 81.9%; 적응 latency **-86.9%** (vs GEPA/DC) — FiNER는 우리가 측정함: 같은 441문항 위 쌍대 비교에서 playbook 적응의 효과가 분리되지 않음([`19-ace-finer.md`](19-ace-finer.md), 원장 B-6·C-9) |
 | G-Memory | ALFWorld (AutoGen) | 85.82% (커뮤니티 재현 67–76%) |
 | G-Memory | 5개 벤치 | +3~+21%p (GPT-4o-mini, Qwen2.5-7B/14B) |
 | ReasoningBank | WebArena (Gemini-2.5-flash) | 40.5% → **48.8%** (+8.3%p), step 9.7→8.3; pro 46.7→53.9 |

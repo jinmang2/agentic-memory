@@ -158,6 +158,7 @@ tests/           711 tests, incl. fidelity pinning suites
 |---|---|
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
+| [docs/19-ace-finer.md](docs/19-ace-finer.md) | ACE's self-evolving playbook on FiNER, measured against not having one — and why the control arm is half the finding |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |
