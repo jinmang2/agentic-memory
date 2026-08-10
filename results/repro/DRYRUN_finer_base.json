@@ -1,0 +1,425 @@
+{
+  "arm": "base",
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "embedder": "text-embedding-3-small",
+    "endpoint": "https://api.openai.com/v1",
+    "split": "test",
+    "n_samples": 441,
+    "window": 15,
+    "role_temps": {
+      "generate": {
+        "temperature": 0.0
+      },
+      "distill": {
+        "temperature": 0.0,
+        "max_tokens": 4096
+      }
+    },
+    "organizers": [
+      "ace"
+    ],
+    "dedup_threshold": 0.9,
+    "deviations": [
+      "D1_structured_output",
+      "D3_one_attempt",
+      "D4_no_retries",
+      "D5_dedup_on"
+    ],
+    "context_markers_absent": 441,
+    "git_sha": "0761866fd27a4f20ae6c32ae7204f81d415db899",
+    "utc_started": "2026-08-10T00:22:30.159961+00:00",
+    "utc_finished": "2026-08-10T00:22:30.180278+00:00",
+    "dry_run": true
+  },
+  "overall": {
+    "tag_accuracy": 0.0,
+    "sample_accuracy": 0.0,
+    "n": 441,
+    "n_tags": 1764,
+    "n_failed": 0,
+    "n_no_answer": 0,
+    "n_over_predicted": 0
+  },
+  "per_window": [
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 0,
+      "start": 0,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 1,
+      "start": 15,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 2,
+      "start": 30,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 3,
+      "start": 45,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 4,
+      "start": 60,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 5,
+      "start": 75,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 6,
+      "start": 90,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 7,
+      "start": 105,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 8,
+      "start": 120,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 9,
+      "start": 135,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 10,
+      "start": 150,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 11,
+      "start": 165,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 12,
+      "start": 180,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 13,
+      "start": 195,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 14,
+      "start": 210,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 15,
+      "start": 225,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 16,
+      "start": 240,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 17,
+      "start": 255,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 18,
+      "start": 270,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 19,
+      "start": 285,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 20,
+      "start": 300,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 21,
+      "start": 315,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 22,
+      "start": 330,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 23,
+      "start": 345,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 24,
+      "start": 360,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 25,
+      "start": 375,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 26,
+      "start": 390,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 27,
+      "start": 405,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 28,
+      "start": 420,
+      "playbook_chars_at_test": 7
+    },
+    {
+      "tag_accuracy": 0.0,
+      "sample_accuracy": 0.0,
+      "n": 6,
+      "n_tags": 24,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 29,
+      "start": 435,
+      "playbook_chars_at_test": 7
+    }
+  ],
+  "llm_budget": {},
+  "memory_capacity": {},
+  "op_counts": {},
+  "timing": {
+    "eval_s": 0.0
+  },
+  "records_file": "DRYRUN_finer_base.records.jsonl",
+  "dry_run_ledger": {
+    "growth_bound": "none",
+    "calls": {
+      "generate": 441
+    },
+    "prompt_chars": {
+      "generate": 3971215
+    },
+    "reply_chars": {
+      "generate": 194922
+    }
+  }
+}
