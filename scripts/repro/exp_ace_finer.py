@@ -181,6 +181,7 @@ def run_arm(
     log: logging.Logger,
     sink=None,
     skip_before: int = 0,
+    over_budget=None,
 ) -> tuple[list[dict], list[dict]]:
     """Walk the split. Returns (rows, per_window).
 
@@ -192,6 +193,16 @@ def run_arm(
     for start, chunk in finer.windows(samples, window):
         if start < skip_before:
             continue
+        # Checked BETWEEN windows, never inside one: a window that is answered
+        # but not adapted on cannot be written (see the sink ordering below), so
+        # stopping mid-window would throw away calls already paid for.
+        if over_budget is not None and over_budget():
+            log.warning(
+                "spend cap reached before window %d — stopping cleanly with %d samples done",
+                start // window,
+                start,
+            )
+            break
         w_rows: list[dict] = []
         for sample in chunk:
             capture: dict[str, Any] = {}
@@ -244,6 +255,32 @@ def run_arm(
                 sink.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
             sink.flush()
     return rows, per_window
+
+
+def spend_from_trace(trace_path: Path, model: str, helpers) -> float:
+    """USD already spent by earlier processes of this run, read off the trace.
+
+    A resumed run's `mem.budget` starts at zero, so a spend cap enforced on it
+    alone would be a cap per process rather than per measurement — and the whole
+    point of the cap is that it binds the thing being bought. The trace is
+    appended per call and survives whatever killed the process, so it is the one
+    record of what the earlier attempts cost. A truncated final line is dropped.
+    """
+    if not trace_path.exists():
+        return 0.0
+    budget: dict[str, dict] = {}
+    for line in trace_path.open(encoding="utf-8"):
+        try:
+            call = json.loads(line)
+        except json.JSONDecodeError:
+            break
+        row = budget.setdefault(
+            call.get("role", "?"), {"calls": 0, "tokens_in": 0, "tokens_out": 0}
+        )
+        row["calls"] += 1
+        row["tokens_in"] += call.get("tokens_in") or 0
+        row["tokens_out"] += call.get("tokens_out") or 0
+    return helpers.cost_usd(budget, model) if budget else 0.0
 
 
 def resume_state(records_path: Path, samples: list[dict], window: int, log) -> list[dict]:
@@ -314,6 +351,16 @@ def main() -> None:
             "curator dedup cosine gate. 0.90 is OUR always-on default (D5); any value above 1.0 "
             "is unreachable by a cosine and therefore switches dedup OFF, which is upstream's "
             "shipped default (ledger B-6)."
+        ),
+    )
+    ap.add_argument(
+        "--max-spend-usd",
+        type=float,
+        default=None,
+        help=(
+            "hard ceiling for this measurement, counting what earlier processes of the same "
+            "run already spent (recovered from the trace). Checked between windows; the run "
+            "stops cleanly and writes its artifacts rather than overshooting a quote."
         ),
     )
     ap.add_argument(
@@ -405,6 +452,25 @@ def main() -> None:
     elif args.resume:
         log.info("--resume given but nothing usable on disk; starting from the beginning")
 
+    prior_spend = 0.0
+    over_budget = None
+    if args.max_spend_usd is not None and not args.dry_run:
+        prior_spend = spend_from_trace(trace_path, args.model, helpers)
+        if prior_spend:
+            log.info("earlier processes of this run spent $%.4f (from the trace)", prior_spend)
+
+        def over_budget() -> bool:
+            spent = prior_spend + helpers.cost_usd(
+                mem.budget.summary() if mem.budget else {}, args.model
+            )
+            return spent >= args.max_spend_usd
+
+        if over_budget():
+            raise SystemExit(
+                f"already at ${prior_spend:.4f} against a cap of ${args.max_spend_usd:.2f} — "
+                "nothing to do; raise the cap deliberately or stop here"
+            )
+
     utc_started = datetime.now(UTC).isoformat()
     t0 = time.perf_counter()
     sink = records_path.open("a" if kept else "w", encoding="utf-8")
@@ -425,6 +491,7 @@ def main() -> None:
             log=log,
             sink=sink,
             skip_before=len(kept),
+            over_budget=over_budget,
         )
         rows = kept + new_rows
         with (OUT / f"{args.tag}.memory.jsonl").open("w", encoding="utf-8") as fh:
@@ -486,6 +553,9 @@ def main() -> None:
             "utc_finished": datetime.now(UTC).isoformat(),
             "dry_run": bool(args.dry_run),
             "resumed_from_records": len(kept),
+            "max_spend_usd": args.max_spend_usd,
+            "prior_spend_usd": round(prior_spend, 6),
+            "complete": len(rows) == len(samples),
         },
         "overall": overall,
         "per_window": per_window,
@@ -503,9 +573,14 @@ def main() -> None:
             "reply_chars": fake.reply_chars,
         }
     else:
-        summary["cost_usd"] = helpers.cost_usd(
+        this_process = helpers.cost_usd(
             budget, args.model, embed_model=helpers.embed_model_name(embedder)
         )
+        # What the MEASUREMENT cost, not what this process cost. A resumed run
+        # that reported only its own share would understate every arm the host
+        # interrupted, and the interrupted ones are exactly the expensive ones.
+        summary["cost_usd"] = round(this_process + prior_spend, 6)
+        summary["cost_usd_this_process"] = this_process
         summary["stamp"]["embed_model_priced_as"] = helpers.embed_model_name(embedder)
 
     (OUT / f"{args.tag}.json").write_text(
