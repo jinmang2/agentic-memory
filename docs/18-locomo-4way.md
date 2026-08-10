@@ -59,14 +59,95 @@ Zep's row is the one recipe in this table that is a *published configuration* ra
 of knobs we chose: `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` supplies its three subgraphs, their BM25
 channels, a BFS channel for facts and entities, `rrf_k=1`, `dense_min_score=0.6` and a BGE
 cross-encoder reranker as one object. It is the paper's §4.1 operating point, and the run's stamp
-records `reranker: CrossEncoderReranker` with `degradations: []` — that reranker is the arm's whole
-identity, and a silent fall back to no reranking would have turned this into a different upstream
-recipe while still filing under this name.
+records `reranker: CrossEncoderReranker` with `degradations: []` — a silent fall back to no reranking
+would have turned this into a different upstream recipe while still filing under this name, which is
+why the stamp exists. What that reranker *buys* on this benchmark is measured below, and the answer
+is: nothing this benchmark can resolve.
 
 Item *count* at read time is 30 for Nemori, Mem0 and Zep, and 10 for A-Mem, so the spread in the
 last column is not a k difference — it is what a "memory" is in each system. Mem0's unit is an atomic
 fact averaging **46.0 characters** over all 5,427 of them (per-conversation means 43.2–48.9);
 Nemori's is a narrative episode.
+
+### Zep's read recipes: the operating point that names the arm is not separable from plain RRF
+
+Zep is the only system in this table whose read path is a *table of named configurations* rather than
+a single one — upstream ships six `SearchConfig` recipes, and every one of them reads the same graph.
+That makes the row above one of six possible Zep rows, and it makes the choice between them a
+finding rather than a setting. The 27,449-call ingest is paid once ($4.71); a second recipe costs an
+eval and nothing else, so five of the six were measured against **one identical store**. Everything
+that differs between these rows is read-side.
+
+| recipe | reranker | subgraphs served | BFS | J | F1 | BLEU-1 | prompt tok/q | eval $ | eval s |
+|---|---|---|---|---|---|---|---|---|---|
+| `cross_encoder` (§4.1) | BGE `bge-reranker-v2-m3` | facts + entities + communities | facts, entities | **42.73** | 28.80 | 24.48 | 1,090 | 0.380 | **8,528** |
+| `rrf` | none (`Noop`) | facts + entities + communities | — | 41.62 | 27.06 | 22.90 | 1,027 | 0.361 | 3,587 |
+| `mmr` (λ=1) | MMR | facts + entities + communities | — | 40.78 | 27.08 | 22.84 | 1,048 | 0.367 | ~3,603 † |
+| `edge_rrf` | none (`Noop`) | facts only | — | 34.87 | 22.49 | 19.46 | 442 | 0.187 | 3,254 |
+| `edge_episode_mentions` | episode-mention count | facts only | — | 33.05 | 20.83 | 17.94 | 440 | 0.186 | 3,266 |
+
+`prompt tok/q` is the whole generate prompt averaged over 1,986 questions, taken from each run's own
+budget accounting, so it runs a few tokens above the served-context figure in the read-path table.
+Costs are each run's `cost_usd` at $0.15/$0.60 per 1M in/out.
+
+The sixth recipe, `node_distance`, is **not run and not missing**, for two independent reasons: it
+reranks by graph distance from a per-query centroid, and nothing in a LoCoMo question supplies one —
+run here it would be an identity permutation followed by a truncation, a row that measures the
+harness rather than the recipe — and it serves `entities` alone, so it would not have been comparable
+to any row above even if it had ordered anything.
+
+Which of these gaps survive question-sampling noise, by paired percentile bootstrap over the
+per-question verdicts (n = 1,540, 10,000 resamples, seed 0 — the same procedure and the same code
+that judged the five-way ranking; it is imported, not restated):
+
+| pair | what it isolates | ΔJ | 95% CI | p | disagree | |
+|---|---|---|---|---|---|---|
+| `cross_encoder` − `rrf` | §4.1 point vs upstream default family | +1.10 pp | [−0.71, +2.86] | 0.241 | 199/1540 | **not separated** |
+| `rrf` − `mmr` | reranker alone, both BFS-less | +0.84 pp | [−0.78, +2.47] | 0.322 | 159/1540 | **not separated** |
+| `edge_rrf` − `edge_episode_mentions` | episode-mentions reranker alone | +1.82 pp | [+0.26, +3.38] | 0.024 | 150/1540 | **separated** |
+
+**The configuration that constitutes Zep's published identity is indistinguishable from doing
+nothing.** `cross_encoder` is the §4.1 operating point and the reason the row above carries a
+reranker stamp; `rrf` is the same three subgraphs fused and handed over in fusion order, reranked by
+no model at all. The gap between them is +1.10 J with an interval that covers zero, while the
+cross-encoder recipe spends **2.4× the eval wall clock** and a GPU to produce it. The third
+three-subgraph recipe lands inside the same band. On this benchmark the reranker choice is not what
+separates these rows from each other — and, given that all three sit 18.5–20.5 points under a flat
+note store, it is not what separates them from the rest of the table either.
+
+**The only separable effect in the sweep is negative, and it belongs to a mechanism the paper
+advertises.** `edge_episode_mentions` reranks facts by how many episodes mention them — the graph's
+own salience signal, the kind of thing a knowledge graph is supposed to buy you. Ordering by it
+makes retrieval **measurably worse** than not reordering at all (−1.82 pp, p = 0.024), and it is the
+one pair here where the evidence is strong enough to say so. Two readings are open and this campaign
+does not separate them: mention count is a popularity prior that outranks relevance, or LoCoMo's
+questions are disproportionately about things said once. Either way, the mechanism did not pay.
+
+Three conditions travel with this table:
+
+1. **`rrf` and `mmr` differ from `cross_encoder` in the reranker *and* the BFS channel**, because
+   upstream ties them: the RRF-family recipes carry no BFS anywhere, so there is no upstream recipe
+   that isolates the reranker at three subgraphs. The `cross_encoder` − `rrf` row is therefore not a
+   clean reranker ablation and must not be cited as one. The `rrf` − `mmr` row *is* clean — same
+   subgraphs, neither with BFS — and it is also the one with the smallest gap.
+2. **The two `edge_*` rows serve facts only** and are never compared against the three-subgraph rows;
+   the difference there would be the subgraph count (and 2.3× the context), not the recipe. They are
+   in the same table because they share an ingest, not because they share a serving surface.
+3. **The mentions arm implements the paper's direction, not the shipped one.** Our reranker sorts
+   mention count *descending*; upstream's sorts ascending and lands the most-mentioned fact last
+   (ledger B-4). So the −1.82 pp above is a measurement of the mechanism as described, and upstream's
+   release would be reranking against it.
+
+† `mmr`'s eval finished and then the run died writing artifacts — `np.linalg.norm` on a float32
+vector returns an `np.float32`, which the MMR reranker leaked into its score contract and
+`json.dumps` had no encoder for. The defect predates this sweep by three weeks and only fired here
+because no arm had ever selected MMR. Both the source and the artifact writer are fixed. Its records
+were rebuilt from its own LLM trace (`scripts/repro/reconstruct_from_trace.py`, no model calls), and
+the reconstruction refuses to write unless it reproduces the J / F1 / BLEU-1 the run printed before
+dying — it does, to the last decimal, and the bootstrap above recomputed 40.78 from those records a
+second time. Its cost and wall clock are summed from the trace rather than read off a summary that
+was never written, and its records carry **no structured `retrieval` capture**: the served text
+survives inside the generate prompt, but the id/score triples were never in the trace and are gone.
 
 ### Closing our link-expansion deviation: +1.36 J, and a different mechanism
 
@@ -198,7 +279,7 @@ a NOOP all leave a store that looks the same afterwards.
 | A-Mem | ADD 5,882 · LINK 5,866 · UPDATE 16,342 | 5,882 notes |
 | Nemori arm A | ADD 555 episodes + 1,926 semantic · MERGE 223 · INVALIDATE 223 | 2,704 |
 | Nemori arm B | ADD 763 episodes + 1,745 semantic · MERGE 22 · INVALIDATE 22 | 2,530 |
-| Zep | ADD 8,778 facts + 2,599 entities + 1,243 communities · UPDATE 4,373 facts + 895 entities · **INVALIDATE 1,293** | 11,377 (8,778 facts + 2,599 entities) |
+| Zep | ADD 8,778 facts + 2,599 entities + 1,243 communities · UPDATE 4,373 facts + 895 entities · **INVALIDATE 1,293** | 12,620 (8,778 facts + 2,599 entities + 1,243 communities) ‡ |
 | Mem0 | ADD 5,654 · **NOOP 26,209** · UPDATE 1,077 · DELETE 227 | 5,427 facts |
 
 `ADD:episodic` is excluded from the table above: all five arms log exactly 5,882 of them, one per
@@ -207,6 +288,17 @@ decided. Where the arms differ is whether those turns *survive* as retrievable i
 Mem0's stores keep them (they are the `episodic` entry in each store's per-type counts), while
 Nemori's keep none, its turns having been folded into episodes. Zep keeps its raw episodes too
 (verbatim-loss defense) but does not retrieve them: its recipe serves only the three subgraphs.
+
+‡ **This cell previously read 11,377 and was wrong.** Our snapshot writer's type roster had no
+`communities` entry, so the Zep ingest summary's `memory_capacity` recorded 17,259 items where the
+store held 18,502, and its `memory.jsonl` was short 1,243 rows — a whole retrieved type, absent from
+the artifact that is supposed to be the store's inventory, while the op log counted every one of its
+ADDs. The roster now includes it, and a test computes the types the configured arms retrieve and
+fails if the writer would drop any of them, so the gap cannot silently return; the sweep summaries
+above record all four types, while the ingest summary predates the fix and still carries the short
+count.
+Nothing else moved: no J, F1 or cost figure in this document reads `memory_capacity`, and the read
+path was serving communities all along — the snapshot simply failed to say so.
 
 Zep's 1,293 INVALIDATEs are the paper's flagship bi-temporal mechanism firing — an edge whose
 `valid_at` is strictly older than a contradicting new fact gets its `invalid_at` stamped rather than
@@ -300,7 +392,9 @@ subgraphs, which is a different recipe and a different run.
    **0.1% drop tolerance** (`max_drop_rate`, stamped), not the zero-drop bar the other four met: at
    ~2,745 structured calls per conversation a clean conversation is a 37% event, and the binary gate
    made a healthy run wipe and re-pay. All ten conversations came in at **zero drops** anyway. (c)
-   Its reranker is the only non-`Noop` one in the table, and it ran on GPU. (d) It is the only arm
+   Its reranker is the only non-`Noop` one in the table, and it ran on GPU — and the recipe sweep
+   above shows that reranker is worth +1.10 J over the same store served with no reranker at all,
+   with a 95% CI covering zero. The Zep row is not sensitive to the one choice that names it. (d) It is the only arm
    whose retrieved units are **abstractions rather than participant text** — see the accuracy
    discussion above.
 
@@ -367,6 +461,22 @@ Every number above resolves to a committed file under `results/repro/`:
 | Nemori arm A | `gpt-4o-mini_nemori_upstream_all_ingest_e3sA.json` | `gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json` |
 | Nemori arm B | `gpt-4o-mini_nemori_merge085_all_ingest_e3sB.json` | `gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json` |
 | Mem0 | `gpt-4o-mini_mem0_v0194_all_ingest_e3sM.json` | `gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json` |
+
+The Zep row's ingest summary is `gpt-4o-mini_zep_cross_encoder_all_ingest_e3sZ.json`, and the four
+other read recipes are evals against **that same ingest** — one store, five read protocols, the same
+relationship the four A-Mem rows have to theirs:
+
+| recipe | eval summary |
+|---|---|
+| `cross_encoder` (headline) | `gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.json` |
+| `rrf` | `gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.json` |
+| `mmr` | `..._e3sZmmr.reconstructed.json` (+ `..._e3sZmmr.records.jsonl`) — see the † note above |
+| `edge_rrf` | `gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.json` |
+| `edge_episode_mentions` | `gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.json` |
+
+The bootstrap that produced the three pair verdicts is `results/repro/zep_recipe_power.json`, written
+by `scripts/repro/zep_recipe_power.py`. It fails closed: each arm's headline J is recomputed from its
+own records file before any interval is reported, and a mismatch writes nothing.
 
 Each carries its per-conversation summaries, the full LLM I/O trace, the memory snapshot, the
 evolution log (`*.ops.jsonl`) and the per-question records with retrieved chunks. The `k10` segment

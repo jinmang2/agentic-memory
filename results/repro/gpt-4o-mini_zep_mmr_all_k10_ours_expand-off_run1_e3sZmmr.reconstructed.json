@@ -1,5 +1,5 @@
 {
-  "reconstructed_from_trace": "results/repro/gpt-4o-mini_zep_mmr_all_k10_ours_expand-off_run1_e3sZmmr.llm-trace.jsonl.rewriteon-20260808T173722",
+  "reconstructed_from_trace": "results/repro/gpt-4o-mini_zep_mmr_all_k10_ours_expand-off_run1_e3sZmmr.llm-trace.jsonl",
   "provenance": "records rebuilt from the run's LLM trace after the run measured successfully and died writing artifacts; no model calls were made. The structured per-question `retrieval` capture is NOT recoverable from a trace and is absent from these records.",
   "verified_against": {
     "j_score": 40.78,
