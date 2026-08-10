@@ -1935,3 +1935,32 @@ def test_stamp_records_the_read_path_through_the_runners_actual_call(tmp_path):
     # one it wanted.
     assert isinstance(stamp["degradations"], list)
     assert not [d for d in stamp["degradations"] if "reranker" in d]
+
+
+def test_finer_paired_imports_its_statistics_and_declines_to_interval_a_clustered_rate():
+    """Track 5's paired comparison must not grow a second confidence interval.
+
+    Two properties, both load-bearing. It IMPORTS `paired_delta_ci` from the
+    expansion lane rather than restating it — the rule the Zep sweep follows,
+    because two CI implementations in one repository is how two numbers come to
+    disagree about what "95%" means. And it refuses to put an interval on
+    `tag_accuracy`: upstream's published metric is a per-question rate over four
+    tags that share a filing excerpt, so the resampling unit is the question and
+    the statistic is a float, which the imported bool-only function cannot do.
+    Declining is the honest outcome; quietly bootstrapping over TAGS would treat
+    clustered observations as independent and report an interval too narrow.
+    """
+    repo = Path(__file__).resolve().parent.parent
+    src = (repo / "scripts" / "repro" / "finer_paired.py").read_text(encoding="utf-8")
+    assert "x1_power" in src and "paired_delta_ci" in src
+    # no home-grown resampler
+    assert "np.percentile" not in src, "the percentile bootstrap must be imported, not restated"
+    assert "rng.integers" not in src, "resampling belongs to x1_power"
+    assert "tag_accuracy_interval" in src
+    out = repo / "results" / "repro" / "finer_paired.json"
+    if out.exists():
+        data = json.loads(out.read_text(encoding="utf-8"))
+        assert data["tag_accuracy_interval"] is None
+        assert "sample_accuracy_paired" in data
+        # the two arms must have answered the same number of questions
+        assert data["anchors"]["base"]["n"] == data["anchors"]["online"]["n"]
