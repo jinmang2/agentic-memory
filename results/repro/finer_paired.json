@@ -1,259 +1,521 @@
 {
+  "reference": "base",
   "anchors": {
     "base": {
       "tag_accuracy": 48.24,
       "sample_accuracy": 16.1,
-      "n": 441
+      "n": 441,
+      "complete": true
     },
     "online": {
       "tag_accuracy": 46.71,
       "sample_accuracy": 15.42,
-      "n": 441
+      "n": 441,
+      "complete": true
+    },
+    "nodedup": {
+      "tag_accuracy": 48.98,
+      "sample_accuracy": 17.01,
+      "n": 441,
+      "complete": true
     }
   },
   "n_boot": 10000,
   "seed": 0,
-  "sample_accuracy_paired": {
-    "delta_pp": -0.6803,
-    "lo": -3.4014,
-    "hi": 2.0408,
-    "se_pp": 1.4144,
-    "p_boot": 0.687,
-    "excludes_zero": false,
-    "n": 441,
-    "n_disagree": 39,
-    "n_boot": 10000,
-    "alpha": 0.05,
-    "seed": 0
-  },
-  "tag_accuracy_point_delta_pp": -1.53,
-  "tag_accuracy_interval": null,
   "tag_accuracy_note": "Upstream's published metric is a per-question RATE over four clustered tags. The correct test is a cluster bootstrap over a float statistic; x1_power.paired_delta_ci takes booleans only, and this module does not write a second confidence interval. Point estimate and per-window signs only.",
-  "n_questions_with_tag_movement": 181,
-  "per_window": [
-    {
-      "window": 0,
-      "base_tag": 58.33,
-      "online_tag": 65.0,
-      "delta_tag": 6.67,
-      "playbook_chars": 7
+  "comparisons": {
+    "online": {
+      "n_compared": 441,
+      "prefix_of_base": false,
+      "base_tag_accuracy_on_prefix": 48.24,
+      "arm_tag_accuracy_on_prefix": 46.71,
+      "sample_accuracy_paired": {
+        "delta_pp": -0.6803,
+        "lo": -3.4014,
+        "hi": 2.0408,
+        "se_pp": 1.4144,
+        "p_boot": 0.687,
+        "excludes_zero": false,
+        "n": 441,
+        "n_disagree": 39,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0
+      },
+      "tag_accuracy_point_delta_pp": -1.53,
+      "tag_accuracy_interval": null,
+      "n_questions_with_tag_movement": 181,
+      "per_window": [
+        {
+          "window": 0,
+          "base_tag": 58.33,
+          "arm_tag": 65.0,
+          "delta_tag": 6.67,
+          "playbook_chars": 7
+        },
+        {
+          "window": 1,
+          "base_tag": 35.0,
+          "arm_tag": 38.33,
+          "delta_tag": 3.33,
+          "playbook_chars": 2429
+        },
+        {
+          "window": 2,
+          "base_tag": 50.0,
+          "arm_tag": 41.67,
+          "delta_tag": -8.33,
+          "playbook_chars": 5058
+        },
+        {
+          "window": 3,
+          "base_tag": 46.67,
+          "arm_tag": 46.67,
+          "delta_tag": 0.0,
+          "playbook_chars": 8313
+        },
+        {
+          "window": 4,
+          "base_tag": 46.67,
+          "arm_tag": 46.67,
+          "delta_tag": 0.0,
+          "playbook_chars": 11773
+        },
+        {
+          "window": 5,
+          "base_tag": 40.0,
+          "arm_tag": 36.67,
+          "delta_tag": -3.33,
+          "playbook_chars": 13396
+        },
+        {
+          "window": 6,
+          "base_tag": 61.67,
+          "arm_tag": 53.33,
+          "delta_tag": -8.34,
+          "playbook_chars": 16812
+        },
+        {
+          "window": 7,
+          "base_tag": 51.67,
+          "arm_tag": 50.0,
+          "delta_tag": -1.67,
+          "playbook_chars": 18703
+        },
+        {
+          "window": 8,
+          "base_tag": 40.0,
+          "arm_tag": 45.0,
+          "delta_tag": 5.0,
+          "playbook_chars": 19998
+        },
+        {
+          "window": 9,
+          "base_tag": 41.67,
+          "arm_tag": 36.67,
+          "delta_tag": -5.0,
+          "playbook_chars": 21649
+        },
+        {
+          "window": 10,
+          "base_tag": 48.33,
+          "arm_tag": 33.33,
+          "delta_tag": -15.0,
+          "playbook_chars": 24946
+        },
+        {
+          "window": 11,
+          "base_tag": 63.33,
+          "arm_tag": 58.33,
+          "delta_tag": -5.0,
+          "playbook_chars": 26893
+        },
+        {
+          "window": 12,
+          "base_tag": 41.67,
+          "arm_tag": 46.67,
+          "delta_tag": 5.0,
+          "playbook_chars": 28173
+        },
+        {
+          "window": 13,
+          "base_tag": 60.0,
+          "arm_tag": 58.33,
+          "delta_tag": -1.67,
+          "playbook_chars": 29181
+        },
+        {
+          "window": 14,
+          "base_tag": 43.33,
+          "arm_tag": 35.0,
+          "delta_tag": -8.33,
+          "playbook_chars": 30228
+        },
+        {
+          "window": 15,
+          "base_tag": 41.67,
+          "arm_tag": 43.33,
+          "delta_tag": 1.66,
+          "playbook_chars": 30825
+        },
+        {
+          "window": 16,
+          "base_tag": 51.67,
+          "arm_tag": 45.0,
+          "delta_tag": -6.67,
+          "playbook_chars": 32330
+        },
+        {
+          "window": 17,
+          "base_tag": 45.0,
+          "arm_tag": 50.0,
+          "delta_tag": 5.0,
+          "playbook_chars": 32330
+        },
+        {
+          "window": 18,
+          "base_tag": 53.33,
+          "arm_tag": 46.67,
+          "delta_tag": -6.66,
+          "playbook_chars": 32930
+        },
+        {
+          "window": 19,
+          "base_tag": 56.67,
+          "arm_tag": 48.33,
+          "delta_tag": -8.34,
+          "playbook_chars": 33570
+        },
+        {
+          "window": 20,
+          "base_tag": 43.33,
+          "arm_tag": 31.67,
+          "delta_tag": -11.66,
+          "playbook_chars": 35542
+        },
+        {
+          "window": 21,
+          "base_tag": 55.0,
+          "arm_tag": 55.0,
+          "delta_tag": 0.0,
+          "playbook_chars": 36587
+        },
+        {
+          "window": 22,
+          "base_tag": 65.0,
+          "arm_tag": 60.0,
+          "delta_tag": -5.0,
+          "playbook_chars": 37677
+        },
+        {
+          "window": 23,
+          "base_tag": 38.33,
+          "arm_tag": 43.33,
+          "delta_tag": 5.0,
+          "playbook_chars": 38754
+        },
+        {
+          "window": 24,
+          "base_tag": 43.33,
+          "arm_tag": 41.67,
+          "delta_tag": -1.66,
+          "playbook_chars": 39437
+        },
+        {
+          "window": 25,
+          "base_tag": 45.0,
+          "arm_tag": 53.33,
+          "delta_tag": 8.33,
+          "playbook_chars": 40986
+        },
+        {
+          "window": 26,
+          "base_tag": 36.67,
+          "arm_tag": 36.67,
+          "delta_tag": 0.0,
+          "playbook_chars": 40986
+        },
+        {
+          "window": 27,
+          "base_tag": 40.0,
+          "arm_tag": 48.33,
+          "delta_tag": 8.33,
+          "playbook_chars": 42685
+        },
+        {
+          "window": 28,
+          "base_tag": 50.0,
+          "arm_tag": 55.0,
+          "delta_tag": 5.0,
+          "playbook_chars": 43371
+        },
+        {
+          "window": 29,
+          "base_tag": 62.5,
+          "arm_tag": 58.33,
+          "delta_tag": -4.17,
+          "playbook_chars": 43699
+        }
+      ],
+      "window_sign": {
+        "arm_ahead": 10,
+        "behind": 16,
+        "tied": 4
+      },
+      "mean_delta_tag_first_half": -2.44,
+      "mean_delta_tag_second_half": -0.72
     },
-    {
-      "window": 1,
-      "base_tag": 35.0,
-      "online_tag": 38.33,
-      "delta_tag": 3.33,
-      "playbook_chars": 2429
-    },
-    {
-      "window": 2,
-      "base_tag": 50.0,
-      "online_tag": 41.67,
-      "delta_tag": -8.33,
-      "playbook_chars": 5058
-    },
-    {
-      "window": 3,
-      "base_tag": 46.67,
-      "online_tag": 46.67,
-      "delta_tag": 0.0,
-      "playbook_chars": 8313
-    },
-    {
-      "window": 4,
-      "base_tag": 46.67,
-      "online_tag": 46.67,
-      "delta_tag": 0.0,
-      "playbook_chars": 11773
-    },
-    {
-      "window": 5,
-      "base_tag": 40.0,
-      "online_tag": 36.67,
-      "delta_tag": -3.33,
-      "playbook_chars": 13396
-    },
-    {
-      "window": 6,
-      "base_tag": 61.67,
-      "online_tag": 53.33,
-      "delta_tag": -8.34,
-      "playbook_chars": 16812
-    },
-    {
-      "window": 7,
-      "base_tag": 51.67,
-      "online_tag": 50.0,
-      "delta_tag": -1.67,
-      "playbook_chars": 18703
-    },
-    {
-      "window": 8,
-      "base_tag": 40.0,
-      "online_tag": 45.0,
-      "delta_tag": 5.0,
-      "playbook_chars": 19998
-    },
-    {
-      "window": 9,
-      "base_tag": 41.67,
-      "online_tag": 36.67,
-      "delta_tag": -5.0,
-      "playbook_chars": 21649
-    },
-    {
-      "window": 10,
-      "base_tag": 48.33,
-      "online_tag": 33.33,
-      "delta_tag": -15.0,
-      "playbook_chars": 24946
-    },
-    {
-      "window": 11,
-      "base_tag": 63.33,
-      "online_tag": 58.33,
-      "delta_tag": -5.0,
-      "playbook_chars": 26893
-    },
-    {
-      "window": 12,
-      "base_tag": 41.67,
-      "online_tag": 46.67,
-      "delta_tag": 5.0,
-      "playbook_chars": 28173
-    },
-    {
-      "window": 13,
-      "base_tag": 60.0,
-      "online_tag": 58.33,
-      "delta_tag": -1.67,
-      "playbook_chars": 29181
-    },
-    {
-      "window": 14,
-      "base_tag": 43.33,
-      "online_tag": 35.0,
-      "delta_tag": -8.33,
-      "playbook_chars": 30228
-    },
-    {
-      "window": 15,
-      "base_tag": 41.67,
-      "online_tag": 43.33,
-      "delta_tag": 1.66,
-      "playbook_chars": 30825
-    },
-    {
-      "window": 16,
-      "base_tag": 51.67,
-      "online_tag": 45.0,
-      "delta_tag": -6.67,
-      "playbook_chars": 32330
-    },
-    {
-      "window": 17,
-      "base_tag": 45.0,
-      "online_tag": 50.0,
-      "delta_tag": 5.0,
-      "playbook_chars": 32330
-    },
-    {
-      "window": 18,
-      "base_tag": 53.33,
-      "online_tag": 46.67,
-      "delta_tag": -6.66,
-      "playbook_chars": 32930
-    },
-    {
-      "window": 19,
-      "base_tag": 56.67,
-      "online_tag": 48.33,
-      "delta_tag": -8.34,
-      "playbook_chars": 33570
-    },
-    {
-      "window": 20,
-      "base_tag": 43.33,
-      "online_tag": 31.67,
-      "delta_tag": -11.66,
-      "playbook_chars": 35542
-    },
-    {
-      "window": 21,
-      "base_tag": 55.0,
-      "online_tag": 55.0,
-      "delta_tag": 0.0,
-      "playbook_chars": 36587
-    },
-    {
-      "window": 22,
-      "base_tag": 65.0,
-      "online_tag": 60.0,
-      "delta_tag": -5.0,
-      "playbook_chars": 37677
-    },
-    {
-      "window": 23,
-      "base_tag": 38.33,
-      "online_tag": 43.33,
-      "delta_tag": 5.0,
-      "playbook_chars": 38754
-    },
-    {
-      "window": 24,
-      "base_tag": 43.33,
-      "online_tag": 41.67,
-      "delta_tag": -1.66,
-      "playbook_chars": 39437
-    },
-    {
-      "window": 25,
-      "base_tag": 45.0,
-      "online_tag": 53.33,
-      "delta_tag": 8.33,
-      "playbook_chars": 40986
-    },
-    {
-      "window": 26,
-      "base_tag": 36.67,
-      "online_tag": 36.67,
-      "delta_tag": 0.0,
-      "playbook_chars": 40986
-    },
-    {
-      "window": 27,
-      "base_tag": 40.0,
-      "online_tag": 48.33,
-      "delta_tag": 8.33,
-      "playbook_chars": 42685
-    },
-    {
-      "window": 28,
-      "base_tag": 50.0,
-      "online_tag": 55.0,
-      "delta_tag": 5.0,
-      "playbook_chars": 43371
-    },
-    {
-      "window": 29,
-      "base_tag": 62.5,
-      "online_tag": 58.33,
-      "delta_tag": -4.17,
-      "playbook_chars": 43699
+    "nodedup": {
+      "n_compared": 441,
+      "prefix_of_base": false,
+      "base_tag_accuracy_on_prefix": 48.24,
+      "arm_tag_accuracy_on_prefix": 48.98,
+      "sample_accuracy_paired": {
+        "delta_pp": 0.907,
+        "lo": -2.0408,
+        "hi": 3.8605,
+        "se_pp": 1.5493,
+        "p_boot": 0.6074,
+        "excludes_zero": false,
+        "n": 441,
+        "n_disagree": 48,
+        "n_boot": 10000,
+        "alpha": 0.05,
+        "seed": 0
+      },
+      "tag_accuracy_point_delta_pp": 0.74,
+      "tag_accuracy_interval": null,
+      "n_questions_with_tag_movement": 195,
+      "per_window": [
+        {
+          "window": 0,
+          "base_tag": 58.33,
+          "arm_tag": 65.0,
+          "delta_tag": 6.67,
+          "playbook_chars": 7
+        },
+        {
+          "window": 1,
+          "base_tag": 35.0,
+          "arm_tag": 38.33,
+          "delta_tag": 3.33,
+          "playbook_chars": 3761
+        },
+        {
+          "window": 2,
+          "base_tag": 50.0,
+          "arm_tag": 43.33,
+          "delta_tag": -6.67,
+          "playbook_chars": 8512
+        },
+        {
+          "window": 3,
+          "base_tag": 46.67,
+          "arm_tag": 48.33,
+          "delta_tag": 1.66,
+          "playbook_chars": 12733
+        },
+        {
+          "window": 4,
+          "base_tag": 46.67,
+          "arm_tag": 43.33,
+          "delta_tag": -3.34,
+          "playbook_chars": 18134
+        },
+        {
+          "window": 5,
+          "base_tag": 40.0,
+          "arm_tag": 56.67,
+          "delta_tag": 16.67,
+          "playbook_chars": 28828
+        },
+        {
+          "window": 6,
+          "base_tag": 61.67,
+          "arm_tag": 66.67,
+          "delta_tag": 5.0,
+          "playbook_chars": 42573
+        },
+        {
+          "window": 7,
+          "base_tag": 51.67,
+          "arm_tag": 58.33,
+          "delta_tag": 6.66,
+          "playbook_chars": 56111
+        },
+        {
+          "window": 8,
+          "base_tag": 40.0,
+          "arm_tag": 50.0,
+          "delta_tag": 10.0,
+          "playbook_chars": 71155
+        },
+        {
+          "window": 9,
+          "base_tag": 41.67,
+          "arm_tag": 35.0,
+          "delta_tag": -6.67,
+          "playbook_chars": 84834
+        },
+        {
+          "window": 10,
+          "base_tag": 48.33,
+          "arm_tag": 48.33,
+          "delta_tag": 0.0,
+          "playbook_chars": 100616
+        },
+        {
+          "window": 11,
+          "base_tag": 63.33,
+          "arm_tag": 58.33,
+          "delta_tag": -5.0,
+          "playbook_chars": 115285
+        },
+        {
+          "window": 12,
+          "base_tag": 41.67,
+          "arm_tag": 38.33,
+          "delta_tag": -3.34,
+          "playbook_chars": 135177
+        },
+        {
+          "window": 13,
+          "base_tag": 60.0,
+          "arm_tag": 56.67,
+          "delta_tag": -3.33,
+          "playbook_chars": 152862
+        },
+        {
+          "window": 14,
+          "base_tag": 43.33,
+          "arm_tag": 45.0,
+          "delta_tag": 1.67,
+          "playbook_chars": 168017
+        },
+        {
+          "window": 15,
+          "base_tag": 41.67,
+          "arm_tag": 40.0,
+          "delta_tag": -1.67,
+          "playbook_chars": 189266
+        },
+        {
+          "window": 16,
+          "base_tag": 51.67,
+          "arm_tag": 53.33,
+          "delta_tag": 1.66,
+          "playbook_chars": 211458
+        },
+        {
+          "window": 17,
+          "base_tag": 45.0,
+          "arm_tag": 55.0,
+          "delta_tag": 10.0,
+          "playbook_chars": 230518
+        },
+        {
+          "window": 18,
+          "base_tag": 53.33,
+          "arm_tag": 48.33,
+          "delta_tag": -5.0,
+          "playbook_chars": 250020
+        },
+        {
+          "window": 19,
+          "base_tag": 56.67,
+          "arm_tag": 45.0,
+          "delta_tag": -11.67,
+          "playbook_chars": 269544
+        },
+        {
+          "window": 20,
+          "base_tag": 43.33,
+          "arm_tag": 46.67,
+          "delta_tag": 3.34,
+          "playbook_chars": 292716
+        },
+        {
+          "window": 21,
+          "base_tag": 55.0,
+          "arm_tag": 63.33,
+          "delta_tag": 8.33,
+          "playbook_chars": 323922
+        },
+        {
+          "window": 22,
+          "base_tag": 65.0,
+          "arm_tag": 63.33,
+          "delta_tag": -1.67,
+          "playbook_chars": 354498
+        },
+        {
+          "window": 23,
+          "base_tag": 38.33,
+          "arm_tag": 45.0,
+          "delta_tag": 6.67,
+          "playbook_chars": 389026
+        },
+        {
+          "window": 24,
+          "base_tag": 43.33,
+          "arm_tag": 41.67,
+          "delta_tag": -1.66,
+          "playbook_chars": 427052
+        },
+        {
+          "window": 25,
+          "base_tag": 45.0,
+          "arm_tag": 45.0,
+          "delta_tag": 0.0,
+          "playbook_chars": 467505
+        },
+        {
+          "window": 26,
+          "base_tag": 36.67,
+          "arm_tag": 28.33,
+          "delta_tag": -8.34,
+          "playbook_chars": 508145
+        },
+        {
+          "window": 27,
+          "base_tag": 40.0,
+          "arm_tag": 43.33,
+          "delta_tag": 3.33,
+          "playbook_chars": 548975
+        },
+        {
+          "window": 28,
+          "base_tag": 50.0,
+          "arm_tag": 48.33,
+          "delta_tag": -1.67,
+          "playbook_chars": 595734
+        },
+        {
+          "window": 29,
+          "base_tag": 62.5,
+          "arm_tag": 54.17,
+          "delta_tag": -8.33,
+          "playbook_chars": 639054
+        }
+      ],
+      "window_sign": {
+        "arm_ahead": 14,
+        "behind": 14,
+        "tied": 2
+      },
+      "mean_delta_tag_first_half": 1.55,
+      "mean_delta_tag_second_half": -0.45
     }
-  ],
-  "window_sign": {
-    "online_ahead": 10,
-    "behind": 16
   },
-  "mean_delta_tag_first_half": -2.44,
-  "mean_delta_tag_second_half": -0.72,
   "cost_usd": {
     "base": 0.192314,
-    "online": 1.461001
+    "online": 1.461001,
+    "nodedup": 8.633176
   },
   "llm_calls": {
     "base": 441,
-    "online": 3775
-  }
+    "online": 1323,
+    "nodedup": 1325
+  },
+  "llm_calls_note": "Generator + reflector/curator calls counted off each arm's trace, which is the only per-arm record that spans every process of a run. The summaries' `llm_budget` is per-process and undercounts a resumed arm; it also includes embedder calls, which the trace does not. Calls from attempts the host killed are included \u2014 they were paid for."
 }

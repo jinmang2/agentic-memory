@@ -9,7 +9,9 @@ can put a number against, and this document is that number.
 **What this is and is not.** It is not a reproduction of 69.1 → 81.9. That figure was produced by a
 much stronger generator than the one priced here, through a training loop that spends two to three
 times the calls ours does. It is a controlled measurement of one question: *on the same 441 questions,
-does growing an ACE playbook alongside beat not growing one?*
+does growing an ACE playbook alongside beat not growing one?* — asked under both dedup settings, ours
+and upstream's, because the answer came back null and a null is only worth reading once the knob that
+could have caused it has been turned.
 
 ## Protocol
 
@@ -20,32 +22,52 @@ does growing an ACE playbook alongside beat not growing one?*
 | Reflector / Curator | `gpt-4o-mini`, temperature 0, `max_tokens` 4096 (one role — see condition 4) |
 | Embedder | `text-embedding-3-small` (curator dedup + task episodes) |
 | Adaptation | upstream's **online** mode: 30 windows of 15, each answered with the playbook as it stands and only then trained on (`ace.py:939-997`) |
+| Curator dedup | two arms: **0.90 cosine** (ours, deviation D5) and **off** (upstream's shipped default) |
 | Seeds | **one** |
 
 ## Results
 
-| arm | tag accuracy | sample accuracy | LLM calls | cost | wall clock |
+| arm | tag accuracy | sample accuracy | LLM calls | cost | playbook |
 |---|---|---|---|---|---|
-| **base** — empty playbook, no learning | **48.24** | 16.10 | 441 | $0.192 | 27 min |
-| **online** — playbook grown over all 441 | 46.71 | 15.42 | **3,775** | $1.461 | 80 min |
+| **base** — empty playbook, no learning | **48.24** | 16.10 | 441 | $0.192 | — |
+| **online** — grown, our dedup at 0.90 | 46.71 | 15.42 | 1,323 | $1.461 | 140 bullets / 43.7 K chars |
+| **nodedup** — grown, dedup off (upstream's default) | **48.98** | **17.01** | 1,325 | **$8.633** | 2,165 bullets / 639 K chars |
 
 Paired over the same questions in the same order (bootstrap imported from `scripts/ext/x1_power.py`,
 10,000 resamples, seed 0):
 
 ```
-sample_accuracy   online - base   Δ = -0.68 pp   95% CI [-3.40, +2.04]   p = 0.687   NOT separated
-tag_accuracy      online - base   Δ = -1.53 pp   (point estimate — see "one interval is missing")
-per-window sign   online ahead in 10, behind in 16, tied in 4 of 30
+sample_accuracy   online  - base     Δ = -0.68 pp   95% CI [-3.40, +2.04]   p = 0.687   NOT separated
+sample_accuracy   nodedup - base     Δ = +0.91 pp   95% CI [-2.04, +3.86]   p = 0.607   NOT separated
+sample_accuracy   nodedup - online   Δ = +1.59 pp   95% CI [-1.59, +4.76]   p = 0.337   NOT separated
+tag_accuracy      online  - base     Δ = -1.53 pp   (point estimates — see "one interval is missing")
+tag_accuracy      nodedup - base     Δ = +0.74 pp
+per-window sign   online ahead in 10 of 30; nodedup ahead in 14, behind in 14, tied in 2
 ```
 
-**Growing a playbook over 441 samples produced no measurable improvement, at 7.6× the cost.** The
-point estimates sit on the wrong side of zero on both metrics and in 16 of 30 windows, but the
-interval covers zero, so the claim this supports is *no measurable effect* — **not** that the playbook
-hurts.
+**Growing a playbook over 441 samples produced no measurable improvement — under our dedup at 7.6×
+the cost, and under upstream's default at 45× the cost.** The point estimates sit on either side of
+zero depending on the arm and every interval covers it, so the claim this supports is *no measurable
+effect*, **not** that the playbook helps or hurts.
 
-The playbook was not empty and not junk. 441 curator calls produced **140 bullets** that survived
-0.90 dedup, **43,699 characters as rendered into the prompt** (35,920 of that bullet text, the rest
-the `[id] helpful=N harmful=M ::` prefixes), injected in full into every generator call thereafter.
+The third arm exists because the second one could not answer for itself. A null under our
+always-on dedup has two readings — the adaptation does not transfer, or our gate threw the
+adaptation away — and only running upstream's shipped default separates them. It does: with the
+gate off, 2,165 bullets accumulate instead of 140, and the result is still not separable from not
+learning at all. **Our dedup is not the reason for the null.**
+
+**The price of the third arm is the finding beside it.** Turning the gate off multiplied cost by 5.9
+against the online arm while the LLM call count moved by 2 calls — 1,323 to 1,325. Nothing about the
+*number* of calls changed; the playbook is injected whole into every generator and curator call, so
+the cost of adaptation is carried in tokens, not in requests. By the last window each generator call
+was carrying ~95 K tokens of playbook — 74% of `gpt-4o-mini`'s context window — around a task whose
+own prompt averages 1,951 tokens in the base arm. Any cost model for this mechanism that counts
+calls will be wrong by more than an order of magnitude.
+
+The playbook was not empty and not junk. In the online arm 441 curator calls proposed 416 bullets, of
+which **140 survived** 0.90 dedup — **43,699 characters as rendered into the prompt** (35,920 of that
+bullet text, the rest the `[id] helpful=N harmful=M ::` prefixes), injected in full into every
+generator call thereafter.
 Its content was specific: *"Differentiate between `AmortizationOfFinancingCosts` and
 `AmortizationOfIntangibleAssets`"*, *"Clarify the distinction between `DeferredFinanceCostsGross` and
 `DeferredFinanceCostsNet`"*. It simply did not convert into answers.
@@ -95,14 +117,57 @@ mechanism is not inert; the failure is upstream of it.
    instructed to add only what is *missing* and to avoid redundancy — which actively suppresses
    re-stating a rule for a confusion that keeps coming back. There is no frequency signal anywhere in
    the pipeline. This is upstream's design, reproduced faithfully.
-2. **Our dedup discarded 276 of 441 curated bullets** as near-duplicates at cosine 0.90. The curator
-   *was* re-proposing overlapping knowledge and our gate dropped it. **This is our deviation, not
-   upstream's** — upstream ships its analyzer off by default (ledger B-6), so the same run there
-   would have kept all 441. Whether the repetition our gate treated as redundancy was in fact
-   reinforcement is untested, and it is now the second open confound in this table.
+2. **Our dedup discarded 276 of the 416 bullets the curator proposed** as near-duplicates at cosine
+   0.90. The curator *was* re-proposing overlapping knowledge and our gate dropped it. **This is our
+   deviation, not upstream's** — upstream ships its analyzer off by default (ledger B-6). Whether
+   the repetition our gate treated as redundancy was in fact reinforcement was the second open
+   confound here, and the `nodedup` arm has now closed it: see below.
 
 The playbook's own late-run statistics point the same way: 139 bullets, **96 of them never cited by
 the generator**, 18 marked high-performing, 0 problematic.
+
+### What the gate was hiding: the curator stops naming things
+
+With the gate off the playbook reaches **2,165 bullets and 639 K rendered characters**, fifteen times
+the online arm's. Coverage of the recurring confusions does not rise with it — **it falls to zero**.
+Of the top 50 confusions, the 140-bullet playbook names both tags of 7; the 2,165-bullet playbook
+names both tags of **none**, and names 9 of the 115 gold tags ever missed against the small
+playbook's 24.
+
+The reason is in what the bullets say. Measured two ways over the bullet text
+(`scripts/repro/finer_error_structure.py`, no model calls) — a gold tag from the split's own
+vocabulary appearing verbatim, and the weaker test of any CamelCase identifier at all:
+
+| | online | nodedup |
+|---|---|---|
+| bullets carrying an identifier | **17.1%** | **4.0%** |
+| distinct gold tags named | 30 | 12 |
+
+Two mechanisms could produce that, and they are separable because the trace holds what the curator
+*proposed* while the store holds what *survived*:
+
+- **The curator drifted.** Specificity of proposed bullets, in fifths of each run:
+  online `4.8 / 16.9 / 7.2 / 12.0 / 4.8`, nodedup `2.3 / 15.9 / 1.8 / 0.0 / 0.0`. **In the last two
+  fifths of the nodedup run — roughly 866 bullets — not one names a US-GAAP element.** As the
+  playbook in its context grows, the curator moves from *"Differentiate between
+  `AmortizationOfFinancingCosts` and `AmortizationOfIntangibleAssets`"* to *"Consider the potential
+  impact of external economic factors on the financial entities being reported"*. The prompt asks it
+  to add what is missing and avoid redundancy; against 2,000 existing bullets, every specific rule
+  looks already covered, and only abstraction is left to write. That reading is a hypothesis; the
+  curve itself is a measurement.
+- **And the gate selected.** Online's proposals carry an identifier 9.4% of the time and its
+  survivors 17.1% — **our dedup roughly doubled the specificity density** of what it kept, because
+  generic advice is what clusters in embedding space. It bought specificity it could not convert
+  into accuracy.
+
+So both readings were true, and neither rescues the mechanism: the gate did throw away bullets, and
+running without it produced *more text carrying less knowledge*.
+
+**Where the head confusions went is the counterweight.** The nodedup arm's errors on the top
+confusions fell sharply — 34→12, 33→23, 28→18, 20→5, 15→2 — but its total wrong slots barely moved:
+**913 → 900**, while those top eight pairs alone fell **183 → 95**. Roughly 75 errors left the head
+and reappeared in the tail. A method can reshape the error distribution and buy nothing on the
+metric, and this is what that looks like from the inside.
 
 ## Why the base arm is half the finding
 
@@ -121,8 +186,12 @@ Our base arm never learns anything, and its own window curve looks like this:
 **A 30-point spread — 35.0 to 65.0 — with no mechanism in it at all.** Any reading of adaptation
 from a window curve of this shape is reading difficulty, and a 12.8-point claim taken across such a
 curve is inside its noise. That is a statement about the *measurement protocol*, and it applies to
-ACE's own 69.1 → 81.9 as much as to us. The paired comparison above does not have the problem: the
-two arms answer the same 441 questions, so the difference vector cancels difficulty exactly.
+ACE's own 69.1 → 81.9 as much as to us. The paired comparisons above do not have the problem: all
+three arms answer the same 441 questions in the same order, so the difference vector cancels
+difficulty exactly. The nodedup arm makes the point twice over: across the last five windows it runs
+45.0 / 28.33 / 43.33 / 48.33 / 54.17 while base, on those same questions, runs
+45.0 / 36.67 / 40.0 / 50.0 / 62.5 — a swing of about 26 points in each, one arm carrying a 639 K-char
+playbook and the other carrying nothing.
 
 This is also the reason the early windows are not evidence of anything. The three pre-flight smokes
 all showed accuracy falling from window 0 to window 1 (61.7→35.0, 61.7→36.7, 55.0→41.7), which reads
@@ -175,14 +244,13 @@ interval narrower than the truth. Neither is worth an interval, so `finer_paired
    the generator *again* inside its training step; we reflect on the attempt already scored.
 4. **Reflector and curator share one role**, so they cannot take different models or temperatures;
    upstream allows distinct ones (`ace.py:36-63`).
-5. **Dedup is always on at 0.90 and drops the incoming bullet.** Upstream's analyzer is opt-in, off in
-   `ace.py`, off in this harness's flag, and off again by silent fallback when its optional
-   dependencies are missing, and when on it LLM-merges groups rather than dropping (ledger B-6). Ours
-   is a third behavior, not upstream's switched on. **This is no longer only a fidelity note — it is
-   a candidate explanation for the null**: the gate discarded 276 of 441 curated bullets, and the
-   errors it left uncovered are the recurring ones. An `online_nodedup` arm at upstream's default
-   would settle it, and it is cheaper to run than the D4 arm because it needs no code change beyond a
-   threshold.
+5. **Dedup is always on at 0.90 in the online arm and drops the incoming bullet.** Upstream's
+   analyzer is opt-in, off in `ace.py`, off in this harness's flag, and off again by silent fallback
+   when its optional dependencies are missing, and when on it LLM-merges groups rather than dropping
+   (ledger B-6). Ours is a third behavior, not upstream's switched on. **This was the leading
+   candidate explanation for the null and is now measured, not assumed**: the `nodedup` arm runs at
+   upstream's shipped default over the same 441 samples and is still not separable from not learning
+   (Δ +0.91 pp, CI [−2.04, +3.86]). What the gate changed was cost and specificity, not the verdict.
 6. **Single seed**, and no replication of the sign.
 7. **Coverage is measured by what the playbook says, not by what it means.** A confusion counts as
    covered when both of its tags appear in the bullet text — an upper bound, since no check was made
@@ -218,14 +286,35 @@ because the scorer lowercases both sides, but it is noise in the labels rather t
 |---|---|
 | base | `results/repro/gpt-4o-mini_ace_finer_base.json` |
 | online | `results/repro/gpt-4o-mini_ace_finer_online.json` |
-| paired analysis | `results/repro/finer_paired.json` (`scripts/repro/finer_paired.py`) |
+| nodedup | `results/repro/gpt-4o-mini_ace_finer_nodedup.json` |
+| paired analysis | `results/repro/finer_paired.json` (`scripts/repro/finer_paired.py`, `--reference` selects which arm the others are paired against) |
 | error structure | `results/repro/finer_error_structure.json` (`scripts/repro/finer_error_structure.py`) |
 | pre-flight smokes | `..._ace_finer_smoke30{,b,c}.json` — the runs that caught the prompt defect below |
 | runner | `scripts/repro/exp_ace_finer.py`; adapter `src/agmem/bench/finer.py` |
 
 Each carries per-window summaries, the full LLM I/O trace, the memory snapshot, the evolution log and
-the per-question records. Both arms are stamped at commit `6783c24`, and all 882 reflector/curator
-calls of the online arm are verifiable in its trace as having used the post-fix prompts.
+the per-question records. The base and online arms are stamped at commit `6783c24` and the nodedup
+arm at `7d29f2b`; all 882 reflector/curator calls of the online arm are verifiable in its trace as
+having used the post-fix prompts.
+
+**Three things about the nodedup artifact that a reader would otherwise get wrong.** It was bought
+across four processes — the host rebooted twice and a spend cap stopped it once — and that shows up
+in the files:
+
+- **Its summary's `llm_budget` counts only the last process** (164 calls), because a resumed run's
+  budget object starts at zero, while `cost_usd` in the same file **is** the measurement total
+  ($8.633, prior spend recovered from the trace). Two fields of one artifact, two scopes. Call counts
+  in the table above are therefore taken from the traces, which append across every process: 441 /
+  1,323 / 1,325 generator-plus-curator calls. Embedding calls are not in the trace and not in that
+  count. The same per-process/cumulative split applies to `seq` in the evolution log.
+- **The store holds 440 episodes for 441 scored samples.** The records file is complete and its
+  headline recomputes from it exactly (the paired script refuses to run otherwise), so the
+  measurement is unaffected; the likeliest cause is one buffered store write lost to a host reboot.
+  Disclosed rather than reconciled, because reconciling it means rewriting a paid artifact.
+- **The spend cap overshot by 3.8%** — $8.31 against a $8.00 ceiling before the final resume — because
+  it is checked between windows, never inside one. A window already answered but not yet adapted on
+  cannot be written without leaving the transcript ahead of the store, so the cap's guarantee is "at
+  most one window past the line", not "never past it".
 
 **The fix that commit carries is worth reading before trusting any earlier ACE artifact.** Our
 reflector prompt said "critique this task execution" where upstream's says the subject is *a model's*
