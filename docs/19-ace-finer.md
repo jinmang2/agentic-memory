@@ -131,8 +131,7 @@ the generator**, 18 marked high-performing, 0 problematic.
 With the gate off the playbook reaches **2,165 bullets and 639 K rendered characters**, fifteen times
 the online arm's. Coverage of the recurring confusions does not rise with it — **it falls to zero**.
 Of the top 50 confusions, the 140-bullet playbook names both tags of 7; the 2,165-bullet playbook
-names both tags of **none**, and names 9 of the 115 gold tags ever missed against the small
-playbook's 24.
+names both tags of **none**.
 
 The reason is in what the bullets say. Measured two ways over the bullet text
 (`scripts/repro/finer_error_structure.py`, no model calls) — a gold tag from the split's own
@@ -140,8 +139,9 @@ vocabulary appearing verbatim, and the weaker test of any CamelCase identifier a
 
 | | online | nodedup |
 |---|---|---|
-| bullets carrying an identifier | **17.1%** | **4.0%** |
-| distinct gold tags named | 30 | 12 |
+| bullets carrying a CamelCase identifier | **17.1%** | **4.0%** |
+| distinct gold tags named, of the split's 137 | 30 | 12 |
+| of the 115 gold tags the model ever got wrong | 24 | 9 |
 
 Two mechanisms could produce that, and they are separable because the trace holds what the curator
 *proposed* while the store holds what *survived*:
