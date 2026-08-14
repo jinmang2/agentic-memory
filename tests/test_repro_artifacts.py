@@ -1949,6 +1949,11 @@ def test_finer_paired_imports_its_statistics_and_declines_to_interval_a_clustere
     the statistic is a float, which the imported bool-only function cannot do.
     Declining is the honest outcome; quietly bootstrapping over TAGS would treat
     clustered observations as independent and report an interval too narrow.
+
+    A third property once the module grew a third arm: an arm stopped by its
+    spend cap is shorter than the reference, and every comparison must state the
+    n it actually paired. Comparing an arm's 441 answers against base's first
+    375 would be an unpaired difference wearing a paired interval.
     """
     repo = Path(__file__).resolve().parent.parent
     src = (repo / "scripts" / "repro" / "finer_paired.py").read_text(encoding="utf-8")
@@ -1960,10 +1965,103 @@ def test_finer_paired_imports_its_statistics_and_declines_to_interval_a_clustere
     out = repo / "results" / "repro" / "finer_paired.json"
     if out.exists():
         data = json.loads(out.read_text(encoding="utf-8"))
-        assert data["tag_accuracy_interval"] is None
-        assert "sample_accuracy_paired" in data
-        # the two arms must have answered the same number of questions
-        assert data["anchors"]["base"]["n"] == data["anchors"]["online"]["n"]
+        ref = data["reference"]
+        assert data["comparisons"], "a paired file with no comparison in it is not a comparison"
+        for name, cmp in data["comparisons"].items():
+            assert cmp["tag_accuracy_interval"] is None
+            assert "sample_accuracy_paired" in cmp
+            # the pairing: n_compared is the prefix both arms answered, and the
+            # bootstrap ran over exactly that many questions
+            expected = min(data["anchors"][ref]["n"], data["anchors"][name]["n"])
+            assert cmp["n_compared"] == expected
+            assert cmp["sample_accuracy_paired"]["n"] == expected
+
+
+def test_finer_call_counts_come_from_the_trace_not_the_resumed_summary(tmp_path, monkeypatch):
+    """A resumed arm's summary counts one process; the trace counts the run.
+
+    `mem.budget` is constructed per process, so the nodedup arm — bought across
+    four of them — files 164 calls in its summary against roughly 1,325 actually
+    made, while `cost_usd` in the same file IS the run total because the runner
+    folds in prior spend recovered from the trace. Reporting the summary's
+    figure beside that cost would put two scopes in one row. The trace is
+    appended per call across every process, so it is what the comparison reads.
+    """
+    script = Path(__file__).resolve().parent.parent / "scripts" / "repro" / "finer_paired.py"
+    spec = _ilu.spec_from_file_location("finer_paired_calls", script)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "RECORDS", tmp_path)
+    trace = tmp_path / "arm.llm-trace.jsonl"
+    trace.write_text(
+        "".join(json.dumps({"role": r, "tokens_in": 1}) + "\n" for r in ("generate", "distill"))
+        + "\n",  # a blank line, which a crash can leave behind
+        encoding="utf-8",
+    )
+    assert mod.llm_calls("arm") == 2
+
+    # the trap this replaces: a summary whose budget describes the last process
+    (tmp_path / "arm.json").write_text(
+        json.dumps({"llm_budget": {"generate": {"calls": 1}}, "cost_usd": 8.63}), encoding="utf-8"
+    )
+    summary_calls = sum(v["calls"] for v in mod.load_summary("arm")["llm_budget"].values())
+    assert summary_calls != mod.llm_calls("arm")
+
+
+def test_finer_specificity_reads_proposals_from_the_trace_and_survivors_from_the_store(
+    tmp_path, monkeypatch
+):
+    """The gate sits between what was written and what was kept.
+
+    Measuring bullet specificity on the store alone cannot separate "the curator
+    wrote prose" from "the gate kept the specific ones" — which is exactly the
+    question the nodedup arm raised, since its 2,165 bullets name fewer US-GAAP
+    elements than the online arm's 140. So proposals are read from the trace,
+    where reflector responses (not curator JSON) must drop out rather than
+    parse into empty bullets.
+    """
+    script = (
+        Path(__file__).resolve().parent.parent / "scripts" / "repro" / "finer_error_structure.py"
+    )
+    spec = _ilu.spec_from_file_location("finer_error_structure_spec", script)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    monkeypatch.setattr(mod, "RECORDS", tmp_path)
+    lines = [
+        # a reflector turn: prose, not JSON, and must not become a bullet
+        {"role": "distill", "response_text": "The model confused two similar tags."},
+        {
+            "role": "distill",
+            "response_text": json.dumps(
+                {
+                    "operations": [
+                        {"content": "Prefer DebtInstrumentBasisSpreadOnVariableRate1 here"}
+                    ]
+                }
+            ),
+        },
+        {"role": "generate", "response_text": "AmortizationOfFinancingCosts"},
+    ]
+    (tmp_path / "arm.llm-trace.jsonl").write_text(
+        "".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8"
+    )
+    proposed = mod.proposed_bullets("arm")
+    assert proposed == ["Prefer DebtInstrumentBasisSpreadOnVariableRate1 here"]
+
+    gold = {"debtinstrumentbasisspreadonvariablerate1"}
+    spec_specific = mod.specificity(proposed, gold, bands=1)
+    assert spec_specific["has_identifier_pct"] == 100.0
+    assert spec_specific["names_gold_tag_pct"] == 100.0
+    assert spec_specific["distinct_gold_tags_named"] == 1
+
+    # generic advice names nothing, which is what the late nodedup bullets look like
+    generic = mod.specificity(
+        ["Consider the potential impact of external economic factors."], gold, bands=1
+    )
+    assert generic["has_identifier_pct"] == 0.0
+    assert generic["distinct_gold_tags_named"] == 0
 
 
 def test_finer_resume_keeps_only_whole_windows_and_refuses_a_foreign_records_file(tmp_path):
