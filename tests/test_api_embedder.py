@@ -127,9 +127,16 @@ def test_counts_calls_and_tokens_for_the_quote():
     assert e.latency_ms_total >= 0.0
 
 
-def test_failed_request_is_counted_then_re_raised():
+def test_failed_request_is_counted_then_re_raised(monkeypatch):
     """Same contract as LLMClient.chat: a failure still costs an attempt, so it
-    is recorded before the exception propagates — never swallowed."""
+    is recorded before the exception propagates — never swallowed.
+
+    `calls` counts the work the caller asked for; `errors` counts ATTEMPTS that
+    failed, so one dead request against the default retry budget reads as one
+    call and three errors. The two are deliberately not the same number — a run
+    that recovered a blip must not look pristine, and `transport_recoveries`
+    says which of the errors were survived."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
     api = FakeEmbeddingsAPI()
 
     def boom(**kwargs):
@@ -139,7 +146,8 @@ def test_failed_request_is_counted_then_re_raised():
     e = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api))
     with pytest.raises(RuntimeError):
         e.embed(["a"])
-    assert e.calls == 1 and e.errors == 1 and e.tokens == 0
+    assert e.calls == 1 and e.errors == 3 and e.tokens == 0
+    assert e.transport_recoveries == 0, "retries were spent; none of them recovered anything"
 
 
 def test_kind_is_a_noop_for_a_symmetric_model():
@@ -304,3 +312,90 @@ def test_free_embedder_run_prices_exactly_as_before():
     assert H.cost_usd(budget, "gpt-4o-mini", embed_model=H.embed_model_name(free)) == pytest.approx(
         H.cost_usd(budget, "gpt-4o-mini")
     )
+
+
+# ---------------------------------------------------------------------------
+# Transport retries. Written after a 441-sample paid run died at 11:41 on
+# 2026-08-17 with `openai.APIConnectionError` raised from a curator dedup
+# embedding — the LLM path survives that class of blip and this one did not.
+# ---------------------------------------------------------------------------
+
+
+class FlakyEmbeddingsAPI(FakeEmbeddingsAPI):
+    """Fails the first `fail_times` requests the way a dropped link does."""
+
+    def __init__(self, fail_times: int, **kw):
+        super().__init__(**kw)
+        self.fail_times = fail_times
+        self.attempts = 0
+
+    def create(self, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            raise ConnectionError("Connection error.")
+        return super().create(**kwargs)
+
+
+def test_a_transport_blip_is_retried_rather_than_killing_the_caller(monkeypatch):
+    """The failure this exists for: one dropped connection inside a curator's
+    dedup embedding took down a run that had 291 samples left to answer.
+
+    The LLM path already treats a connection failure as a re-send rather than a
+    verdict (`StructuredCaller.transport_retries`), because no reply came back
+    and there is nothing for the model to correct. An embedding request is the
+    same shape of work and gets the same treatment."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)  # no real backoff in tests
+    api = FlakyEmbeddingsAPI(fail_times=1, dim=4)
+    e = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api))
+
+    out = e.embed(["a"])
+
+    assert len(out) == 1, "the caller gets its vector"
+    assert api.attempts == 2, "the request was sent again, not abandoned"
+    assert e.errors == 1, "the blip is still recorded — a recovered run is not a pristine one"
+    assert e.transport_recoveries == 1
+
+
+def test_retries_are_a_budget_and_the_error_still_propagates_when_it_runs_out(monkeypatch):
+    """A link that is down, rather than blipping, must still surface. Silently
+    returning a zero vector would poison the store with a neighbourless bullet
+    and read as a retrieval defect months later."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    api = FlakyEmbeddingsAPI(fail_times=99, dim=4)
+    e = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api), transport_retries=2)
+
+    with pytest.raises(ConnectionError):
+        e.embed(["a"])
+    assert api.attempts == 3, "the original attempt plus its two retries"
+    assert e.errors == 3, "every attempt cost latency and is counted"
+    assert e.transport_recoveries == 0, "a recovery is a retry that worked, and none did"
+
+
+def test_retries_are_off_by_configuration_for_a_replay(monkeypatch):
+    """`transport_retries=0` restores the pre-fix behaviour exactly, so an arm
+    measured before this parameter existed can be replayed without it."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    api = FlakyEmbeddingsAPI(fail_times=1, dim=4)
+    e = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api), transport_retries=0)
+    with pytest.raises(ConnectionError):
+        e.embed(["a"])
+    assert api.attempts == 1
+
+
+def test_a_survived_blip_reaches_the_run_artifact(monkeypatch):
+    """A recovered wobble has to land in `budget_row`, or it is a counter that
+    only a log sees — which is what `StructuredCaller.transport_recoveries` has
+    been since Track 2: written on every retry, read by nothing, and named for
+    an outcome it does not check. A clean run keeps the row shape the other
+    roles have; only a run that actually wobbled grows the key."""
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+    clean, _ = _emb()
+    clean.embed(["a"])
+    assert "transport_recoveries" not in clean.budget_row()
+
+    api = FlakyEmbeddingsAPI(fail_times=1, dim=4)
+    wobbled = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api))
+    wobbled.embed(["a"])
+    row = wobbled.budget_row()
+    assert row["transport_recoveries"] == 1
+    assert row["calls"] == 1 and row["errors"] == 1

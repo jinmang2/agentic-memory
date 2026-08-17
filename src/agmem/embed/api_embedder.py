@@ -59,12 +59,24 @@ class APIEmbedder:
         endpoint: str = "https://api.openai.com/v1",
         dim: int | None = None,
         client: Any | None = None,
+        transport_retries: int = 2,
     ) -> None:
         """`dim` below the model's native width uses the API's Matryoshka
         truncation; `None` keeps the native width. `client` is an injection
         point for tests — production passes `api_key`/`endpoint` and lets the
         constructor build the real one.
-        """
+
+        ``transport_retries`` is the budget for CONNECTION failures — timeouts,
+        DNS blips, resets — and mirrors `StructuredCaller.transport_retries`
+        deliberately, because it is the same failure with the same fix: no
+        response came back, so the request is simply sent again. The LLM path
+        has had this since Track 2; the embedder did not, and on 2026-08-17 a
+        single `openai.APIConnectionError` raised from a curator's dedup
+        embedding killed a paid run with 291 of 441 samples still to answer.
+        Nothing was lost — the runner resumes — but the failure was recoverable
+        two layers down and was not recovered.
+
+        Set it to 0 to replay an arm measured before this parameter existed."""
         if model_name not in NATIVE_DIMS:
             raise KeyError(
                 f"{model_name!r} is not a known embedding model "
@@ -93,6 +105,11 @@ class APIEmbedder:
         self.tokens = 0
         self.errors = 0
         self.latency_ms_total = 0.0
+        self.transport_retries = transport_retries
+        # Blips that a retry RECOVERED. Not failures — no work was lost — but a
+        # run over a degrading link must be able to say so instead of looking
+        # pristine, which is the same reason `StructuredCaller` counts them.
+        self.transport_recoveries = 0
 
     def embed(self, texts: list[str], kind: EmbedKind = "passage") -> list[list[float]]:
         """L2-normalized vectors, one per input, in input order.
@@ -112,14 +129,38 @@ class APIEmbedder:
             # it would actually do something.
             kwargs["dimensions"] = self.dim
 
-        start = time.perf_counter()
         self.calls += 1
-        try:
-            resp = self._client.embeddings.create(**kwargs)
-        except Exception:
-            self.errors += 1
-            self.latency_ms_total += (time.perf_counter() - start) * 1000
-            raise
+        transport_left = self.transport_retries
+        spent = 0
+        while True:
+            start = time.perf_counter()
+            try:
+                resp = self._client.embeddings.create(**kwargs)
+                # Counted here and not at the moment of the retry, because a
+                # recovery is a retry that WORKED. `StructuredCaller` increments
+                # its own counter in the except branch, so a call that retried
+                # twice and then dropped still reports two "recoveries" there —
+                # this does not copy that.
+                self.transport_recoveries += spent
+                break
+            except Exception as exc:
+                # Every attempt cost latency and is counted, failed or not —
+                # the same contract as `LLMClient.chat`, and the reason a
+                # recovered blip still shows up in `errors`.
+                self.errors += 1
+                self.latency_ms_total += (time.perf_counter() - start) * 1000
+                if transport_left <= 0:
+                    # A link that is down, rather than blipping, must surface.
+                    # Returning a zero vector here would poison the store with
+                    # a neighbourless item and read as a retrieval defect
+                    # months later.
+                    raise
+                logger.warning(
+                    "embedding request failed (%s retries left): %s", transport_left, exc
+                )
+                transport_left -= 1
+                spent += 1
+                time.sleep(2.0 ** (self.transport_retries - transport_left))
         self.latency_ms_total += (time.perf_counter() - start) * 1000
 
         usage = getattr(resp, "usage", None)
@@ -144,14 +185,23 @@ class APIEmbedder:
         """This embedder's spend in `BudgetTracker.summary()`'s row shape, so a
         run can fold it into `llm_budget` under an `embed` key and price it with
         the existing per-role split (`registry_cost_usd_split`). Embeddings have
-        no output tokens, hence the hard zero."""
-        return {
+        no output tokens, hence the hard zero.
+
+        `transport_recoveries` rides along ONLY when a blip was actually
+        survived. A run that never wobbled keeps the row shape every other role
+        has, and a run that did says so in the artifact rather than in a log
+        nobody reads — which is the difference between this counter and
+        `StructuredCaller`'s, written since Track 2 and read by nothing."""
+        row = {
             "calls": self.calls,
             "tokens_in": self.tokens,
             "tokens_out": 0,
             "latency_ms_avg": round(self.latency_ms_total / self.calls, 1) if self.calls else 0.0,
             "errors": self.errors,
         }
+        if self.transport_recoveries:
+            row["transport_recoveries"] = self.transport_recoveries
+        return row
 
 
 def _l2(vec: list[float]) -> list[float]:
