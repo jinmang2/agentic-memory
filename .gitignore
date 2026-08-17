@@ -69,3 +69,6 @@ results/repro/aside/
 
 # Internal planning docs (specs/plans/handoffs) stay local; history keeps the old ones.
 docs/_internal/
+# $0 quote artifacts: reproducible with --dry-run, and they must not look
+# like measurements sitting next to the paid ones.
+results/repro/dryrun/
