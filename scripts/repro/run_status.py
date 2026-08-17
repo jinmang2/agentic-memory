@@ -136,6 +136,20 @@ def main(argv=None) -> None:
     tags = args.tag or sorted(
         p.name[: -len(".records.jsonl")] for p in RECORDS.glob("*.records.jsonl")
     )
+
+    # `describe` reads a whole trace to price a run, and this campaign's traces
+    # reach 193 MB — so `--active` narrows by mtime FIRST, using a stat rather
+    # than a read. Without this the session-start hook that calls it took 5.85
+    # seconds to answer "is anything running", which is how the product's own
+    # recall hook once died on a timeout and looked like a missing feature.
+    if args.active:
+        fresh = []
+        for tag in tags:
+            trace = RECORDS / f"{tag}.llm-trace.jsonl"
+            if trace.exists() and time.time() - trace.stat().st_mtime < 600:
+                fresh.append(tag)
+        tags = fresh
+
     rows = [describe(t) for t in tags]
     if args.active:
         rows = [r for r in rows if is_active(r)]
