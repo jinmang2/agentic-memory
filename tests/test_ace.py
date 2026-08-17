@@ -268,3 +268,178 @@ def test_playbook_is_not_a_default_search_type_but_explicit_opt_in_serves_it():
         assert explicit.items and all(s.memory_type == "playbook" for s in explicit.items)
     finally:
         mem.close()
+
+
+# ---------------------------------------------------------------------------
+# Retry rounds (D4): upstream's `_train_step` does not reflect once — it
+# reflects, regenerates, and reflects on the regenerated attempt, up to
+# `max_num_rounds` (ace.py:498-543). Our default cuts at one reflection, which
+# is deviation D4 in docs/19; these tests pin the shape of the arm that closes
+# it, and that the default arm is untouched by its existence.
+# ---------------------------------------------------------------------------
+
+
+def retry_llm(rounds: int):
+    """`rounds` reflections, each with a distinguishable key_insight, then the
+    curator's single operations reply."""
+    return StubLLM(
+        {
+            "distill": [reflection_stub(key_insight=f"insight-{i}") for i in range(rounds)]
+            + [
+                {
+                    "operations": [
+                        {"type": "ADD", "section": "web_forms", "content": "Check the filter."}
+                    ]
+                }
+            ],
+        }
+    )
+
+
+def make_retry_mem(llm, **kwargs):
+    mem = AgenticMemory(
+        namespace="t", organizers=[ACEOrganizer(**kwargs)], embedder=FakeEmbedder(dim=128)
+    )
+    mem.structured = llm
+    mem._ctx.llm = llm
+    return mem
+
+
+def test_ace_retry_reflects_then_regenerates_and_never_reflects_on_the_last_attempt():
+    """Upstream's round is (reflect, regenerate), three times, with no trailing
+    reflection: `for round_num in range(max_num_rounds)` reflects on the current
+    attempt and then regenerates from it (ace.py:501-543), so the attempt
+    produced by the FINAL regeneration is never diagnosed. The curator is handed
+    `recent_reflection` — the reflection written about the second-to-last
+    attempt (ace.py:583). Getting this order wrong would spend the same money
+    and feed the curator a different input."""
+    llm = retry_llm(rounds=3)
+    mem = make_retry_mem(llm, max_rounds=3)
+    seen: list[str] = []
+
+    def regenerate(reflection_text: str):
+        seen.append(reflection_text)
+        return {"step": len(seen) + 1, "prediction": "still wrong"}, "failure"
+
+    try:
+        mem._ctx  # noqa: B018 - context is built lazily by the facade
+        mem.organizers[0].set_retry_generator(regenerate)
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
+    finally:
+        mem.close()
+
+    reflect_calls = [p for role, p in llm.calls if role == "distill" and "playbook" not in p[:40]]
+    assert len(seen) == 3, "three regenerations, one per round"
+    assert len(llm.calls) == 4, "three reflections and one curation"
+    del reflect_calls
+    curate_prompt = llm.calls[-1][1]
+    assert "insight-2" in curate_prompt, "the curator sees the LAST reflection taken"
+    assert "insight-0" not in curate_prompt
+
+
+def test_ace_retry_stops_as_soon_as_a_regeneration_lands():
+    """`if data_processor.answer_is_correct(...): break` (ace.py:541-544). The
+    rounds are a budget, not a schedule — a sample corrected on the first retry
+    costs one reflection and one regeneration, and the curator is handed the
+    reflection that produced the correction."""
+    llm = retry_llm(rounds=3)
+    mem = make_retry_mem(llm, max_rounds=3)
+    calls: list[str] = []
+
+    def regenerate(reflection_text: str):
+        calls.append(reflection_text)
+        return {"step": 2, "prediction": "right"}, "success"
+
+    try:
+        mem.organizers[0].set_retry_generator(regenerate)
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
+    finally:
+        mem.close()
+
+    assert len(calls) == 1
+    assert len(llm.calls) == 2, "one reflection, one curation"
+    assert "insight-0" in llm.calls[-1][1]
+
+
+def test_ace_never_regenerates_a_task_that_was_already_correct():
+    """Upstream's else-branch reflects once to tag helpful bullets and does not
+    regenerate (ace.py:548-570). A correct sample costs the same in the retry
+    arm as in ours."""
+    llm = retry_llm(rounds=1)
+    mem = make_retry_mem(llm, max_rounds=3)
+    calls: list[str] = []
+
+    try:
+        mem.organizers[0].set_retry_generator(lambda r: (calls.append(r), ({}, "failure"))[1])
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="success", task="filter products")
+    finally:
+        mem.close()
+
+    assert calls == []
+    assert len(llm.calls) == 2, "one reflection, one curation"
+
+
+def test_ace_without_a_retry_generator_is_the_arm_we_already_measured():
+    """The default organizer must be untouched by the arm's existence: one
+    reflection, no regeneration, whatever `max_rounds` says. The measured
+    online/nodedup arms are this path, and a change here would silently
+    re-price them."""
+    llm = retry_llm(rounds=1)
+    mem = make_retry_mem(llm, max_rounds=3)  # rounds configured, no generator wired
+    try:
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
+        adds = [o for o in mem.log.tail(10) if o.target_type == "playbook" and o.op is OpType.ADD]
+    finally:
+        mem.close()
+    assert len(llm.calls) == 2
+    assert len(adds) == 1
+
+
+def test_ace_retry_counters_accumulate_across_rounds_instead_of_overwriting():
+    """Upstream applies each round's counter updates to the playbook before the
+    next round runs (`self.playbook = update_bullet_counts(...)`, ace.py:521),
+    so a bullet tagged helpful in two rounds ends at +2. Ours returns ops that
+    the facade applies at the end, so the increments have to be tracked while
+    the rounds run — computing every payload from the same stored value would
+    write +1 twice and land on +1."""
+    seed = StubLLM(
+        {
+            "distill": [
+                reflection_stub(),
+                {
+                    "operations": [
+                        {"type": "ADD", "section": "web_forms", "content": "Check the filter."}
+                    ]
+                },
+            ]
+        }
+    )
+    mem = make_retry_mem(seed, max_rounds=3)
+    try:
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="success", task="seed the playbook")
+        bullet_id = [
+            o.target_id
+            for o in mem.log.tail(10)
+            if o.target_type == "playbook" and o.op is OpType.ADD
+        ][0]
+
+        tag = [{"id": bullet_id[:5], "tag": "helpful"}]
+        llm = StubLLM(
+            {
+                "distill": [
+                    reflection_stub(bullet_tags=tag),
+                    reflection_stub(bullet_tags=tag),
+                    reflection_stub(bullet_tags=tag),
+                    {"operations": []},
+                ]
+            }
+        )
+        mem.structured = llm
+        mem._ctx.llm = llm
+        mem.organizers[0].set_retry_generator(lambda r: ({"step": 2}, "failure"))
+        mem.add_task_result(trajectory=[{"a": 1}], outcome="failure", task="filter products")
+
+        rendered = mem.get_playbook()
+    finally:
+        mem.close()
+    assert "helpful=3" in rendered, rendered

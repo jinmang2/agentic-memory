@@ -68,16 +68,25 @@ why this module returns what it returns:
    right is a failure to learn from and a 0.75 to report.
 
 **Call structure, which is the point of the cost comparison (rescope §3, track
-5 deliverable 2).** Upstream's per-sample training cost is outcome-dependent:
-1 generate, then either 1 reflect (correct, ace.py:546-560) or up to
-`max_num_rounds`=3 rounds of reflect+regenerate (incorrect, ace.py:498-543),
-plus a curator call every `curator_frequency`=1 steps — so 3 to 8 calls per
-sample, and a *worse* model costs strictly more to adapt. Ours cuts at
-`on_task_end`: 1 generate (here), 1 reflect, 1 curate, fixed at 3 regardless of
-outcome, with no regeneration loop. That is a boundary difference, not a
-saving — upstream's extra calls buy retries that can flip a sample to correct
-within the training step, which our shape cannot do. Any latency or token
-claim compared across the two must say so.
+5 deliverable 2).** Upstream's online mode spends **5 to 10 calls per sample**,
+and only some of that is the retry loop:
+
+    1  window test pass, the answer that is SCORED          ace.py:955
+    1  `_train_step` answers the same sample again          ace.py:465-472
+  1-6  reflect, and on a wrong answer regenerate, up to
+       `max_num_rounds`=3 rounds with early stop            ace.py:498-543
+       (a correct answer takes the else-branch: reflect once, no retry, :548-570)
+    1  curate, `curator_frequency`=1                        eval/finance/run.py:49
+    1  post-curator generate, filed as `post_train_result`
+       and never fed back                                   ace.py:608-625
+
+so a *worse* model costs strictly more to adapt. Ours is 3 by default — the
+scored generate (here), 1 reflect, 1 curate — and the scored attempt IS the
+trajectory we reflect on. Two of upstream's extra calls buy no learning at all
+(a duplicate answer and an instrumentation answer); the retry rounds do, which
+is why they are reproducible here via `retry_generator` and the organizer's
+`max_rounds`. Any latency or token claim compared across the two must say which
+shape it was measured in.
 
 Deviations from upstream, deliberate:
 
@@ -424,7 +433,62 @@ def score_sample(sample: dict[str, Any], pred: str, failed: bool = False) -> dic
     }
 
 
-def adapt(mem: AgenticMemory, sample: dict[str, Any], row: dict[str, Any]) -> None:
+def _trajectory_step(sample: dict[str, Any], row: dict[str, Any], step: int = 1) -> dict[str, Any]:
+    """One attempt, in the shape the reflector diagnoses."""
+    return {
+        "step": step,
+        "action": "answer_finer_sample",
+        "question": sample["question"][:2000],
+        "reasoning": str(row.get("reasoning", ""))[:4000],
+        "bullets_cited": row.get("bullet_ids", []),
+        "prediction": row["pred"],
+        "target": sample["target"],
+        "tags_correct": f"{row['correct_tags']}/{row['total_tags']}",
+    }
+
+
+def retry_generator(
+    mem: AgenticMemory, sample: dict[str, Any], attempts: list[dict[str, Any]] | None = None
+):
+    """A callback that re-answers this sample from a reflection, and scores it.
+
+    This is upstream's regeneration step (`ace.py:527-538`): the same generator,
+    the same playbook, with the reflector's whole response filling the prompt's
+    `reflection` slot — which `answer` already carries because upstream's
+    generator prompt has that slot (`prompts/generator.py:6`).
+
+    The organizer calls this; the benchmark owns it. Scoring belongs on this
+    side too: `answer_is_correct` is the data processor's, and the early stop it
+    drives (`ace.py:541-544`) is a benchmark decision the memory layer has no
+    way to make. Every attempt is appended to `attempts` when one is given, so a
+    run can record what the retries actually did rather than only their effect."""
+
+    def regenerate(reflection: str) -> tuple[dict[str, Any], str]:
+        capture: dict[str, Any] = {}
+        try:
+            pred, _bullets = answer(mem, sample, reflection=reflection, capture=capture)
+            failed = False
+        except Exception:  # noqa: BLE001 - a failed retry is a failed attempt, not a crash
+            pred, failed = NO_ANSWER, True
+        row = score_sample(sample, pred, failed=failed)
+        row["reasoning"] = capture.get("reasoning", "")
+        row["bullet_ids"] = capture.get("bullet_ids", [])
+        row["playbook_chars"] = capture.get("playbook_chars", 0)
+        if attempts is not None:
+            attempts.append(row)
+        step = _trajectory_step(sample, row, step=len(attempts or []) + 1)
+        return step, ("success" if row["is_correct"] else "failure")
+
+    return regenerate
+
+
+def adapt(
+    mem: AgenticMemory,
+    sample: dict[str, Any],
+    row: dict[str, Any],
+    retries: bool = False,
+    attempts: list[dict[str, Any]] | None = None,
+) -> None:
     """The training half of one online step: hand the graded attempt to the
     organizers as a finished task.
 
@@ -446,20 +510,23 @@ def adapt(mem: AgenticMemory, sample: dict[str, Any], row: dict[str, Any]) -> No
     The cited bullet ids travel with it for the same reason — they are what
     upstream's reflector attributes helpful/harmful counters to
     (`bullets_used=extract_playbook_bullets(playbook, bullet_ids)`, :506)."""
-    trajectory = [
-        {
-            "step": 1,
-            "action": "answer_finer_sample",
-            "question": sample["question"][:2000],
-            "reasoning": str(row.get("reasoning", ""))[:4000],
-            "bullets_cited": row.get("bullet_ids", []),
-            "prediction": row["pred"],
-            "target": sample["target"],
-            "tags_correct": f"{row['correct_tags']}/{row['total_tags']}",
-        }
-    ]
-    mem.add_task_result(
-        trajectory,
-        outcome="success" if row["is_correct"] else "failure",
-        task=sample["question"][:2000],
-    )
+    wired = []
+    if retries:
+        # The organizer owns the loop (upstream's ACE class does) and the
+        # benchmark owns the generator, so the callback is handed over for this
+        # sample and taken back afterwards — leaving one wired would let the
+        # next sample be re-answered against a stale question.
+        regenerate = retry_generator(mem, sample, attempts)
+        for org in mem.organizers:
+            if hasattr(org, "set_retry_generator"):
+                org.set_retry_generator(regenerate)
+                wired.append(org)
+    try:
+        mem.add_task_result(
+            [_trajectory_step(sample, row)],
+            outcome="success" if row["is_correct"] else "failure",
+            task=sample["question"][:2000],
+        )
+    finally:
+        for org in wired:
+            org.set_retry_generator(None)

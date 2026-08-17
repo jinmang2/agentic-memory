@@ -30,11 +30,15 @@ Deviations from upstream, all disclosed in the stamp:
   sample to correct *within* the training step, and ours cannot, so its
   reflection sees outcomes ours never produces.
 - **D4 (no reflection retries)**: upstream loops reflect+regenerate up to
-  `max_num_rounds`=3 on an incorrect answer (ace.py:498-543). We reflect once.
-  Per-sample adaptation cost is therefore fixed at 3 calls where upstream's is
-  3-8 and rises with the error rate — a *worse* model costs upstream strictly
+  `max_num_rounds`=3 on an incorrect answer (ace.py:498-543). We reflect once by
+  default, so per-sample adaptation cost is fixed at 3 calls where upstream's is
+  5-10 and rises with the error rate — a *worse* model costs upstream strictly
   more to adapt, which is the asymmetry any latency or token-cost comparison
-  between the two has to state.
+  between the two has to state. **`--max-rounds 3` turns the loop on**, which is
+  the arm that tests whether those retries are what makes the mechanism pay; the
+  two calls upstream spends re-answering a question it has already answered
+  (ace.py:465-472) and re-answering it once more after curating (:608-625) stay
+  unreproduced, because neither changes what is learned.
 - **D5 (dedup always on)**: ledger B-6. Upstream's analyzer is opt-in, off in
   `ace.py`, off in this harness's flag, and off again by silent fallback when
   its optional dependencies are missing; ours dedups at 0.90 always and drops
@@ -163,7 +167,7 @@ def build_memory(args, embedder, trace_path: Path | None, roles) -> AgenticMemor
     )
     mem = AgenticMemory(
         namespace=args.namespace,
-        organizers=[ACEOrganizer(dedup_threshold=args.dedup_threshold)],
+        organizers=[ACEOrganizer(dedup_threshold=args.dedup_threshold, max_rounds=args.max_rounds)],
         embedder=embedder,
         config=cfg,
     )
@@ -182,6 +186,7 @@ def run_arm(
     sink=None,
     skip_before: int = 0,
     over_budget=None,
+    retries: bool = False,
 ) -> tuple[list[dict], list[dict]]:
     """Walk the split. Returns (rows, per_window).
 
@@ -244,7 +249,17 @@ def run_arm(
         )
         if adapt:
             for sample, row in zip(chunk, w_rows):
-                finer.adapt(mem, sample, row)
+                # Retries never touch the SCORED answer — `row` is already
+                # graded and appended. They only change what the organizer sees
+                # while learning, which is the whole point of the arm, and each
+                # extra attempt is recorded so the artifact says what they did.
+                attempts: list[dict] = []
+                finer.adapt(mem, sample, row, retries=retries, attempts=attempts)
+                if attempts:
+                    row["retry_attempts"] = [
+                        {"pred": a["pred"], "is_correct": a["is_correct"]} for a in attempts
+                    ]
+                    row["corrected_in_training"] = any(a["is_correct"] for a in attempts)
             mem.flush()
         # Persist AFTER adapt, never before: a window present in the records file
         # must mean the store has also learned from it, or a resume would answer
@@ -351,6 +366,17 @@ def main() -> None:
             "curator dedup cosine gate. 0.90 is OUR always-on default (D5); any value above 1.0 "
             "is unreachable by a cosine and therefore switches dedup OFF, which is upstream's "
             "shipped default (ledger B-6)."
+        ),
+    )
+    ap.add_argument(
+        "--max-rounds",
+        type=int,
+        default=1,
+        help=(
+            "upstream's `max_num_rounds` (3 in every shipped eval config): how many "
+            "reflect-and-re-answer rounds an incorrect sample may take during training. "
+            "1 is our measured arms' behaviour — reflect once, never re-answer (D4). "
+            "The SCORED answer is always the window test pass and is never a retry."
         ),
     )
     ap.add_argument(
@@ -492,6 +518,7 @@ def main() -> None:
             sink=sink,
             skip_before=len(kept),
             over_budget=over_budget,
+            retries=args.max_rounds > 1,
         )
         rows = kept + new_rows
         with (OUT / f"{args.tag}.memory.jsonl").open("w", encoding="utf-8") as fh:
@@ -541,10 +568,20 @@ def main() -> None:
             "organizers": ["ace"],
             "dedup_threshold": args.dedup_threshold,
             "dedup_enabled": args.dedup_threshold <= 1.0,
+            "max_rounds": args.max_rounds,
             "deviations": [
                 "D1_structured_output",
-                "D3_one_attempt",
-                "D4_no_retries",
+                # D3/D4 are one knob seen twice: with `max_rounds` above 1 the
+                # organizer re-answers a failed sample from its own reflection,
+                # which is both the extra attempt and the retry loop. What stays
+                # deviant either way is the two upstream calls that buy no
+                # learning (ace.py:465-472, :608-625) — named so a reader cannot
+                # take "retries on" for "call structure identical".
+                *(
+                    ["D3_one_attempt", "D4_no_retries"]
+                    if args.max_rounds <= 1
+                    else ["D3D4_retries_on_no_duplicate_or_post_curate_generation"]
+                ),
                 "D5_dedup_on" if args.dedup_threshold <= 1.0 else "D5_dedup_off_upstream_default",
             ],
             "context_markers_absent": fell_through,

@@ -28,12 +28,25 @@ usage-accurate path).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Bullet
 from agmem.organizers.base import Organizer, OrganizerContext
 
 logger = logging.getLogger("agmem.organizers.ace")
+
+# What the harness hands back when asked to re-answer a failed task: the new
+# attempt's trajectory step, and the outcome the benchmark scored it as.
+RetryGenerator = Callable[[str], tuple[dict, str]]
+
+
+def _is_success(outcome: str) -> bool:
+    """Upstream branches on `answer_is_correct`, a boolean the benchmark owns;
+    ours arrives as the same all-or-nothing signal spelled as an outcome
+    string (`bench/finer.adapt`)."""
+    return str(outcome).strip().lower() == "success"
+
 
 # Upstream REFLECTOR_PROMPT's five output fields (prompts/reflector.py:18-24):
 # reasoning / error_identification / root_cause_analysis / correct_approach /
@@ -239,6 +252,7 @@ class ACEOrganizer(Organizer):
         dedup_threshold: float = DEDUP_THRESHOLD,
         token_budget: int = PLAYBOOK_TOKEN_BUDGET,
         total_samples: int | None = None,
+        max_rounds: int = 1,
     ) -> None:
         """``dedup_threshold`` gates embedding-cosine dedup against both the
         existing playbook and the current curator batch (round-5 §3.4,
@@ -252,10 +266,19 @@ class ACEOrganizer(Organizer):
         dropping bullets to fit would be the context collapse the paper is
         about. ``total_samples`` is upstream's "Sample X out of Y" progress
         line; a memory layer does not know the dataset size, so it stays
-        optional and the line degrades to the step alone."""
+        optional and the line degrades to the step alone.
+
+        ``max_rounds`` is upstream's ``max_num_rounds`` (3 in every shipped eval
+        config): how many reflect-and-re-answer rounds an incorrect task may
+        take. It does nothing until a retry generator is wired
+        (``set_retry_generator``) — a memory organizer cannot re-answer a task
+        on its own — so the default of 1 leaves the single-reflection behavior
+        every measured arm was run on."""
         self.dedup_threshold = dedup_threshold
         self.token_budget = token_budget
         self.total_samples = total_samples
+        self.max_rounds = max_rounds
+        self._regenerate: RetryGenerator | None = None
         # Upstream's `step`, which drives both the progress line and its
         # `curator_frequency`. We curate on every task (frequency 1), so this
         # only feeds the prompt.
@@ -310,37 +333,53 @@ class ACEOrganizer(Organizer):
             )
         return ops
 
-    def on_task_end(
-        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
-    ) -> list[MemoryOp]:
-        """Reflect on the trajectory, then curate new bullets. Returns []
-        with no side effect when no LLM is configured or the reflection
-        call fails (explicit skip, logged); otherwise returns UPDATE ops
-        for helpful/harmful counters on tag-validated existing bullet ids
-        plus ADD ops for curated bullets that survive dedup (see
-        ``dedup_threshold``)."""
-        if ctx.llm is None:
-            logger.warning("ace: no LLM configured — skipping reflection (explicit skip)")
-            return []
+    def set_retry_generator(self, regenerate: RetryGenerator | None) -> None:
+        """Wire (or unwire) the callback that re-answers a failed task.
 
+        Upstream's ACE owns its generator and calls it inside the training step
+        (`ace.py:527-538`), so the reflect→regenerate loop lives in the same
+        object as the reflector. A memory organizer owns no generator — the
+        benchmark does — so the harness hands one in, per task, and the loop
+        stays where upstream put it rather than being reassembled by whoever
+        drives the hook. Left unset (the default), the organizer reflects once
+        and never re-answers, which is deviation D4 and the arm the campaign
+        has already measured.
+
+        The callback takes the reflection as upstream passes it to the
+        generator — the reflector's whole response — and returns the new
+        attempt's trajectory step with the outcome the benchmark scored it as."""
+        self._regenerate = regenerate
+
+    def reflect(
+        self,
+        trajectory: list[dict],
+        outcome: str,
+        task: str,
+        ctx: OrganizerContext,
+        pending: dict[tuple[str, str], int] | None = None,
+    ) -> tuple[dict | None, list[MemoryOp]]:
+        """One reflector turn: the diagnosis, plus counter ops for the bullets
+        it tagged. Returns ``(None, [])`` when the call fails.
+
+        Split out of ``on_task_end`` so a retry round can reflect again on the
+        attempt its own regeneration produced. ``pending`` carries increments
+        already issued for this task but not yet applied — upstream updates its
+        in-memory playbook between rounds (`ace.py:521`), while our ops reach
+        the store only when the hook returns, so without it two rounds tagging
+        one bullet would both compute ``stored + 1`` and land on +1."""
         import json as _json
 
         traj_text = "\n".join(_json.dumps(s, ensure_ascii=False, default=str) for s in trajectory)[
             :6000
         ]
-        self._step += 1
         playbook = self._current_playbook(ctx)
         by_id = {b["id"]: b for b in playbook}
         rendered_playbook = self._render_playbook(playbook)
 
-        # Boundary-cut note (round-12 #3): upstream reflects — and tags counters —
-        # on EVERY reflection round of its generator loop (up to 3 per incorrect
-        # task, ace.py:499-545); we reflect once per task, so upstream counters
-        # accrue faster on failures. A consequence of cutting at on_task_end,
-        # not a bug. Both this call and the curate call below ride the "distill"
-        # role, so per-role model/temperature cannot split reflector from
-        # curator — upstream allows distinct reflector/curator models
-        # (ace.py:36-63); round-12 #7.
+        # Both this call and the curate call ride the "distill" role, so
+        # per-role model/temperature cannot split reflector from curator —
+        # upstream allows distinct reflector/curator models (ace.py:36-63);
+        # round-12 #7.
         reflection = ctx.llm.call(
             "distill",
             REFLECT_PROMPT.format(
@@ -353,9 +392,10 @@ class ACEOrganizer(Organizer):
             required_keys=("key_insight",),
         )
         if reflection is None:
-            return []
+            return None, []
 
         ops: list[MemoryOp] = []
+        pending = {} if pending is None else pending
 
         # counter updates from bullet tags (validated against real ids)
         for tag in reflection.get("bullet_tags", []) or []:
@@ -371,14 +411,31 @@ class ACEOrganizer(Organizer):
                 continue
             full_id = matches[0]
             field = tag["tag"]
+            issued = pending.get((full_id, field), 0) + 1
+            pending[(full_id, field)] = issued
             ops.append(
                 MemoryOp(
                     op=OpType.UPDATE,
                     target_type="playbook",
                     target_id=full_id,
-                    payload={field: int(by_id[full_id].get(field, 0)) + 1},
+                    payload={field: int(by_id[full_id].get(field, 0)) + issued},
                 )
             )
+
+        return reflection, ops
+
+    def curate(self, reflection: dict, task: str, ctx: OrganizerContext) -> list[MemoryOp]:
+        """One curator turn: ADD ops for the bullets that survive dedup.
+
+        Called once per task, whatever the reflector did — upstream curates on
+        `curator_frequency`, which is 1 in every shipped eval config
+        (`eval/finance/run.py:49`), and hands it a single `recent_reflection`
+        even when several rounds produced several (`ace.py:583`)."""
+        import json as _json
+
+        ops: list[MemoryOp] = []
+        playbook = self._current_playbook(ctx)
+        rendered_playbook = self._render_playbook(playbook)
 
         # The curator sees the FULL raw reflection (all five reflector fields +
         # tags), as upstream passes the reflector's whole response string through
@@ -443,3 +500,56 @@ class ACEOrganizer(Organizer):
                 )
             )
         return ops
+
+    def on_task_end(
+        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Reflect on the trajectory, then curate. Returns [] with no side
+        effect when no LLM is configured or the reflection call fails (explicit
+        skip, logged); otherwise UPDATE ops for helpful/harmful counters on
+        tag-validated existing bullet ids, plus ADD ops for curated bullets that
+        survive dedup (see ``dedup_threshold``).
+
+        With a retry generator wired (``set_retry_generator``) and
+        ``max_rounds`` above 1, the middle of this becomes upstream's training
+        loop rather than a single reflection: reflect, re-answer from that
+        reflection, and reflect again on the new attempt, up to `max_num_rounds`
+        rounds, stopping the moment an attempt is correct (`ace.py:501-544`).
+        Two properties of that loop are load-bearing and easy to get wrong.
+        **A correct task is reflected on once and never re-answered** — it takes
+        upstream's else-branch (`ace.py:548-570`). And **the attempt produced by
+        the last regeneration is never diagnosed**: the round ends with the
+        regeneration, so the curator receives the reflection written about the
+        attempt before it.
+
+        One deviation remains inside the loop and is not fixable here: upstream
+        applies each round's counter updates to its live playbook, so a later
+        round's reflector sees the updated counts, while ours reach the store
+        only when this returns. The counts themselves land correctly (see
+        ``reflect``'s ``pending``); what a mid-loop reflector reads is one round
+        stale. The bullet TEXT it reads is identical either way, since no bullet
+        is added until the curator runs."""
+        if ctx.llm is None:
+            logger.warning("ace: no LLM configured — skipping reflection (explicit skip)")
+            return []
+
+        import json as _json
+
+        self._step += 1
+        ops: list[MemoryOp] = []
+        pending: dict[tuple[str, str], int] = {}
+        reflection: dict | None = None
+
+        for _round in range(max(1, self.max_rounds)):
+            reflection, round_ops = self.reflect(trajectory, outcome, task, ctx, pending)
+            ops.extend(round_ops)
+            if reflection is None:
+                return ops
+            if self._regenerate is None or _is_success(outcome):
+                break
+            step, outcome = self._regenerate(_json.dumps(reflection, ensure_ascii=False, indent=2))
+            trajectory = [step]
+            if _is_success(outcome):
+                break
+
+        return ops + self.curate(reflection, task, ctx)
