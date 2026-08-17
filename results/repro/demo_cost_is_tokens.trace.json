@@ -1,0 +1,67 @@
+{
+  "_note": "Derived index, not a measurement. Token counts read off the gitignored results/repro/gpt-4o-mini_ace_finer_*.llm-trace.jsonl files by scripts/repro/demo_cost_is_tokens.py, cached so the demo regenerates without them. Invalidated by trace mtime; rebuild with --rescan where the traces exist.",
+  "mtime_ns": {
+    "base": 1786327935826733249,
+    "nodedup": 1786715400746743780,
+    "online": 1786331171076087420,
+    "retry": 1786966062383238364
+  },
+  "stats": {
+    "base": {
+      "distill_calls_in_trace": 0,
+      "distill_tokens_in_total": 0,
+      "final_prompt": {
+        "playbook_chars": 7,
+        "prompt_chars": 9017,
+        "tokens_in": 1921
+      },
+      "generate_calls_in_trace": 441,
+      "generate_tokens_in_last_window": 1935.4,
+      "generate_tokens_in_max": 2578,
+      "generate_tokens_in_mean": 1951.331065759637,
+      "generate_tokens_in_total": 860537
+    },
+    "nodedup": {
+      "distill_calls_in_trace": 878,
+      "distill_tokens_in_total": 37289566,
+      "final_prompt": {
+        "playbook_chars": 639054,
+        "prompt_chars": 648064,
+        "tokens_in": 118619
+      },
+      "generate_calls_in_trace": 447,
+      "generate_tokens_in_last_window": 113911.4,
+      "generate_tokens_in_max": 118692,
+      "generate_tokens_in_mean": 41840.93288590604,
+      "generate_tokens_in_total": 18702897
+    },
+    "online": {
+      "distill_calls_in_trace": 882,
+      "distill_tokens_in_total": 5519573,
+      "final_prompt": {
+        "playbook_chars": 43699,
+        "prompt_chars": 52709,
+        "tokens_in": 9799
+      },
+      "generate_calls_in_trace": 441,
+      "generate_tokens_in_last_window": 9776.8,
+      "generate_tokens_in_max": 9940,
+      "generate_tokens_in_mean": 6840.589569160998,
+      "generate_tokens_in_total": 3016700
+    },
+    "retry": {
+      "distill_calls_in_trace": 1484,
+      "distill_tokens_in_total": 12814999,
+      "final_prompt": {
+        "playbook_chars": 64138,
+        "prompt_chars": 74703,
+        "tokens_in": 13972
+      },
+      "generate_calls_in_trace": 1434,
+      "generate_tokens_in_last_window": 13888.066666666668,
+      "generate_tokens_in_max": 14167,
+      "generate_tokens_in_mean": 9499.47350069735,
+      "generate_tokens_in_total": 13622245
+    }
+  }
+}

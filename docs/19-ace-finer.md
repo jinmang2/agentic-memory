@@ -75,10 +75,20 @@ learning at all. **Our dedup is not the reason for the null.**
 **The price of the third arm is the finding beside it.** Turning the gate off multiplied cost by 5.9
 against the online arm while the LLM call count moved by 2 calls — 1,323 to 1,325. Nothing about the
 *number* of calls changed; the playbook is injected whole into every generator and curator call, so
-the cost of adaptation is carried in tokens, not in requests. By the last window each generator call
-was carrying ~95 K tokens of playbook — 74% of `gpt-4o-mini`'s context window — around a task whose
-own prompt averages 1,951 tokens in the base arm. Any cost model for this mechanism that counts
-calls will be wrong by more than an order of magnitude.
+the cost of adaptation is carried in tokens, not in requests. By the end of the run each generator
+call was carrying **~117 K tokens of playbook** — the arm's final generator call billed **118,619
+input tokens, 93% of `gpt-4o-mini`'s 128 K context window**, of which **98.6% was playbook** (639,054
+of 648,064 characters) — around a task whose own prompt averages 1,951 tokens in the base arm. Any
+cost model for this mechanism that counts calls will be wrong by more than an order of magnitude.
+
+> **Correction, 2026-08-17.** This paragraph previously read "~95 K tokens of playbook — 74% of the
+> context window", an estimate that was never taken off the trace. The trace says 93%: generator
+> calls in the arm's last window billed 110,646–118,692 input tokens. The claim moved in the
+> direction that strengthens it, which is exactly why it needed checking — an understated number
+> attracts no scrutiny. Read out of `tokens_in` on the `generate` rows of
+> `results/repro/gpt-4o-mini_ace_finer_nodedup.llm-trace.jsonl` by
+> `scripts/repro/demo_cost_is_tokens.py`, which regenerates
+> [docs/demos/cost-is-tokens.md](demos/cost-is-tokens.md) from the artifacts.
 
 The playbook was not empty and not junk. In the online arm 441 curator calls proposed 416 bullets, of
 which **140 survived** 0.90 dedup — **43,699 characters as rendered into the prompt** (35,920 of that
