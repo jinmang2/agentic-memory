@@ -333,14 +333,30 @@ own numbers show GPT-4o falling from .870 on oracle to .606 on the full haystack
 ### Reproduce
 
 ```bash
+# one arm (~$1 on oracle). --dry-run first prints the call ledger and a priced
+# quote for $0; --max-spend-usd is enforced between rows.
 uv run python scripts/repro/exp_lme_reading.py --dataset oracle --reading con \
-    --reader gpt-4o-mini --workers 8 --max-spend-usd 2.0          # one arm, ~$1
+    --reader gpt-4o-mini --workers 8 --max-spend-usd 2.0
+
+# the axes the follow-ups turned
+  ... --history-format nl        # upstream's other format (byte-checked, config E)
+  ... --retrieval 10             # answer from the store's top-K, not the haystack
+  ... --dataset s                # 113K-token haystacks; trace is gzipped by default
+
+# re-score answered arms with another judge — judge calls only, ~2 cents an arm
+uv run python scripts/repro/lme_rejudge.py --arms <tag> ... \
+    --judge-model gpt-4o-mini --max-spend-usd 0.5
+
+# the pre-registered rule, and every pairwise CI. $0.
 uv run --with scipy python scripts/repro/lme_c4_analysis.py --arms \
     gpt-4o-mini_lme_oracle_direct gpt-4o-mini_lme_oracle_con \
-    gpt-5.6-luna_lme_oracle_direct gpt-5.6-luna_lme_oracle_con    # $0
+    gpt-5.6-luna_lme_oracle_direct gpt-5.6-luna_lme_oracle_con
 ```
 
 Artifacts per arm: `results/repro/<tag>.json` (committed), `<tag>.records.jsonl` (per-row verdict,
-prompt sha256, usage, timing) and `<tag>.llm-trace.jsonl` (every prompt and every judge reply
-verbatim, ~15 MB/arm) — both gitignored, both kept locally so any of this can be re-scored without
-re-spending. `results/repro/lme_c4_paired.json` holds the paired statistics above.
+prompt sha256, usage, timing, and the retrieved ids on a retrieval arm) and `<tag>.llm-trace.jsonl`
+(every prompt and every judge reply verbatim — ~15 MB on oracle; on `_s` it is written `.jsonl.gz`,
+~78 MB compressed against ~260 MB raw) — both gitignored, both kept locally, which is what made the
+judge swap cost two cents instead of another four arms. Paired statistics:
+`lme_c4_paired.json`, `lme_replicate_paired.json`, `lme_format_retrieval_paired.json`,
+`lme_rejudge_gpt-4o-mini.json`.
