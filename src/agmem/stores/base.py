@@ -15,6 +15,23 @@ class DocStore(Protocol):
     def add_episode(self, episode: Episode) -> None: ...
     def get_episodes(self, ids: list[str]) -> list[Episode]: ...
     def count_episodes(self, namespace: str | None = None) -> int: ...
+
+    def list_episodes(self, namespace: str | None = None) -> list[Episode]:
+        """Every raw episode, OLDEST-FIRST, optionally scoped to one namespace.
+
+        Ordering is part of the contract, not an implementation detail: callers take the tail as
+        "most recent" (`hooks/recall.py`, `AgenticMemory`'s episode-mention frontier), so a store
+        returning insertion order or an unordered scan silently serves the wrong slice.
+
+        Declared here because it was missing and the omission cost something. Three call sites
+        already depended on it while only `SqliteDocStore` implemented it, so a Postgres-backed run
+        wrote a memory snapshot with no episodic rows at all — and because the snapshot writer
+        guards the call with `getattr`, the loss presented as an artifact that simply had no
+        transcript in it rather than as an error. `tests/test_store_contract.py` now pins the
+        surface across every implementation.
+        """
+        ...
+
     def search_lexical(
         self, query: str, k: int = 10, namespace: str | None = None
     ) -> list[tuple[str, float]]:

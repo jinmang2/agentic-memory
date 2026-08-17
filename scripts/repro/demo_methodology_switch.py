@@ -71,8 +71,10 @@ ARMS = (
 
 # `episodic` is the raw transcript — the INPUT, not a decision — so it is excluded from "what this
 # methodology chose to keep", following the harness's own `derived` convention
-# (exp_locomo_conv0.capture_memory). It is NOT uniformly present across these snapshots, which the
-# generated page reports rather than smooths over.
+# (exp_locomo_conv0.capture_memory). It is NOT uniformly present across these snapshots: the two
+# Postgres-backed arms have none, because `PostgresDocStore` was missing `list_episodes` and the
+# snapshot writer's getattr guard skipped it silently. Fixed at the source (DocStore protocol +
+# tests/test_store_contract.py); the artifacts are left as bought, and the page explains why.
 RAW_TRANSCRIPT_TYPE = "episodic"
 
 TYPE_COLOR = {
@@ -137,11 +139,12 @@ def load_summary(stem: str) -> dict:
 def snapshot_path(stem: str, summary: dict) -> Path:
     """Where this run's memory snapshot actually is.
 
-    The summary carries a `memory_file` pointer, and for one arm in this set that pointer is stale —
-    `nemori_upstream`'s says `..._e3sA.memory.jsonl` where the file on disk is `..._e3sA_c0`,
-    because the run label gained its `_c0` suffix after the field was written. The pointer is tried
-    first and the run's own stem second, so the demo neither trusts a wrong pointer nor silently
-    papers over one that is right.
+    The summary carries a `memory_file` pointer, and building this page is how two summaries were
+    found naming files nobody wrote — `nemori_upstream`'s three pointers still said `..._e3sA` after
+    the artifacts were renamed to `..._e3sA_c0`. Those are repaired now, and the rule they broke is
+    pinned by `tests/test_artifact_pointers.py`, so the fallback below is no longer load-bearing.
+    It stays because the pointer is data from a file this script does not own: trying the pointer
+    first honors it, falling back to the run's own stem survives the next one that drifts.
     """
     pointed = RESULTS_DIR / summary.get("memory_file", "")
     if pointed.is_file():
@@ -469,7 +472,7 @@ Embedding calls are listed apart from generative ones on purpose. They are price
 magnitude differently, and a single "LLM calls" column that silently merges them is how one of this
 repository's own cost claims went wrong ([ledger C-entry on MemoryOS](../17-defect-ledger.md)).
 
-### An inconsistency this page found and will not paper over
+### An inconsistency this page found, and the defect behind it
 
 Every arm's op log records {turn_count} `ADD:episodic` operations, but the raw transcript is present
 in only {arms_with_transcript} of the {arm_count} memory snapshots:
@@ -479,12 +482,21 @@ in only {arms_with_transcript} of the {arm_count} memory snapshots:
 {transcript_rows}
 
 The two arms missing it are exactly the two that override the doc store to `PostgresDocStore`
-(`configs.NEMORI_STORE`), while the others use the default — so the likeliest reading is that the
-snapshot writer's `list_episodes` came back empty against that backend, not that the episodes were
-never written. **That is a guess, and it is left as one.** Nothing on this page depends on it: the
-counts above are derived items only, and the op log is the durable record either way. It is recorded
-here because a demo that noticed an artifact disagreeing with itself and said nothing would be worth
-less than no demo.
+(`configs.NEMORI_STORE`) — and the cause turned out to be simple: **`PostgresDocStore` did not
+implement `list_episodes` at all.** `SqliteDocStore` did, three call sites already used it, and the
+`DocStore` protocol never declared it, so nothing forced the gap into the open. The snapshot writer
+calls it through a `getattr` guard, so on the Postgres-backed arms it skipped the transcript **in
+silence** — producing an artifact that looked complete and simply had no transcript in it.
+
+The episodes were written; only the snapshot of them was not. Nothing on this page moves either way:
+the counts above are derived items, which come from `list_items`, and the op log is the durable
+record regardless.
+
+Fixed rather than annotated: `list_episodes` is now part of the `DocStore` protocol with its
+oldest-first contract stated, `PostgresDocStore` implements it, the writer's guard now logs a warning
+instead of skipping quietly, and `tests/test_store_contract.py` fails if any backend is missing a
+method its protocol declares. **The affected artifacts are NOT regenerated** — that would mean
+re-running paid ingests to fill in a snapshot whose absence changed no measurement.
 
 ## The operations behind those counts
 

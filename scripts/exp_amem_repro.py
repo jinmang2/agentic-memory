@@ -291,6 +291,20 @@ def dump_memory_snapshot(mem: AgenticMemory, conv_idx: int, out) -> dict[str, in
     count dict for the run's memory_capacity block."""
     counts: dict[str, int] = {}
     list_eps = getattr(mem.doc_store, "list_episodes", None)
+    if not callable(list_eps):
+        # Loud, because the quiet version cost us a campaign's transcripts. `PostgresDocStore` had
+        # no `list_episodes` while this guard skipped it in silence, so every Nemori-arm snapshot
+        # came out with zero episodic rows and no `episodic` key in memory_capacity — an artifact
+        # that looked complete and simply had no transcript in it. The method is now part of the
+        # DocStore contract and pinned by tests/test_store_contract.py; this branch stays as the
+        # explicit degradation the conventions require of any capability that can be missing.
+        # The `agmem` channel, matching `_setup_logging` — root-level would bury it under httpx.
+        logging.getLogger("agmem").warning(
+            "%s has no list_episodes(): the memory snapshot for conv %d will contain NO episodic "
+            "rows and memory_capacity will omit 'episodic'. The derived item types are unaffected.",
+            type(mem.doc_store).__name__,
+            conv_idx,
+        )
     if callable(list_eps):
         eps = list_eps(mem.namespace)
         for ep in eps:

@@ -139,6 +139,34 @@ class PostgresDocStore:
             cur.execute(sql, args)
             return int(cur.fetchone()[0])
 
+    def list_episodes(self, namespace: str | None = None) -> list[Episode]:
+        """Full scan of raw episodes, oldest-first, optionally namespace-scoped (`DocStore`).
+
+        This method was ABSENT here while `SqliteDocStore` had it and three call sites used it, so
+        every run configured onto this backend — the two Nemori arms, via `configs.NEMORI_STORE` —
+        produced a memory snapshot containing no episodic rows. `ORDER BY timestamp` mirrors the
+        sqlite implementation because the oldest-first guarantee is what callers slice against.
+        """
+        sql = "SELECT id, namespace, role, content, timestamp, meta FROM episodes"
+        args: tuple = ()
+        if namespace:
+            sql += " WHERE namespace = %s"
+            args = (namespace,)
+        with self._lock, self._conn.cursor() as cur:
+            cur.execute(sql + " ORDER BY timestamp", args)
+            rows = cur.fetchall()
+        return [
+            Episode(
+                id=r[0],
+                namespace=r[1],
+                role=r[2],
+                content=r[3],
+                timestamp=datetime.fromisoformat(r[4]),
+                meta=json.loads(r[5]),
+            )
+            for r in rows
+        ]
+
     def search_lexical(
         self, query: str, k: int = 10, namespace: str | None = None
     ) -> list[tuple[str, float]]:

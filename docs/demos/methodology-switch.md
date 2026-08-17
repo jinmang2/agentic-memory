@@ -44,7 +44,7 @@ Embedding calls are listed apart from generative ones on purpose. They are price
 magnitude differently, and a single "LLM calls" column that silently merges them is how one of this
 repository's own cost claims went wrong ([ledger C-entry on MemoryOS](../17-defect-ledger.md)).
 
-### An inconsistency this page found and will not paper over
+### An inconsistency this page found, and the defect behind it
 
 Every arm's op log records 419 `ADD:episodic` operations, but the raw transcript is present in only
 3 of the 5 memory snapshots:
@@ -58,12 +58,21 @@ Every arm's op log records 419 `ADD:episodic` operations, but the raw transcript
 | `zep_cross_encoder` | 419 | 419 |
 
 The two arms missing it are exactly the two that override the doc store to `PostgresDocStore`
-(`configs.NEMORI_STORE`), while the others use the default — so the likeliest reading is that the
-snapshot writer's `list_episodes` came back empty against that backend, not that the episodes were
-never written. **That is a guess, and it is left as one.** Nothing on this page depends on it: the
-counts above are derived items only, and the op log is the durable record either way. It is recorded
-here because a demo that noticed an artifact disagreeing with itself and said nothing would be worth
-less than no demo.
+(`configs.NEMORI_STORE`) — and the cause turned out to be simple: **`PostgresDocStore` did not
+implement `list_episodes` at all.** `SqliteDocStore` did, three call sites already used it, and the
+`DocStore` protocol never declared it, so nothing forced the gap into the open. The snapshot writer
+calls it through a `getattr` guard, so on the Postgres-backed arms it skipped the transcript **in
+silence** — producing an artifact that looked complete and simply had no transcript in it.
+
+The episodes were written; only the snapshot of them was not. Nothing on this page moves either way:
+the counts above are derived items, which come from `list_items`, and the op log is the durable
+record regardless.
+
+Fixed rather than annotated: `list_episodes` is now part of the `DocStore` protocol with its
+oldest-first contract stated, `PostgresDocStore` implements it, the writer's guard now logs a
+warning instead of skipping quietly, and `tests/test_store_contract.py` fails if any backend is
+missing a method its protocol declares. **The affected artifacts are NOT regenerated** — that would
+mean re-running paid ingests to fill in a snapshot whose absence changed no measurement.
 
 ## The operations behind those counts
 
