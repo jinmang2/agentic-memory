@@ -76,7 +76,9 @@ def upstream_prompt(entry, topk_context, max_retrieval_length=126_200, history_f
         else:
             sess_string = ""  # :240-247
             for turn_entry in chunk_entry:
-                sess_string += "\n\n{}: {}".format(turn_entry["role"], turn_entry["content"].strip())
+                sess_string += "\n\n{}: {}".format(
+                    turn_entry["role"], turn_entry["content"].strip()
+                )
         history_string += f"\n### Session {i + 1}:\nSession Date: {chunk_date}\nSession Content:\n{sess_string}\n"  # :252
 
     tokens = enc.encode(history_string, allowed_special={"<|endoftext|>"})  # :266-271

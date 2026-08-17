@@ -789,9 +789,7 @@ def run_instance(
         memory_types=memory_types,
         budget_tokens=budget_tokens,
         reading_method=reading_method,
-        history=(
-            render_sessions(instance, max_sessions, history_format) if full_context else None
-        ),
+        history=(render_sessions(instance, max_sessions, history_format) if full_context else None),
         max_history_tokens=max_history_tokens,
         capture=capture,
         budget_key=f"generate|{budget_key}" if budget_key else None,
