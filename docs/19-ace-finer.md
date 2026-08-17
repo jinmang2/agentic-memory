@@ -9,9 +9,10 @@ can put a number against, and this document is that number.
 **What this is and is not.** It is not a reproduction of 69.1 → 81.9. That figure was produced by a
 much stronger generator than the one priced here, through a training loop that spends two to three
 times the calls ours does. It is a controlled measurement of one question: *on the same 441 questions,
-does growing an ACE playbook alongside beat not growing one?* — asked under both dedup settings, ours
-and upstream's, because the answer came back null and a null is only worth reading once the knob that
-could have caused it has been turned.
+does growing an ACE playbook alongside beat not growing one?* — asked four ways, because the answer
+came back null and a null is only worth reading once the knobs that could have caused it have been
+turned: under our dedup and under upstream's default, with one reflection per sample and with
+upstream's reflect-and-re-answer rounds.
 
 ## Protocol
 
@@ -22,7 +23,8 @@ could have caused it has been turned.
 | Reflector / Curator | `gpt-4o-mini`, temperature 0, `max_tokens` 4096 (one role — see condition 4) |
 | Embedder | `text-embedding-3-small` (curator dedup + task episodes) |
 | Adaptation | upstream's **online** mode: 30 windows of 15, each answered with the playbook as it stands and only then trained on (`ace.py:939-997`) |
-| Curator dedup | two arms: **0.90 cosine** (ours, deviation D5) and **off** (upstream's shipped default) |
+| Curator dedup | **0.90 cosine** (ours, deviation D5), and **off** in the `nodedup` arm (upstream's shipped default) |
+| Adaptation rounds | **1** reflection per sample, and **up to 3** reflect-and-re-answer rounds in the `retry` arm (upstream's `max_num_rounds`, condition 2) |
 | Seeds | **one** |
 
 ## Results
@@ -32,6 +34,7 @@ could have caused it has been turned.
 | **base** — empty playbook, no learning | **48.24** | 16.10 | 441 | $0.192 | — |
 | **online** — grown, our dedup at 0.90 | 46.71 | 15.42 | 1,323 | $1.461 | 140 bullets / 43.7 K chars |
 | **nodedup** — grown, dedup off (upstream's default) | **48.98** | **17.01** | 1,325 | **$8.633** | 2,165 bullets / 639 K chars |
+| **retry** — grown, dedup 0.90, upstream's reflect-and-re-answer rounds | 45.80 | 12.70 | 2,918 | $4.394 | 217 bullets / 63.6 K chars |
 
 Paired over the same questions in the same order (bootstrap imported from `scripts/ext/x1_power.py`,
 10,000 resamples, seed 0):
@@ -40,15 +43,28 @@ Paired over the same questions in the same order (bootstrap imported from `scrip
 sample_accuracy   online  - base     Δ = -0.68 pp   95% CI [-3.40, +2.04]   p = 0.687   NOT separated
 sample_accuracy   nodedup - base     Δ = +0.91 pp   95% CI [-2.04, +3.86]   p = 0.607   NOT separated
 sample_accuracy   nodedup - online   Δ = +1.59 pp   95% CI [-1.59, +4.76]   p = 0.337   NOT separated
+sample_accuracy   retry   - base     Δ = -3.40 pp   95% CI [-6.12, -0.68]   p = 0.021   separated*
+sample_accuracy   retry   - online   Δ = -2.72 pp   95% CI [-5.67, +0.00]   p = 0.067   NOT separated
 tag_accuracy      online  - base     Δ = -1.53 pp   (point estimates — see "one interval is missing")
 tag_accuracy      nodedup - base     Δ = +0.74 pp
-per-window sign   online ahead in 10 of 30; nodedup ahead in 14, behind in 14, tied in 2
+tag_accuracy      retry   - base     Δ = -2.44 pp
+per-window sign   online ahead in 10 of 30; nodedup 14; retry 12
 ```
 
+\* **and that asterisk is load-bearing.** Four arms means four comparisons against
+the same base, and a 0.05 threshold applied four times is not a 0.05 threshold: a
+Bonferroni correction puts the bar at 0.0125, which p = 0.021 does not clear. The
+comparison that isolates the retry loop with everything else held fixed — retry
+against online, same dedup, same prompts, same model — has an interval that
+touches zero. **So the defensible claim is that upstream's extra calls bought no
+measurable improvement, with every point estimate on the negative side. It is not
+that retries are proven harmful.**
+
 **Growing a playbook over 441 samples produced no measurable improvement — under our dedup at 7.6×
-the cost, and under upstream's default at 45× the cost.** The point estimates sit on either side of
-zero depending on the arm and every interval covers it, so the claim this supports is *no measurable
-effect*, **not** that the playbook helps or hurts.
+the cost, under upstream's default at 45×, and with upstream's retry rounds at 23×.** Three of the
+four intervals cover zero; the fourth (retry against base) sits below it but does not survive a
+correction for having asked four times. So the claim this supports is *no measurable effect*, **not**
+that the playbook helps, and not that it demonstrably hurts.
 
 The third arm exists because the second one could not answer for itself. A null under our
 always-on dedup has two readings — the adaptation does not transfer, or our gate threw the
@@ -169,6 +185,49 @@ confusions fell sharply — 34→12, 33→23, 28→18, 20→5, 15→2 — but it
 and reappeared in the tail. A method can reshape the error distribution and buy nothing on the
 metric, and this is what that looks like from the inside.
 
+### The retry arm writes the knowledge — and it still does not convert
+
+Everything above diagnosed the null as a *capture* failure: the task was learnable, the errors
+were repetitive, and the playbook did not cover them. The `retry` arm falsifies that diagnosis. Give
+the reflector a REGENERATED attempt to diagnose — upstream's loop, `max_num_rounds`=3, early stop —
+and the curator starts naming things:
+
+| | online | nodedup | **retry** |
+|---|---|---|---|
+| bullets kept | 140 | 2,165 | 217 |
+| top-50 confusions with both tags named | 7 | 0 | **30** |
+| of the 115 gold tags ever missed, named | 24 | 9 | **73** |
+| proposed bullets carrying an identifier | 9.4% | 4.0% | **52.8%** |
+| …by fifth of the run | 4.8 / 16.9 / 7.2 / 12.0 / 4.8 | 2.3 / 15.9 / 1.8 / 0.0 / 0.0 | **11.8 / 47.3 / 67.3 / 68.2 / 69.1** |
+
+The specificity does not merely start higher, it **climbs** — from 11.8% in the first fifth to 69.1%
+in the last, the opposite of the drift the other two arms show. The mechanism is visible in the
+trace: 385 of 441 samples were re-answered, **129 of them corrected inside the training step**, and a
+reflection written about an attempt that a specific correction fixed is a reflection with a specific
+thing to say. Upstream's extra calls buy exactly the thing this document said was missing.
+
+**And the accuracy went down.** Not "did not improve" — down, on every metric and against every
+reference, with the one separated comparison sitting on the negative side.
+
+That is a harder result than the null it replaces, because it removes the comfortable explanation.
+The playbook was not vague, and it was not empty; it covered 30 of the 50 confusions that produce
+half the errors, in the arm's own words, and 441 questions later the arm answered fewer of them
+correctly. Two readings remain, and this run does not separate them:
+
+- **Injection cost.** 217 specific tag-pair rules ride in every generator call. A rule that
+  disambiguates `DebtInstrumentBasisSpreadOnVariableRate1` is noise on a question about leases, and
+  there are now 217 of them competing for the model's attention on every question. The per-window
+  record is consistent with this: retry runs +1.00 pp against online over the first half and
+  **−3.28 pp over the second**, as the rule set grows.
+- **Selection.** A bullet written about a sample that a retry corrected is knowledge derived from
+  an attempt the generator only produced *after* being told what it got wrong. It may not describe
+  anything reachable on a first attempt.
+
+Distinguishing them needs an arm that grows the retry playbook and then serves it at a fixed size,
+or one that answers with the retry playbook but never learns — neither of which is in this budget.
+**What the campaign can say is stated and no more: the knowledge-capture explanation for ACE's null
+on FiNER is now excluded, at this operating point.**
+
 ## Why the base arm is half the finding
 
 Upstream reads adaptation off its online window curve — window *w* is scored, then trained on, and
@@ -256,6 +315,12 @@ interval narrower than the truth. Neither is worth an interval, so `finer_paired
    Reading the online loop also settles a question worth stating: **the reported accuracy is not
    contaminated by training on the sample being scored.** The window is tested in full before any
    training happens on it (`ace.py:950-996`), which is the protocol our arms follow.
+
+   **Measured 2026-08-17 (the `retry` arm).** The rounds are reproduced and the question is
+   answered: they buy no measurable accuracy (retry − online Δ −2.72 pp, CI [−5.67, +0.00]) at
+   2.2x the calls, and they transform what the playbook contains — see "the retry arm writes the
+   knowledge". The two calls upstream spends re-answering a question it has already answered and
+   re-answering it once more after curating remain unreproduced, because neither feeds learning.
 3. **One attempt is scored and learned from.** Upstream answers a window for scoring and then calls
    the generator *again* inside its training step; we reflect on the attempt already scored.
 4. **Reflector and curator share one role**, so they cannot take different models or temperatures;
@@ -303,6 +368,7 @@ because the scorer lowercases both sides, but it is noise in the labels rather t
 | base | `results/repro/gpt-4o-mini_ace_finer_base.json` |
 | online | `results/repro/gpt-4o-mini_ace_finer_online.json` |
 | nodedup | `results/repro/gpt-4o-mini_ace_finer_nodedup.json` |
+| retry | `results/repro/gpt-4o-mini_ace_finer_retry.json` — records carry `retry_attempts` and `corrected_in_training` per sample |
 | paired analysis | `results/repro/finer_paired.json` (`scripts/repro/finer_paired.py`, `--reference` selects which arm the others are paired against) |
 | error structure | `results/repro/finer_error_structure.json` (`scripts/repro/finer_error_structure.py`) |
 | pre-flight smokes | `..._ace_finer_smoke30{,b,c}.json` — the runs that caught the prompt defect below |

@@ -65,6 +65,7 @@ ARMS = {
     "base": "gpt-4o-mini_ace_finer_base",
     "online": "gpt-4o-mini_ace_finer_online",
     "nodedup": "gpt-4o-mini_ace_finer_nodedup",
+    "retry": "gpt-4o-mini_ace_finer_retry",
 }
 
 

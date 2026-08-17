@@ -1,0 +1,460 @@
+{
+  "arm": "online",
+  "stamp": {
+    "model": "gpt-4o-mini",
+    "embedder": "text-embedding-3-small",
+    "endpoint": "https://api.openai.com/v1",
+    "split": "test",
+    "n_samples": 441,
+    "window": 15,
+    "role_temps": {
+      "generate": {
+        "temperature": 0.0
+      },
+      "distill": {
+        "temperature": 0.0,
+        "max_tokens": 4096
+      }
+    },
+    "organizers": [
+      "ace"
+    ],
+    "dedup_threshold": 0.9,
+    "dedup_enabled": true,
+    "max_rounds": 3,
+    "deviations": [
+      "D1_structured_output",
+      "D3D4_retries_on_no_duplicate_or_post_curate_generation",
+      "D5_dedup_on"
+    ],
+    "context_markers_absent": 441,
+    "git_sha": "315bfe3c834c0778dbbc5eeefaeda3291921f22f",
+    "utc_started": "2026-08-17T08:34:21.683893+00:00",
+    "utc_finished": "2026-08-17T11:27:45.646557+00:00",
+    "dry_run": false,
+    "resumed_from_records": 150,
+    "max_spend_usd": 4.5,
+    "prior_spend_usd": 1.053662,
+    "complete": true,
+    "embed_model_priced_as": "text-embedding-3-small"
+  },
+  "overall": {
+    "tag_accuracy": 45.8,
+    "sample_accuracy": 12.7,
+    "n": 441,
+    "n_tags": 1764,
+    "n_failed": 0,
+    "n_no_answer": 0,
+    "n_over_predicted": 0
+  },
+  "per_window": [
+    {
+      "tag_accuracy": 60.0,
+      "sample_accuracy": 26.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 0,
+      "start": 0,
+      "playbook_chars_at_test": 7,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 43.33,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 1,
+      "start": 15,
+      "playbook_chars_at_test": 5585,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 43.33,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 2,
+      "start": 30,
+      "playbook_chars_at_test": 10887,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 46.67,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 3,
+      "start": 45,
+      "playbook_chars_at_test": 15274,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 43.33,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 4,
+      "start": 60,
+      "playbook_chars_at_test": 18646,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 41.67,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 5,
+      "start": 75,
+      "playbook_chars_at_test": 21724,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 55.0,
+      "sample_accuracy": 33.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 6,
+      "start": 90,
+      "playbook_chars_at_test": 24020,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 45.0,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 7,
+      "start": 105,
+      "playbook_chars_at_test": 26456,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 45.0,
+      "sample_accuracy": 20.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 8,
+      "start": 120,
+      "playbook_chars_at_test": 28853,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 33.33,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 9,
+      "start": 135,
+      "playbook_chars_at_test": 30050,
+      "resumed": true
+    },
+    {
+      "tag_accuracy": 41.67,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 10,
+      "start": 150,
+      "playbook_chars_at_test": 35440
+    },
+    {
+      "tag_accuracy": 58.33,
+      "sample_accuracy": 20.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 11,
+      "start": 165,
+      "playbook_chars_at_test": 37004
+    },
+    {
+      "tag_accuracy": 50.0,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 12,
+      "start": 180,
+      "playbook_chars_at_test": 38128
+    },
+    {
+      "tag_accuracy": 53.33,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 13,
+      "start": 195,
+      "playbook_chars_at_test": 39418
+    },
+    {
+      "tag_accuracy": 46.67,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 14,
+      "start": 210,
+      "playbook_chars_at_test": 42562
+    },
+    {
+      "tag_accuracy": 43.33,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 15,
+      "start": 225,
+      "playbook_chars_at_test": 44765
+    },
+    {
+      "tag_accuracy": 46.67,
+      "sample_accuracy": 20.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 16,
+      "start": 240,
+      "playbook_chars_at_test": 46404
+    },
+    {
+      "tag_accuracy": 40.0,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 17,
+      "start": 255,
+      "playbook_chars_at_test": 47625
+    },
+    {
+      "tag_accuracy": 33.33,
+      "sample_accuracy": 20.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 18,
+      "start": 270,
+      "playbook_chars_at_test": 49345
+    },
+    {
+      "tag_accuracy": 41.67,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 19,
+      "start": 285,
+      "playbook_chars_at_test": 50711
+    },
+    {
+      "tag_accuracy": 45.0,
+      "sample_accuracy": 0.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 20,
+      "start": 300,
+      "playbook_chars_at_test": 52227
+    },
+    {
+      "tag_accuracy": 48.33,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 21,
+      "start": 315,
+      "playbook_chars_at_test": 53207
+    },
+    {
+      "tag_accuracy": 55.0,
+      "sample_accuracy": 20.0,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 22,
+      "start": 330,
+      "playbook_chars_at_test": 55340
+    },
+    {
+      "tag_accuracy": 46.67,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 23,
+      "start": 345,
+      "playbook_chars_at_test": 57288
+    },
+    {
+      "tag_accuracy": 41.67,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 24,
+      "start": 360,
+      "playbook_chars_at_test": 59260
+    },
+    {
+      "tag_accuracy": 46.67,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 25,
+      "start": 375,
+      "playbook_chars_at_test": 59573
+    },
+    {
+      "tag_accuracy": 40.0,
+      "sample_accuracy": 26.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 26,
+      "start": 390,
+      "playbook_chars_at_test": 61184
+    },
+    {
+      "tag_accuracy": 50.0,
+      "sample_accuracy": 13.33,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 27,
+      "start": 405,
+      "playbook_chars_at_test": 61927
+    },
+    {
+      "tag_accuracy": 43.33,
+      "sample_accuracy": 6.67,
+      "n": 15,
+      "n_tags": 60,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 28,
+      "start": 420,
+      "playbook_chars_at_test": 62518
+    },
+    {
+      "tag_accuracy": 45.83,
+      "sample_accuracy": 16.67,
+      "n": 6,
+      "n_tags": 24,
+      "n_failed": 0,
+      "n_no_answer": 0,
+      "n_over_predicted": 0,
+      "window": 29,
+      "start": 435,
+      "playbook_chars_at_test": 63554
+    }
+  ],
+  "llm_budget": {
+    "generate": {
+      "calls": 907,
+      "tokens_in": 10478911,
+      "tokens_out": 180741,
+      "latency_ms_avg": 4710.7,
+      "errors": 0
+    },
+    "distill": {
+      "calls": 940,
+      "tokens_in": 10012928,
+      "tokens_out": 255901,
+      "latency_ms_avg": 5653.9,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 2947,
+      "tokens_in": 220804,
+      "tokens_out": 0,
+      "latency_ms_avg": 320.4,
+      "errors": 0
+    }
+  },
+  "memory_capacity": {
+    "episodic": 454,
+    "playbook": 217
+  },
+  "op_counts": {
+    "ADD:episodic": 454,
+    "ADD:playbook": 217,
+    "UPDATE:playbook": 3464
+  },
+  "timing": {
+    "eval_s": 10578.6
+  },
+  "records_file": "gpt-4o-mini_ace_finer_retry.records.jsonl",
+  "cost_usd": 4.393839,
+  "cost_usd_this_process": 3.340177
+}

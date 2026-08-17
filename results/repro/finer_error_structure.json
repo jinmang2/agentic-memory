@@ -259,6 +259,126 @@
           "covered": false
         }
       ]
+    },
+    "retry": {
+      "playbook": {
+        "bullets": 217,
+        "chars": 53190
+      },
+      "specificity_proposed": {
+        "n": 553,
+        "names_gold_tag_pct": 54.8,
+        "has_identifier_pct": 52.8,
+        "has_identifier_pct_by_band": [
+          11.8,
+          47.3,
+          67.3,
+          68.2,
+          69.1
+        ],
+        "distinct_gold_tags_named": 98
+      },
+      "specificity_survived": {
+        "n": 217,
+        "names_gold_tag_pct": 45.2,
+        "has_identifier_pct": 43.3,
+        "has_identifier_pct_by_band": [
+          2.3,
+          41.9,
+          60.5,
+          65.1,
+          48.8
+        ],
+        "distinct_gold_tags_named": 87
+      },
+      "coverage": [
+        {
+          "top_k": 10,
+          "pairs_with_both_tags_named": 6,
+          "share_of_all_errors": 22.8
+        },
+        {
+          "top_k": 25,
+          "pairs_with_both_tags_named": 15,
+          "share_of_all_errors": 36.7
+        },
+        {
+          "top_k": 50,
+          "pairs_with_both_tags_named": 30,
+          "share_of_all_errors": 51.5
+        }
+      ],
+      "gold_tags_named_in_playbook": 73,
+      "n_questions_compared": 441,
+      "prefix_of_base": false,
+      "errors_slots_wrong_on_prefix": 956,
+      "errors_base_slots_wrong_on_prefix": 913,
+      "top_confusions": [
+        {
+          "gold": "debtinstrumentbasisspreadonvariablerate1",
+          "pred": "debtinstrumentinterestrateeffectivepercentage",
+          "base": 34,
+          "arm": 38,
+          "base_all": 34,
+          "covered": true
+        },
+        {
+          "gold": "lineofcreditfacilitymaximumborrowingcapacity",
+          "pred": "lineofcreditfacilitycurrentborrowingcapacity",
+          "base": 33,
+          "arm": 17,
+          "base_all": 33,
+          "covered": true
+        },
+        {
+          "gold": "debtinstrumentinterestratestatedpercentage",
+          "pred": "debtinstrumentinterestrateeffectivepercentage",
+          "base": 28,
+          "arm": 57,
+          "base_all": 28,
+          "covered": true
+        },
+        {
+          "gold": "concentrationriskpercentage1",
+          "pred": "revenues",
+          "base": 20,
+          "arm": 18,
+          "base_all": 20,
+          "covered": false
+        },
+        {
+          "gold": "allocatedsharebasedcompensationexpense",
+          "pred": "sharebasedcompensation",
+          "base": 20,
+          "arm": 8,
+          "base_all": 20,
+          "covered": true
+        },
+        {
+          "gold": "lineofcredit",
+          "pred": "lineofcreditfacilitycurrentborrowingcapacity",
+          "base": 18,
+          "arm": 10,
+          "base_all": 18,
+          "covered": true
+        },
+        {
+          "gold": "sharebasedcompensationarrangementbysharebasedpaymentawardequityinstrumentsotherthanoptionsnonvestednumber",
+          "pred": "sharebasedcompensationarrangementbysharebasedpaymentawardnumberofsharesauthorized",
+          "base": 15,
+          "arm": 10,
+          "base_all": 15,
+          "covered": false
+        },
+        {
+          "gold": "sharebasedcompensationarrangementbysharebasedpaymentawardequityinstrumentsotherthanoptionsgrantsinperiod",
+          "pred": "sharebasedcompensationarrangementbysharebasedpaymentawardnumberofsharesauthorized",
+          "base": 15,
+          "arm": 13,
+          "base_all": 15,
+          "covered": false
+        }
+      ]
     }
   },
   "coverage_note": "`covered` means both tags of the pair appear SOMEWHERE in the playbook text, not that a correct distinguishing rule is present. It is an upper bound on coverage; a low value is safe to cite, a high one would not be."
