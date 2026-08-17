@@ -194,6 +194,14 @@ Reflector 분리와 multi-epoch refinement 모두 유의미하게 기여.
 
 # 2. LongMemEval
 
+> ⚠️ **이 절과 §3은 [`longmemeval.md`](longmemeval.md)로 대체됐다 (2026-08-17).** 그 문서가 정본이며,
+> 공식 코드를 SHA `9e0b455`로 클론해 재대조하고 폐기본까지 받아 diff한 결과를 담는다.
+> 아래 내용 중 **여섯 항목이 틀린 것으로 판명**됐다(정본 §0의 교정표). 특히:
+> chars/token은 4.045가 아니라 **4.610**(→ `_s` 중앙값 113,840 토큰, 전체 55.9M),
+> §2의 "Llama-70B 72.0%"는 **GPT-4o top-10의 오귀속**,
+> §3B의 "폐기본이라 대조 불가"는 **`_s`에만 해당**(oracle은 두 릴리스가 sha256 동일).
+> 인용은 정본에서 할 것.
+
 **논문**: "LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory"
 (arXiv:2410.10813, **ICLR 2025**, 저자 Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, Dong Yu)
 
@@ -339,7 +347,9 @@ LongMemEval/
 - Oracle (evidence만) GPT-4o: **~87%**
 - LongMemEval_S full-context: GPT-4o **60.6%** (오라클 대비 -30%p), Llama-3.1-70B 33.4%, Llama-3.1-8B 45.4%
 - 상용 시스템(축소 세팅): ChatGPT(GPT-4o) 57.7%, Coze 33.0%
-- LongMemEval_M + 최적 retrieval 구성(round decomposition + key=value+fact): GPT-4o 65.7%, Llama-70B 72.0%
+- LongMemEval_M + 최적 retrieval 구성(round decomposition + key=value+fact): GPT-4o 65.7%(top-5)
+  / 72.0%(top-10) — **교정 2026-08-17**: 72.0을 Llama-70B로 적었으나 둘 다 GPT-4o이고,
+  Llama-3.1-70B는 .638(top-5)/.682(top-10)다 (논문 Table 3)
 - 핵심 메시지: long-context LLM도 지속 상호작용 기억에서 **30~60%p 성능 하락**
 - Reading method는 `con`(extract-then-reason, Chain-of-Note 스타일) + history format `json` 권장 — 이 설정만으로 최대 10%p 차이
 

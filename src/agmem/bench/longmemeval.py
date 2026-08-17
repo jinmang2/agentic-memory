@@ -164,9 +164,15 @@ def iter_turns(
 
 
 def evidence_session_ids(instance: dict[str, Any]) -> set[str]:
-    """``answer_session_ids`` -- the session-level recall gold. Empty for
-    abstention questions, which have no answer location by construction (the
-    official retrieval evaluation drops them for exactly that reason)."""
+    """``answer_session_ids`` -- the session-level recall gold.
+
+    It is NOT empty for abstention questions, contrary to what this docstring
+    claimed until 2026-08-17: measured on ``longmemeval_s_cleaned``, all 30
+    abstention instances carry exactly one ``answer_session_id`` (the session
+    holding the false premise's subject) and **zero** ``has_answer`` turns. So
+    the session-level gold exists while the turn-level gold does not, and the
+    official retrieval evaluation drops abstention instances for the second
+    reason, not the first (run_retrieval.py:396)."""
     return {str(s) for s in instance.get("answer_session_ids", [])}
 
 
