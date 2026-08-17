@@ -123,7 +123,7 @@
     "MERGE:episodes": 18,
     "INVALIDATE:episodes": 18
   },
-  "llm_trace_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.llm-trace.jsonl",
-  "memory_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.memory.jsonl",
-  "op_log_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA.memory.ops.jsonl"
+  "llm_trace_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA_c0.llm-trace.jsonl",
+  "memory_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA_c0.memory.jsonl",
+  "op_log_file": "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA_c0.memory.ops.jsonl"
 }
