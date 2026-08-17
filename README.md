@@ -26,6 +26,22 @@ Every row below was found by reading the paper against the official repository, 
 
 This is **not a criticism of those projects** — it is the ordinary condition of research code, and all nine are serious pieces of work. It is, however, fatal to the naive goal of "being faithful to the paper," because that target does not exist as a single point.
 
+**You do not have to take that table on trust.** Six scripts re-derive those rows on your own machine, against the exact upstream commits each defect was found at — **no model call, no API key, $0**, about 25 seconds:
+
+```bash
+uv sync --no-default-groups --group dev
+cd scripts/repro/defects
+uv run --no-default-groups --group dev python run_all.py --fetch   # --fetch pulls the pinned snapshots
+```
+
+```
+6 passed, 0 skipped, 0 failed — 14 claims re-proved in 23.4s, $0 spent.
+
+VERDICT: all 6 reproductions held.
+```
+
+Each line of output is printed by the script that proved it. A script whose evidence is missing prints `SKIP` and proves nothing, and a run where *nothing* was proved exits non-zero — a broken setup must not be able to look like a clean bill of health. CI runs these same scripts on every push, against the same pins, from the same fetch script. Full output and what each one proves: [docs/demos/reproduce-defects.md](docs/demos/reproduce-defects.md).
+
 **The stance this repo takes instead: pin the lineage.** Every divergent constant names the lineage it came from, and the choice is an explicit, switchable, tested object:
 
 ```python
@@ -148,7 +164,7 @@ src/agmem/
   bench/         LoCoMo and LongMemEval harnesses
   mcp/           MCP server
   hooks/         Claude Code SessionStart recall and UserPromptSubmit capture
-docs/            design record (00–18) + docs/research/ paper↔code forensics
+docs/            design record (00–20) + docs/research/ paper↔code forensics + docs/demos/
 tests/           711 tests, incl. fidelity pinning suites
 ```
 
@@ -156,6 +172,7 @@ tests/           711 tests, incl. fidelity pinning suites
 
 | Doc | What's in it |
 |---|---|
+| [docs/demos/](docs/demos/) | short pages that show one thing each and cost $0 to check: the defect reproductions above, and where an ACE run's money actually went |
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
 | [docs/19-ace-finer.md](docs/19-ace-finer.md) | ACE's self-evolving playbook on FiNER, measured against not having one — and why the control arm is half the finding |
