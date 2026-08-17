@@ -206,6 +206,85 @@ variable we pinned but did not validate (P3).
 smoke that preceded them was $0.03. This is the cheapest link in claim C's chain and it is the one
 that closes it.
 
+## `_s`: the same 500 questions, 19x the haystack
+
+Everything above is the ceiling condition. `longmemeval_s` is the same 500
+questions with the evidence buried in ~48 filler sessions — 113,840 tokens at the
+median against oracle's 6,127 — and it is where a memory system would have
+something to do. One arm, full context, no memory: **gpt-4o-mini × con, 500/500,
+$9.07.** **[실측]**
+
+| | oracle | `_s` | drop |
+|---|---|---|---|
+| task-averaged | 83.89 | **58.40** | −25.49 |
+| overall | 83.60 | **60.40** | −23.20 |
+| single-session-user | 97.14 | 84.29 | −12.85 |
+| single-session-assistant | 98.21 | 92.86 | −5.35 |
+| **single-session-preference** | 63.33 | **3.33** | **−60.00** |
+| multi-session | 75.19 | 50.38 | −24.81 |
+| temporal-reasoning | 79.70 | 54.14 | −25.56 |
+| knowledge-update | 89.74 | 65.38 | −24.36 |
+| abstention | 83.33 | 73.33 | −10.00 |
+
+**The 23-point drop corroborates the paper with a different reader.** GPT-4o falls
+.924 → .640 with CoN (−28.4 pp, −30.7% relative); our gpt-4o-mini falls
+83.60 → 60.40 (−23.2 pp, −27.8% relative). Nothing about the prompt was capped —
+`max_history_tokens` is never passed, so the whole 523 KB haystack goes to the
+API, which is what upstream does too (its truncation is a no-op on this data).
+
+**Reading a haystack that FITS still costs 23 points.** `_s` is inside a 128 K
+window by construction (§2.7: it was packed to `enforce_json_length=115000`), so
+this is not a truncation effect. It is the reason the benchmark still has
+something to measure in 2026 — and the reason a memory system can be worth
+paying for even when the context technically fits.
+
+### One type does not degrade — it collapses
+
+**single-session-preference goes 63.33 → 3.33.** One of thirty. That is not a
+harness artefact, and it was checked by hand before being written down:
+
+> *Q: "Can you recommend some resources where I can learn more about video editing?"*
+> *Rubric: the user prefers resources specific to Adobe Premiere Pro, especially its advanced settings.*
+> **oracle** (1 session, 27 KB) — "From the chat history, the assistant provided several resources for learning about **Adobe Premiere Pro**…" → correct
+> **`_s`** (50 sessions, 523 KB) — "Video editing can be learned through various types of resources: Online courses… **Udemy**… YouTube tutorials…" → generic, correct answer to a question nobody asked
+
+The model does not retrieve the preference *and misuse* it. It **stops
+personalising at all** and answers the question as if no history existed. At
+113 K tokens, the first thing to die is not recall of facts (SSU is still 84.29,
+SSA 92.86) but the *use of the reader's own context* to shape an answer.
+
+That lands directly on a published claim. Zep reports its largest relative gain
+on exactly this type — **preference +77.7%** (§5.2) — and the number beside it
+here says why that is so easy: the full-context baseline it improves on is at 3%.
+**A memory system does not have to be good at preference to post a huge relative
+gain on it; it only has to put the relevant session in front of the reader.**
+
+### Against the published baselines — carefully
+
+Zep's `_s` baselines are 55.4 (gpt-4o-mini) and 60.2 (gpt-4o) full-context, with
+Zep itself at 63.8 / 71.2. **Our 60.4 for full-context gpt-4o-mini is 5 points
+above their gpt-4o-mini baseline**, and the release explains the direction: theirs
+is the withdrawn release, ours is `cleaned`, and cleaning was a pure deletion of
+1,243 distractor sessions (§3.2), so cleaned scores are structurally higher. The
+comparison is therefore **not** "we beat their baseline" — it is that the two are
+consistent once the release is named, which nobody does (P4).
+
+What it does let us say: the gap Zep reports between its baseline and its system
+(+8.4 pp on mini) is **the same size as the reader effect we measured on oracle**
+(+11 to +12 pp) and **smaller than the collapse `_s` induces on one type alone**.
+
+### The run also tested the harness
+
+16 of 500 rows failed on the first pass — 12 `APIConnectionError`, 4
+`APITimeoutError`, all on 113 K-token requests, none a rate limit. The design held
+in the way it was built to: each failure was written as a row rather than
+swallowed (upstream's `continue`, LME-A18), the completeness check saw 484 judged
+against a population of 500 and **refused to report a score**, and `--resume`
+re-bought exactly those 16 rows for $0.27 rather than re-running the arm for $8.78.
+It is worth noting the true fix is missing: our LLM client has **no transport
+retry**, so a 3.2% failure rate on long requests is currently paid for by a second
+process rather than absorbed by the first.
+
 ## Follow-ups on the same 500 questions
 
 The four arms above are paid for, and their records carry every hypothesis. That

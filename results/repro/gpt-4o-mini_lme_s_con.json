@@ -1,0 +1,327 @@
+{
+  "stamp": {
+    "dataset": "s",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 500,
+    "n_answered": 500,
+    "n_judged": 500,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 4,
+    "full_context": true,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "passthrough"
+    ],
+    "read_path": "full_context",
+    "retrieval_k": null,
+    "budget_tokens": null,
+    "history_format": "json",
+    "embedder": "fake (retrieval is not exercised on the full-context path)",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "b81203dddfdb5ec45a0cc31178eb639ac0620045",
+    "utc_started": "2026-08-17T13:39:36.999406+00:00",
+    "utc_finished": "2026-08-17T13:40:33.857504+00:00",
+    "dry_run": false,
+    "resumed_from_records": 484,
+    "max_spend_usd": 9.8,
+    "prior_spend_usd": 8.780066
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 84.29,
+        "n": 70
+      },
+      "single-session-preference": {
+        "acc": 3.33,
+        "n": 30
+      },
+      "single-session-assistant": {
+        "acc": 92.86,
+        "n": 56
+      },
+      "multi-session": {
+        "acc": 50.38,
+        "n": 133
+      },
+      "temporal-reasoning": {
+        "acc": 54.14,
+        "n": 133
+      },
+      "knowledge-update": {
+        "acc": 65.38,
+        "n": 78
+      }
+    },
+    "task_averaged": 58.4,
+    "overall": 60.4,
+    "abstention": {
+      "acc": 73.33,
+      "n": 30
+    },
+    "n": 500
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "generate": {
+      "calls": 16,
+      "tokens_in": 1804204,
+      "tokens_out": 3082,
+      "latency_ms_avg": 10145.8,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 16,
+      "tokens_in": 5030,
+      "tokens_out": 28,
+      "latency_ms_avg": 763.9,
+      "errors": 0
+    }
+  },
+  "llm_budget_by_row": {
+    "generate|f8c5f88b": {
+      "calls": 1,
+      "tokens_in": 112991,
+      "tokens_out": 137,
+      "latency_ms_avg": 8076.3,
+      "errors": 0
+    },
+    "judge|f8c5f88b": {
+      "calls": 1,
+      "tokens_in": 259,
+      "tokens_out": 2,
+      "latency_ms_avg": 886.0,
+      "errors": 0
+    },
+    "generate|5d3d2817": {
+      "calls": 1,
+      "tokens_in": 113901,
+      "tokens_out": 172,
+      "latency_ms_avg": 9121.1,
+      "errors": 0
+    },
+    "judge|5d3d2817": {
+      "calls": 1,
+      "tokens_in": 292,
+      "tokens_out": 2,
+      "latency_ms_avg": 535.5,
+      "errors": 0
+    },
+    "generate|58ef2f1c": {
+      "calls": 1,
+      "tokens_in": 111717,
+      "tokens_out": 146,
+      "latency_ms_avg": 9886.5,
+      "errors": 0
+    },
+    "judge|58ef2f1c": {
+      "calls": 1,
+      "tokens_in": 271,
+      "tokens_out": 2,
+      "latency_ms_avg": 685.7,
+      "errors": 0
+    },
+    "generate|1e043500": {
+      "calls": 1,
+      "tokens_in": 113727,
+      "tokens_out": 312,
+      "latency_ms_avg": 12768.2,
+      "errors": 0
+    },
+    "judge|1e043500": {
+      "calls": 1,
+      "tokens_in": 435,
+      "tokens_out": 1,
+      "latency_ms_avg": 968.4,
+      "errors": 0
+    },
+    "generate|7527f7e2": {
+      "calls": 1,
+      "tokens_in": 113342,
+      "tokens_out": 148,
+      "latency_ms_avg": 5997.4,
+      "errors": 0
+    },
+    "judge|7527f7e2": {
+      "calls": 1,
+      "tokens_in": 268,
+      "tokens_out": 2,
+      "latency_ms_avg": 815.5,
+      "errors": 0
+    },
+    "generate|c960da58": {
+      "calls": 1,
+      "tokens_in": 113822,
+      "tokens_out": 93,
+      "latency_ms_avg": 8151.7,
+      "errors": 0
+    },
+    "generate|3b6f954b": {
+      "calls": 1,
+      "tokens_in": 111450,
+      "tokens_out": 144,
+      "latency_ms_avg": 7999.8,
+      "errors": 0
+    },
+    "judge|c960da58": {
+      "calls": 1,
+      "tokens_in": 212,
+      "tokens_out": 2,
+      "latency_ms_avg": 893.6,
+      "errors": 0
+    },
+    "judge|3b6f954b": {
+      "calls": 1,
+      "tokens_in": 267,
+      "tokens_out": 2,
+      "latency_ms_avg": 560.8,
+      "errors": 0
+    },
+    "generate|94f70d80": {
+      "calls": 1,
+      "tokens_in": 112661,
+      "tokens_out": 114,
+      "latency_ms_avg": 8298.9,
+      "errors": 0
+    },
+    "judge|94f70d80": {
+      "calls": 1,
+      "tokens_in": 237,
+      "tokens_out": 2,
+      "latency_ms_avg": 766.0,
+      "errors": 0
+    },
+    "generate|66f24dbb": {
+      "calls": 1,
+      "tokens_in": 112161,
+      "tokens_out": 164,
+      "latency_ms_avg": 11332.3,
+      "errors": 0
+    },
+    "generate|ad7109d1": {
+      "calls": 1,
+      "tokens_in": 109893,
+      "tokens_out": 223,
+      "latency_ms_avg": 11733.9,
+      "errors": 0
+    },
+    "generate|726462e0": {
+      "calls": 1,
+      "tokens_in": 112919,
+      "tokens_out": 185,
+      "latency_ms_avg": 18863.3,
+      "errors": 0
+    },
+    "judge|66f24dbb": {
+      "calls": 1,
+      "tokens_in": 286,
+      "tokens_out": 2,
+      "latency_ms_avg": 1037.6,
+      "errors": 0
+    },
+    "judge|ad7109d1": {
+      "calls": 1,
+      "tokens_in": 342,
+      "tokens_out": 2,
+      "latency_ms_avg": 808.4,
+      "errors": 0
+    },
+    "judge|726462e0": {
+      "calls": 1,
+      "tokens_in": 311,
+      "tokens_out": 1,
+      "latency_ms_avg": 585.2,
+      "errors": 0
+    },
+    "generate|af8d2e46": {
+      "calls": 1,
+      "tokens_in": 110843,
+      "tokens_out": 173,
+      "latency_ms_avg": 9917.5,
+      "errors": 0
+    },
+    "judge|af8d2e46": {
+      "calls": 1,
+      "tokens_in": 299,
+      "tokens_out": 2,
+      "latency_ms_avg": 701.9,
+      "errors": 0
+    },
+    "generate|dccbc061": {
+      "calls": 1,
+      "tokens_in": 111843,
+      "tokens_out": 185,
+      "latency_ms_avg": 8061.4,
+      "errors": 0
+    },
+    "judge|dccbc061": {
+      "calls": 1,
+      "tokens_in": 305,
+      "tokens_out": 2,
+      "latency_ms_avg": 576.4,
+      "errors": 0
+    },
+    "generate|c8c3f81d": {
+      "calls": 1,
+      "tokens_in": 114712,
+      "tokens_out": 148,
+      "latency_ms_avg": 10260.9,
+      "errors": 0
+    },
+    "generate|29f2956b_abs": {
+      "calls": 1,
+      "tokens_in": 114045,
+      "tokens_out": 476,
+      "latency_ms_avg": 11077.3,
+      "errors": 0
+    },
+    "judge|c8c3f81d": {
+      "calls": 1,
+      "tokens_in": 265,
+      "tokens_out": 1,
+      "latency_ms_avg": 788.7,
+      "errors": 0
+    },
+    "judge|29f2956b_abs": {
+      "calls": 1,
+      "tokens_in": 596,
+      "tokens_out": 1,
+      "latency_ms_avg": 1040.5,
+      "errors": 0
+    },
+    "generate|f4f1d8a4_abs": {
+      "calls": 1,
+      "tokens_in": 114177,
+      "tokens_out": 262,
+      "latency_ms_avg": 10786.6,
+      "errors": 0
+    },
+    "judge|f4f1d8a4_abs": {
+      "calls": 1,
+      "tokens_in": 385,
+      "tokens_out": 2,
+      "latency_ms_avg": 572.4,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 56.8
+  },
+  "records_file": "gpt-4o-mini_lme_s_con.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_s_con.llm-trace.jsonl.gz",
+  "cost_usd": 9.065401,
+  "cost_usd_this_process": 0.285335
+}

@@ -1,0 +1,122 @@
+{
+  "stamp": {
+    "dataset": "s",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 3,
+    "n_answered": 3,
+    "n_judged": 3,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 3,
+    "full_context": true,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "passthrough"
+    ],
+    "read_path": "full_context",
+    "retrieval_k": null,
+    "budget_tokens": null,
+    "history_format": "json",
+    "embedder": "fake (retrieval is not exercised on the full-context path)",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "07cabae4111d20ecd2914d33dd7a76f8c86578a7",
+    "utc_started": "2026-08-17T12:57:56.358990+00:00",
+    "utc_finished": "2026-08-17T12:58:33.211996+00:00",
+    "dry_run": false,
+    "resumed_from_records": 0,
+    "max_spend_usd": 0.5,
+    "prior_spend_usd": 0.0
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 100.0,
+        "n": 3
+      }
+    },
+    "task_averaged": 100.0,
+    "overall": 100.0,
+    "abstention": null,
+    "n": 3
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "generate": {
+      "calls": 3,
+      "tokens_in": 338174,
+      "tokens_out": 429,
+      "latency_ms_avg": 18062.0,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 3,
+      "tokens_in": 790,
+      "tokens_out": 6,
+      "latency_ms_avg": 907.0,
+      "errors": 0
+    }
+  },
+  "llm_budget_by_row": {
+    "generate|118b2229": {
+      "calls": 1,
+      "tokens_in": 111095,
+      "tokens_out": 154,
+      "latency_ms_avg": 13966.3,
+      "errors": 0
+    },
+    "judge|118b2229": {
+      "calls": 1,
+      "tokens_in": 276,
+      "tokens_out": 2,
+      "latency_ms_avg": 856.1,
+      "errors": 0
+    },
+    "generate|e47becba": {
+      "calls": 1,
+      "tokens_in": 113141,
+      "tokens_out": 86,
+      "latency_ms_avg": 20089.1,
+      "errors": 0
+    },
+    "generate|51a45a95": {
+      "calls": 1,
+      "tokens_in": 113938,
+      "tokens_out": 189,
+      "latency_ms_avg": 20130.6,
+      "errors": 0
+    },
+    "judge|e47becba": {
+      "calls": 1,
+      "tokens_in": 203,
+      "tokens_out": 2,
+      "latency_ms_avg": 958.7,
+      "errors": 0
+    },
+    "judge|51a45a95": {
+      "calls": 1,
+      "tokens_in": 311,
+      "tokens_out": 2,
+      "latency_ms_avg": 906.3,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 36.8
+  },
+  "records_file": "gpt-4o-mini_lme_s_con_smoke3.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_s_con_smoke3.llm-trace.jsonl.gz",
+  "cost_usd": 0.053018,
+  "cost_usd_this_process": 0.053018
+}
