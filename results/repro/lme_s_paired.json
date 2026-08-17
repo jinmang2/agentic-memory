@@ -1,0 +1,81 @@
+{
+  "arms": [
+    "gpt-4o-mini_lme_s_con",
+    "gpt-4o-mini_lme_s_con_k50"
+  ],
+  "n_questions": 500,
+  "per_arm": {
+    "gpt-4o-mini_lme_s_con": {
+      "task_averaged": 58.4,
+      "overall": 60.4,
+      "by_type": {
+        "single-session-user": 84.29,
+        "single-session-preference": 3.33,
+        "single-session-assistant": 92.86,
+        "multi-session": 50.38,
+        "temporal-reasoning": 54.14,
+        "knowledge-update": 65.38
+      },
+      "abstention": 73.33,
+      "n": 500
+    },
+    "gpt-4o-mini_lme_s_con_k50": {
+      "task_averaged": 80.81,
+      "overall": 81.6,
+      "by_type": {
+        "single-session-user": 97.14,
+        "single-session-preference": 53.33,
+        "single-session-assistant": 98.21,
+        "multi-session": 76.69,
+        "temporal-reasoning": 77.44,
+        "knowledge-update": 82.05
+      },
+      "abstention": 83.33,
+      "n": 500
+    }
+  },
+  "spreads": {
+    "task_averaged": {
+      "max": 80.81,
+      "min": 58.4,
+      "spread_pp": 22.41,
+      "argmax": "gpt-4o-mini_lme_s_con_k50",
+      "argmin": "gpt-4o-mini_lme_s_con",
+      "verdict": "holds"
+    },
+    "overall": {
+      "max": 81.6,
+      "min": 60.4,
+      "spread_pp": 21.2,
+      "argmax": "gpt-4o-mini_lme_s_con_k50",
+      "argmin": "gpt-4o-mini_lme_s_con",
+      "verdict": "holds"
+    }
+  },
+  "pairs": {
+    "gpt-4o-mini_lme_s_con - gpt-4o-mini_lme_s_con_k50": {
+      "task_averaged": {
+        "delta_pp": -22.4175,
+        "lo": -27.2325,
+        "hi": -17.658,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -21.2,
+        "lo": -25.6,
+        "hi": -16.6,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 26,
+        "b_only": 132,
+        "discordant": 158,
+        "p_exact": 0.0
+      }
+    }
+  },
+  "n_boot": 10000,
+  "seed": 0
+}

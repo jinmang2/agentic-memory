@@ -489,7 +489,9 @@ def main() -> None:
     prior_spend = 0.0
     over_budget = None
     if args.max_spend_usd is not None and not args.dry_run:
-        prior_spend = _spend_from_trace(trace_path, args.reader, args.judge_model, helpers)
+        prior_spend = _prior_spend(
+            trace_path, out_dir / f"{args.tag}.json", args.reader, args.judge_model, helpers
+        )
         if prior_spend:
             log.info("earlier processes of this run spent $%.4f (from the trace)", prior_spend)
 
@@ -662,15 +664,27 @@ def main() -> None:
     )
 
 
-def _spend_from_trace(trace_path: Path, reader: str, judge: str, helpers) -> float:
-    """USD spent by earlier processes of this run, read off the trace.
+def _prior_spend(trace_path: Path, summary_path: Path, reader: str, judge: str, helpers) -> float:
+    """USD spent by earlier processes of this run — the larger of two records.
 
-    A resumed run's tracker starts at zero, so a cap enforced on it alone would
-    be a cap per process rather than per measurement. Priced per LINE by the
-    model that line names, because this run has two models and they differ by
-    16.7x on output."""
+    The trace is the one that survives a kill, but it only holds CHAT calls: the
+    embedder does not route through `LLMClient`, so a retrieval arm's embedding
+    spend is invisible there. On the `_s` top-50 arm that was $1.11 of a $2.59
+    total, and a resumed process would have reported $1.51 for a measurement that
+    had already cost $2.59 — an under-count in the direction that matters, since
+    this number is also what the spend cap is enforced against.
+
+    So: the trace when the earlier process died without writing a summary, and
+    the earlier summary's own total when it wrote one. Neither can overstate, so
+    the max is the honest estimate."""
+    from_summary = 0.0
+    if summary_path.exists():
+        try:
+            from_summary = float(json.loads(summary_path.read_text()).get("cost_usd") or 0.0)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            from_summary = 0.0
     if not trace_path.exists():
-        return 0.0
+        return from_summary
     per_model: dict[str, dict] = {}
     with (
         gzip.open(trace_path, "rt", encoding="utf-8")
@@ -690,7 +704,7 @@ def _spend_from_trace(trace_path: Path, reader: str, judge: str, helpers) -> flo
         if model not in (reader, judge):
             continue
         total += helpers.cost_usd({"generate": row}, model)
-    return total
+    return max(total, from_summary)
 
 
 def _quote(client: DryRunLLM, n_rows: int, args, reader_spec, judge_spec) -> dict:

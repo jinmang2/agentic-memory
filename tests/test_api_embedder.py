@@ -399,3 +399,56 @@ def test_a_survived_blip_reaches_the_run_artifact(monkeypatch):
     row = wobbled.budget_row()
     assert row["transport_recoveries"] == 1
     assert row["calls"] == 1 and row["errors"] == 1
+
+
+def test_an_oversized_input_is_truncated_rather_than_failing_the_batch():
+    """The hosted models stop at 8192 tokens and answer a longer input with a
+    400 — a request-shaped failure the transport retry cannot fix, which spends
+    the attempt three times and then takes every other text in the batch down
+    with it. On LongMemEval `_s` that was 5 turns out of 246,750 costing 5 of 500
+    instances. Only the vector is computed from the prefix; the stored content is
+    untouched, so a retrieved item still renders whole."""
+
+    class _Recorder:
+        def __init__(self):
+            self.seen = None
+            self.embeddings = SimpleNamespace(create=self._create)
+
+        def _create(self, **kwargs):
+            self.seen = kwargs["input"]
+            return SimpleNamespace(
+                data=[
+                    SimpleNamespace(embedding=[1.0, 0.0], index=i)
+                    for i, _ in enumerate(kwargs["input"])
+                ],
+                usage=SimpleNamespace(prompt_tokens=1),
+            )
+
+    rec = _Recorder()
+    emb = APIEmbedder(model_name="text-embedding-3-small", client=rec, dim=2)
+    huge = "x" * 76_591  # the longest single turn in longmemeval_s_cleaned
+    emb.embed(["short one", huge])
+
+    assert rec.seen[0] == "short one"  # untouched
+    assert len(rec.seen[1]) == emb.max_input_chars < len(huge)
+    assert emb.truncations == 1
+    assert emb.budget_row()["input_truncations"] == 1
+
+
+def test_nothing_is_truncated_when_nothing_is_oversized():
+    class _Ok:
+        def __init__(self):
+            self.embeddings = SimpleNamespace(
+                create=lambda **kw: SimpleNamespace(
+                    data=[
+                        SimpleNamespace(embedding=[1.0, 0.0], index=i)
+                        for i, _ in enumerate(kw["input"])
+                    ],
+                    usage=SimpleNamespace(prompt_tokens=1),
+                )
+            )
+
+    emb = APIEmbedder(model_name="text-embedding-3-small", client=_Ok(), dim=2)
+    emb.embed(["a", "b"])
+    assert emb.truncations == 0
+    assert "input_truncations" not in emb.budget_row()

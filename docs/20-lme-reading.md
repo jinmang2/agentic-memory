@@ -273,17 +273,102 @@ What it does let us say: the gap Zep reports between its baseline and its system
 (+8.4 pp on mini) is **the same size as the reader effect we measured on oracle**
 (+11 to +12 pp) and **smaller than the collapse `_s` induces on one type alone**.
 
+### Plain retrieval, with zero write spend, recovers 91% of that loss
+
+The same 500 questions, the same reader, the same `con` prompt — answered from
+the memory's **top-50 turns** instead of the whole haystack. The write path is
+`passthrough`: **no extraction, no summarisation, no LLM call of any kind at
+ingest.** Only embeddings, $1.12 of them. **[실측]**
+
+| | `_s` full context | **`_s` retrieval top-50** | oracle (ceiling) |
+|---|---|---|---|
+| task-averaged | 58.40 | **80.81** | 83.89 |
+| overall | 60.40 | **81.60** | 83.60 |
+| single-session-user | 84.29 | **97.14** | 97.14 |
+| single-session-assistant | 92.86 | **98.21** | 98.21 |
+| single-session-preference | 3.33 | **53.33** | 63.33 |
+| multi-session | 50.38 | **76.69** | 75.19 |
+| temporal-reasoning | 54.14 | **77.44** | 79.70 |
+| knowledge-update | 65.38 | **82.05** | 89.74 |
+| abstention | 73.33 | **83.33** | 83.33 |
+| prompt, median | 517,430 chars | **55,108 chars** | ~27,000 |
+| cost | $9.07 | **$2.62** | $1.05 |
+
+```
+retrieval-top50  -  full-context     task_avg +22.42 [+17.66, +27.23]
+                                     overall  +21.20 [+16.60, +25.60]
+                                     McNemar 132/26   p < 1e-16
+```
+
+**Reading everything loses 23.20 points against oracle. Retrieving fifty turns
+gets 21.20 of them back — 91% — on one ninth of the context and one third of the
+cost.** Three types come back to the oracle number *exactly* (SSU 97.14, SSA
+98.21, abstention 83.33) and multi-session goes slightly past it (76.69 vs 75.19),
+which is what "search was the whole problem" looks like when it is true.
+
+Two things this does and does not say, because they are easy to run together.
+
+**It does say that on this benchmark the read path is where the points are, and
+that they are not bought with write spend.** This arm spent zero LLM calls on
+ingest. Zep spends 27,449 write calls on LoCoMo and reports +8.4 pp over its own
+`_s` baseline (§5.2); the retrieval-only arm here is +21.20 pp over ours. The
+protocols differ and the releases differ, so those two numbers are not each
+other's competitors — but they are the same *kind* of number, and they are an
+order of magnitude apart in favour of the one that paid nothing to write.
+
+**It does not say memory systems are pointless — it says the opposite of what the
+oracle arm alone suggested.** On oracle, adding retrieval COST 3 points (a tax on
+a haystack that already fits). On `_s` the same mechanism is worth +21. The sign
+flips with whether retrieval is needed, which is exactly why a claim measured only
+where the context fits should not be generalised. What stays constant across both
+is narrower and survives: **what changes the score is what reaches the reader, and
+we have not yet found a case where paying an LLM to write buys that.**
+
+Two caveats we can state precisely rather than gesture at:
+
+1. **Our index is not upstream's, and it is fairer to the benchmark.**
+   run_retrieval.py indexes **user turns only** (LME-A1), which is why its own
+   retrieval metrics silently drop 51 single-session-assistant questions (P7).
+   We index every turn, and SSA comes back at 98.21 — the type the benchmark
+   advertises as its differentiator, and the one upstream's own retrieval
+   evaluation cannot score.
+2. **k=50 turns is a deliberate choice, stated in advance**: upstream's baselines
+   retrieve top-5 to top-10 *sessions* (≈50–100 turns), so this is inside their
+   budget and far under Mem0's top-200. The oracle arm used k=10 because 10 turns
+   there is already half the haystack; the two k values are not comparable and the
+   arms are never compared to each other.
+
+The remaining 2.0 points to the oracle ceiling sit almost entirely in
+**knowledge-update (−7.69)** and **preference (−10.00)** — the two types where
+finding *a* relevant session is not enough, because KU needs the *latest* of
+several contradicting ones and preference needs the reader to actually use what it
+found. That is a retrieval-ranking problem and a reading problem respectively,
+and it is where a memory system that does more than retrieve would have to earn
+its cost.
+
 ### The run also tested the harness
 
 16 of 500 rows failed on the first pass — 12 `APIConnectionError`, 4
-`APITimeoutError`, all on 113 K-token requests, none a rate limit. The design held
+`APITimeoutError`, all on 113 K-token requests, none a rate limit. The retrieval
+arm then failed 5 more, and those had a cause worth keeping: **five turns out of
+246,750 are longer than the embedder's 8,192-token ceiling** (the longest is
+76,591 characters), and the hosted API answers an oversized input with a 400 that
+no transport retry can fix — taking the whole instance down with it. The embedder
+now truncates its INPUT to the model's ceiling, counts each time it does, and
+reports the count in the run artifact (`input_truncations: 5`); the stored content
+is untouched, so a retrieved item still renders whole. The design held
 in the way it was built to: each failure was written as a row rather than
 swallowed (upstream's `continue`, LME-A18), the completeness check saw 484 judged
 against a population of 500 and **refused to report a score**, and `--resume`
 re-bought exactly those 16 rows for $0.27 rather than re-running the arm for $8.78.
-It is worth noting the true fix is missing: our LLM client has **no transport
-retry**, so a 3.2% failure rate on long requests is currently paid for by a second
-process rather than absorbed by the first.
+It is worth noting one true fix is still missing: our LLM **client** has no
+transport retry (the embedder gained one on 2026-08-17), so a 3.2% failure rate on
+long requests is paid for by a second process rather than absorbed by the first.
+And the resumed process under-reported its own measurement's cost, because
+embeddings do not route through `LLMClient` and so are invisible in the trace the
+resume prices itself from — $1.51 reported against $2.62 actually spent. The
+driver now carries the earlier process's own summary total forward, which is the
+only record that includes the embedder.
 
 ## Follow-ups on the same 500 questions
 

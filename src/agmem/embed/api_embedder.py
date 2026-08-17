@@ -38,6 +38,23 @@ NATIVE_DIMS = {
     "text-embedding-ada-002": 1536,
 }
 
+# Input ceiling per model, in tokens. All three OpenAI embedding models stop at
+# 8192 and answer a longer input with a 400, not a truncation — which is a
+# request-shaped failure, so the transport retry above cannot help and simply
+# spends the attempt twice more before raising.
+MAX_INPUT_TOKENS = {
+    "text-embedding-3-small": 8192,
+    "text-embedding-3-large": 8192,
+    "text-embedding-ada-002": 8192,
+}
+# Conservative chars-per-token floor used to convert that ceiling into a
+# character budget without a tokenizer dependency. The LongMemEval corpus
+# measures 4.610 with o200k_base, so 3.0 leaves ~35% of headroom for text that
+# tokenizes worse than prose. It is a FLOOR on purpose: over-truncating one
+# oversized turn costs a little of its tail, while under-truncating costs the
+# whole request.
+CHARS_PER_TOKEN_FLOOR = 3.0
+
 
 class APIEmbedder:
     """`Embedder` backed by a hosted `/embeddings` endpoint.
@@ -110,6 +127,11 @@ class APIEmbedder:
         # run over a degrading link must be able to say so instead of looking
         # pristine, which is the same reason `StructuredCaller` counts them.
         self.transport_recoveries = 0
+        # Inputs whose tail was dropped to fit the model's ceiling. Counted
+        # because it is a silent change to what got indexed, and a run that did
+        # it must be able to say how often rather than look clean.
+        self.truncations = 0
+        self.max_input_chars = int(MAX_INPUT_TOKENS[model_name] * CHARS_PER_TOKEN_FLOOR)
 
     def embed(self, texts: list[str], kind: EmbedKind = "passage") -> list[list[float]]:
         """L2-normalized vectors, one per input, in input order.
@@ -123,7 +145,28 @@ class APIEmbedder:
         """
         if not texts:
             return []
-        kwargs: dict[str, Any] = {"model": self.name, "input": list(texts)}
+        # Truncate BEFORE sending. Left un-truncated, one oversized input fails
+        # the whole request with a 400 that no retry can fix, and the caller
+        # loses every other text in the batch with it — on LongMemEval `_s` that
+        # was 5 turns out of 246,750 taking 5 of 500 instances down with them,
+        # each one a >24K-character turn in an otherwise ordinary haystack.
+        # The stored CONTENT is untouched; only the vector is computed from the
+        # prefix, so a retrieved item still renders whole.
+        capped = []
+        for text in texts:
+            if len(text) > self.max_input_chars:
+                self.truncations += 1
+                logger.warning(
+                    "embedding input of %d chars exceeds %s's ceiling — indexing the "
+                    "first %d chars (%d truncated so far)",
+                    len(text),
+                    self.name,
+                    self.max_input_chars,
+                    self.truncations,
+                )
+                text = text[: self.max_input_chars]
+            capped.append(text)
+        kwargs: dict[str, Any] = {"model": self.name, "input": capped}
         if self.dim != self.native_dim:
             # Older models reject the parameter outright, so send it only when
             # it would actually do something.
@@ -201,6 +244,11 @@ class APIEmbedder:
         }
         if self.transport_recoveries:
             row["transport_recoveries"] = self.transport_recoveries
+        if self.truncations:
+            # Same rule as recoveries: absent when it never happened, present in
+            # the artifact when it did, because "we indexed a prefix of N inputs"
+            # is a property of the measurement and not of the log.
+            row["input_truncations"] = self.truncations
         return row
 
 

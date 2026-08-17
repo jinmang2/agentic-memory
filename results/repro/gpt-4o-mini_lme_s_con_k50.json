@@ -1,0 +1,182 @@
+{
+  "stamp": {
+    "dataset": "s",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 500,
+    "n_answered": 500,
+    "n_judged": 500,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 5,
+    "full_context": false,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "passthrough"
+    ],
+    "read_path": "retrieval_top50",
+    "retrieval_k": 50,
+    "budget_tokens": 20000,
+    "history_format": "json",
+    "embedder": "text-embedding-3-small",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "9da06422c7cc1bea17df5095a0ec27656252df4d",
+    "utc_started": "2026-08-17T16:35:17.697162+00:00",
+    "utc_finished": "2026-08-17T16:38:28.021013+00:00",
+    "dry_run": false,
+    "resumed_from_records": 495,
+    "max_spend_usd": 3.5,
+    "prior_spend_usd": 1.483883
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 97.14,
+        "n": 70
+      },
+      "single-session-preference": {
+        "acc": 53.33,
+        "n": 30
+      },
+      "single-session-assistant": {
+        "acc": 98.21,
+        "n": 56
+      },
+      "multi-session": {
+        "acc": 76.69,
+        "n": 133
+      },
+      "temporal-reasoning": {
+        "acc": 77.44,
+        "n": 133
+      },
+      "knowledge-update": {
+        "acc": 82.05,
+        "n": 78
+      }
+    },
+    "task_averaged": 80.81,
+    "overall": 81.6,
+    "abstention": {
+      "acc": 83.33,
+      "n": 30
+    },
+    "n": 500
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "generate": {
+      "calls": 5,
+      "tokens_in": 71324,
+      "tokens_out": 1283,
+      "latency_ms_avg": 8910.4,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 5,
+      "tokens_in": 1994,
+      "tokens_out": 8,
+      "latency_ms_avg": 709.2,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 2330,
+      "tokens_in": 530157,
+      "tokens_out": 0,
+      "latency_ms_avg": 315.0,
+      "errors": 0,
+      "input_truncations": 5
+    }
+  },
+  "llm_budget_by_row": {
+    "generate|852ce960": {
+      "calls": 1,
+      "tokens_in": 11410,
+      "tokens_out": 209,
+      "latency_ms_avg": 4276.0,
+      "errors": 0
+    },
+    "judge|852ce960": {
+      "calls": 1,
+      "tokens_in": 324,
+      "tokens_out": 1,
+      "latency_ms_avg": 574.6,
+      "errors": 0
+    },
+    "generate|b86304ba": {
+      "calls": 1,
+      "tokens_in": 11956,
+      "tokens_out": 314,
+      "latency_ms_avg": 6004.7,
+      "errors": 0
+    },
+    "judge|b86304ba": {
+      "calls": 1,
+      "tokens_in": 451,
+      "tokens_out": 2,
+      "latency_ms_avg": 872.5,
+      "errors": 0
+    },
+    "generate|2e6d26dc": {
+      "calls": 1,
+      "tokens_in": 16725,
+      "tokens_out": 302,
+      "latency_ms_avg": 7675.9,
+      "errors": 0
+    },
+    "judge|2e6d26dc": {
+      "calls": 1,
+      "tokens_in": 428,
+      "tokens_out": 1,
+      "latency_ms_avg": 696.5,
+      "errors": 0
+    },
+    "generate|gpt4_1e4a8aeb": {
+      "calls": 1,
+      "tokens_in": 14266,
+      "tokens_out": 297,
+      "latency_ms_avg": 22122.9,
+      "errors": 0
+    },
+    "judge|gpt4_1e4a8aeb": {
+      "calls": 1,
+      "tokens_in": 507,
+      "tokens_out": 2,
+      "latency_ms_avg": 590.6,
+      "errors": 0
+    },
+    "generate|311778f1": {
+      "calls": 1,
+      "tokens_in": 16967,
+      "tokens_out": 161,
+      "latency_ms_avg": 4472.5,
+      "errors": 0
+    },
+    "judge|311778f1": {
+      "calls": 1,
+      "tokens_in": 284,
+      "tokens_out": 2,
+      "latency_ms_avg": 811.7,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 190.3
+  },
+  "records_file": "gpt-4o-mini_lme_s_con_k50.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_s_con_k50.llm-trace.jsonl.gz",
+  "cost_usd": 2.620801,
+  "cost_usd_this_process": 0.027137,
+  "cost_note": "total across both processes; the resumed process could not recover the first one's EMBEDDER spend from the trace (embeddings do not route through LLMClient) — $2.593664 is that process own summary, and the driver now carries a prior summary total forward so this cannot recur"
+}
