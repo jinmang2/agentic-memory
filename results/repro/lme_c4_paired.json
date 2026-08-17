@@ -1,0 +1,221 @@
+{
+  "arms": [
+    "gpt-4o-mini_lme_oracle_direct",
+    "gpt-4o-mini_lme_oracle_con",
+    "gpt-5.6-luna_lme_oracle_direct",
+    "gpt-5.6-luna_lme_oracle_con"
+  ],
+  "n_questions": 500,
+  "per_arm": {
+    "gpt-4o-mini_lme_oracle_direct": {
+      "task_averaged": 79.57,
+      "overall": 79.2,
+      "by_type": {
+        "single-session-user": 97.14,
+        "single-session-preference": 53.33,
+        "single-session-assistant": 100.0,
+        "multi-session": 72.93,
+        "temporal-reasoning": 70.68,
+        "knowledge-update": 83.33
+      },
+      "abstention": 70.0,
+      "n": 500
+    },
+    "gpt-4o-mini_lme_oracle_con": {
+      "task_averaged": 83.89,
+      "overall": 83.6,
+      "by_type": {
+        "single-session-user": 97.14,
+        "single-session-preference": 63.33,
+        "single-session-assistant": 98.21,
+        "multi-session": 75.19,
+        "temporal-reasoning": 79.7,
+        "knowledge-update": 89.74
+      },
+      "abstention": 83.33,
+      "n": 500
+    },
+    "gpt-5.6-luna_lme_oracle_direct": {
+      "task_averaged": 89.96,
+      "overall": 91.4,
+      "by_type": {
+        "single-session-user": 100.0,
+        "single-session-preference": 66.67,
+        "single-session-assistant": 100.0,
+        "multi-session": 87.22,
+        "temporal-reasoning": 90.98,
+        "knowledge-update": 94.87
+      },
+      "abstention": 70.0,
+      "n": 500
+    },
+    "gpt-5.6-luna_lme_oracle_con": {
+      "task_averaged": 92.14,
+      "overall": 94.6,
+      "by_type": {
+        "single-session-user": 100.0,
+        "single-session-preference": 66.67,
+        "single-session-assistant": 100.0,
+        "multi-session": 93.23,
+        "temporal-reasoning": 95.49,
+        "knowledge-update": 97.44
+      },
+      "abstention": 86.67,
+      "n": 500
+    }
+  },
+  "spreads": {
+    "task_averaged": {
+      "max": 92.14,
+      "min": 79.57,
+      "spread_pp": 12.57,
+      "argmax": "gpt-5.6-luna_lme_oracle_con",
+      "argmin": "gpt-4o-mini_lme_oracle_direct",
+      "verdict": "holds"
+    },
+    "overall": {
+      "max": 94.6,
+      "min": 79.2,
+      "spread_pp": 15.4,
+      "argmax": "gpt-5.6-luna_lme_oracle_con",
+      "argmin": "gpt-4o-mini_lme_oracle_direct",
+      "verdict": "holds"
+    }
+  },
+  "pairs": {
+    "gpt-4o-mini_lme_oracle_direct - gpt-4o-mini_lme_oracle_con": {
+      "task_averaged": {
+        "delta_pp": -4.3171,
+        "lo": -8.1047,
+        "hi": -0.5833,
+        "p_boot": 0.0228,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -4.4,
+        "lo": -7.8,
+        "hi": -1.0,
+        "p_boot": 0.0118,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 28,
+        "b_only": 50,
+        "discordant": 78,
+        "p_exact": 0.016853
+      }
+    },
+    "gpt-4o-mini_lme_oracle_direct - gpt-5.6-luna_lme_oracle_direct": {
+      "task_averaged": {
+        "delta_pp": -10.3859,
+        "lo": -14.1177,
+        "hi": -6.7588,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -12.2,
+        "lo": -15.4,
+        "hi": -9.0,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 7,
+        "b_only": 68,
+        "discordant": 75,
+        "p_exact": 0.0
+      }
+    },
+    "gpt-4o-mini_lme_oracle_direct - gpt-5.6-luna_lme_oracle_con": {
+      "task_averaged": {
+        "delta_pp": -12.5676,
+        "lo": -17.2028,
+        "hi": -7.9464,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -15.4,
+        "lo": -19.0,
+        "hi": -12.0,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 7,
+        "b_only": 84,
+        "discordant": 91,
+        "p_exact": 0.0
+      }
+    },
+    "gpt-4o-mini_lme_oracle_con - gpt-5.6-luna_lme_oracle_direct": {
+      "task_averaged": {
+        "delta_pp": -6.0688,
+        "lo": -9.8314,
+        "hi": -2.307,
+        "p_boot": 0.0014,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -7.8,
+        "lo": -11.2,
+        "hi": -4.6,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 19,
+        "b_only": 58,
+        "discordant": 77,
+        "p_exact": 1e-05
+      }
+    },
+    "gpt-4o-mini_lme_oracle_con - gpt-5.6-luna_lme_oracle_con": {
+      "task_averaged": {
+        "delta_pp": -8.2505,
+        "lo": -12.7223,
+        "hi": -3.7619,
+        "p_boot": 0.0002,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": -11.0,
+        "lo": -14.4,
+        "hi": -7.8,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 13,
+        "b_only": 68,
+        "discordant": 81,
+        "p_exact": 0.0
+      }
+    },
+    "gpt-5.6-luna_lme_oracle_direct - gpt-5.6-luna_lme_oracle_con": {
+      "task_averaged": {
+        "delta_pp": -2.1817,
+        "lo": -5.5434,
+        "hi": 1.0944,
+        "p_boot": 0.1978,
+        "excludes_zero": false
+      },
+      "overall": {
+        "delta_pp": -3.2,
+        "lo": -5.4,
+        "hi": -1.0,
+        "p_boot": 0.005,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 8,
+        "b_only": 24,
+        "discordant": 32,
+        "p_exact": 0.007
+      }
+    }
+  },
+  "n_boot": 10000,
+  "seed": 0
+}

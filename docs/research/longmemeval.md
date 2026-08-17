@@ -403,8 +403,19 @@ Target은 같은 세션의 **다른** 턴(Cartwheel 앱 언급)에서만 나온�
 
 ## 4. 우리 포트 — 상태와 재대조
 
-`src/agmem/bench/longmemeval.py` 646줄 + `tests/test_longmemeval.py` 32개(전부 통과).
-**호출부는 테스트 밖 0개** — 드라이버 배선이 여전히 선행 과제($0). 이 리포는 아직 자체 LME 수치를 **하나도** 갖고 있지 않다.
+`src/agmem/bench/longmemeval.py` + `tests/test_longmemeval.py` 39개(전부 통과).
+드라이버는 **배선 완료**: `scripts/repro/exp_lme_reading.py`가 §8.5의 가드 6종을 하드코드로 박고
+oracle 4 arm을 완주시켰다(2026-08-17, [`docs/20`](../20-lme-reading.md)). 이 리포는 이제 자체 LME
+수치를 갖는다 — 단 **oracle 한정**이고 `_s`는 아직 하나도 없다.
+
+배선 중 발견한 결함 2건(둘 다 수정, `b4812d0`):
+- `answer`/`judge_answer`가 `temperature=0`·`max_tokens=N`을 **호출 오버라이드로 고정**하고 있었다.
+  `LLMClient.chat`은 오버라이드를 RoleConfig보다 우선해 그대로 전송하므로, `max_completion_tokens`를
+  요구하고 temperature를 거부하는 gpt-5.6-luna에서 **400으로 죽는다** — 계획된 4 arm 중 2개가
+  애초에 실행 불가였다. 이제 캡 키는 `RoleConfig.max_tokens_key`에서 오고, fixed-sampling 모델에서는
+  temperature를 빼고 그 사실을 stamp에 이탈로 남긴다(D6).
+- oracle 정렬 부재(§4.1 C)는 이 절의 예고대로 34/500 이탈이었고, `sort_haystack_by_date` 적용 후
+  `prompt_rediff.py` config D가 **500/500 바이트 동일**을 보고한다.
 
 ### 4.1 프롬프트 바이트 대조 (2026-08-17)
 
@@ -682,15 +693,20 @@ unknown future questions. You do not know the downstream question in advance."*)
 
 ### 8.4 검증이 지목한 실험 (cap $30)
 
-| # | 런 | 비용 | 무엇을 답하나 |
-|---|---|---|---|
-| R1 | oracle × gpt-4o-mini × CoN | $1.17 | mini 읽기 상한 |
-| R2 | oracle × luna × CoN | $1.44 | luna 읽기 상한 |
-| R3 | `_s` × gpt-4o-mini × CoN | $9.11 | 기존 지표 모델의 %Drop (Zep 기준선 55.4와 대조) |
-| R4 | `_s` × luna × CoN | $12.02 | **P8 직접 시험 — 2026년 모델에게도 이 벤치가 무는가** |
-| | 합계 | **$23.74** | 잔여 $6.3 |
+| # | 런 | 견적 | 실측 | 결과 |
+|---|---|---|---|---|
+| R1 | oracle × gpt-4o-mini × CoN | $1.17 | **$1.05** | task-avg **83.89** / overall 83.60 |
+| R1′ | oracle × gpt-4o-mini × direct | ~$1.1 | **$0.76** | task-avg **79.57** / overall 79.20 |
+| R2 | oracle × luna × CoN | $1.44 | **$1.02** | task-avg **92.14** / overall 94.60 |
+| R2′ | oracle × luna × direct | ~$1.4 | **$0.91** | task-avg **89.96** / overall 91.40 |
+| R3 | `_s` × gpt-4o-mini × CoN | $9.11 | — | 미승인 |
+| R4 | `_s` × luna × CoN | $12.02 | — | 미승인 (**P8 직접 시험**이 여기 남아 있다) |
 
-잔여로 `direct` 조건을 oracle에 얹으면 §1.3의 **CoN 부호 역전**까지 볼 수 있다.
+oracle 4 arm은 2026-08-17에 완주했다(500/500 × 4, judge 핀 `gpt-4o-2024-08-06`, 합계 **$3.74**,
+wall-clock 약 13분). 스모크 실측이 dry-run 견적의 1.20배였고 본런은 견적 이하로 들어왔다 —
+견적이 상한(완성 토큰을 `max_tokens`로 계산)이기 때문이다. 판정과 페어링 통계는
+[`docs/20`](../20-lme-reading.md)이 정본이고, `direct` 조건이 붙었으므로 §1.3의 **CoN 부호**도
+oracle 길이에서는 답이 나왔다(양수, 두 리더 모두). 부호 **역전**은 `_s`가 있어야 보이므로 미측정.
 `_s`를 돌릴 수 있는 프런티어 모델은 캡 $30 안에서 **luna뿐**이다(terra $114.8, sol $285.4).
 
 ### 8.5 드라이버 필수 요건
@@ -730,10 +746,10 @@ unknown future questions. You do not know the downstream question in advance."*)
 | **C2** | 점수는 read 경로가 정한다 | cross-arm ρ(read 컨텍스트, J) = **+0.90**. 더 강한 것은 **arm 내부** 두 건(`docs/18` :159-165, :34-40): A-Mem read-path 질의 재작성 **+5.26 J**, 링크확장으로 컨텍스트 **+74% → +1.36 J** | **[실측]** |
 | **C3** | 남의 실측도 같은 비율 | MemMachine ablation(LongMemEval): 검색깊이 +4.2 · 포맷 +2.0 · 검색프롬프트 +1.8 · bias보정 +1.4 vs **ingest 개선 전체 +0.8**, 모델 교체 +2.6 | **[인용]** |
 | **C3′** | V2 baseline도 같은 방향 | 파일 탐색(AgentRunbook-C 74.9) > 임베딩 검색(R 58.6), 레이턴시 400배 (§7.1) | **[인용]**(벤치 저자) |
-| **C4** | 메모리를 상수로 고정해도 점수가 움직인다 | — | ❌ **미측정 — 이것이 실험** |
+| **C4** | 메모리를 상수로 고정해도 점수가 움직인다 | oracle 4 arm({mini, luna} × {con, direct}), 같은 500문항·같은 바이트·판정 핀 동일: **task-averaged 스프레드 12.57pp / overall 15.40pp**(79.57–92.14 / 79.20–94.60). 리더 교체가 +11~12pp(overall), 읽기 방식이 +3~4pp — 둘 다 페어링 CI가 0을 제외한다. Zep이 자기 메모리 시스템 전체로 주장하는 폭이 +11.0pp(4o) / +8.4pp(mini)다. 정본: [`docs/20`](../20-lme-reading.md) | **[실측]** |
 | **C5** | 필드가 같은 진단에 도달 | V2가 reader·예산 고정, 결정론 채점, 메타데이터 비공개, LAFS (§7) | **[연역]**(설계 증거) |
 
-### 9.3 남은 실험 하나 — C4
+### 9.3 남은 실험 하나 — C4 ✅ **완료 (2026-08-17)**
 
 C1~C3는 전부 **arm이 서로 다른** 비교라 "메모리가 달라서 그런 것 아니냐"는 반론이 가능하다.
 C4가 그 반론을 원천 차단한다:
@@ -741,9 +757,19 @@ C4가 그 반론을 원천 차단한다:
 > **`longmemeval_oracle`은 evidence 세션만 담긴 데이터다. 검색이 완벽한 조건, 즉 메모리가 상수로
 > 고정된 조건이다. 거기서 관측되는 변동은 정의상 메모리 탓이 아니다.**
 
-설계: `oracle × {gpt-4o-mini, gpt-5.6-luna} × {CoN, direct}` = **4런 ≈ $5**, workers=8로 **약 40분**.
-판정 기준: 그 변동폭이 메모리 시스템들이 주장하는 개선폭(Zep +18.5%, Mem0 +27점)과 **같은 자릿수면
-주장 성립**. 선택적 확장으로 `_s`에 mini/luna 두 arm(+$21)을 얹으면 "긴 haystack에서도 같은가"까지 간다.
+설계: `oracle × {gpt-4o-mini, gpt-5.6-luna} × {CoN, direct}` = **4런**, 견적 $5 / **실측 $3.74**,
+workers=8로 **13분**. 판정 기준은 실행 전에 [`docs/20`](../20-lme-reading.md)에 사전등록했다
+(≥5pp 성립 / 2–5pp 약한 성립 / <2pp 불성립).
+
+**결과: 스프레드 task-averaged 12.57pp, overall 15.40pp — 성립.** 분해하면 리더 교체가 +11~12pp,
+읽기 방식이 +3~4pp이고 페어링 CI는 하나(luna의 task-averaged con−direct, +2.18 [−0.99, +5.57])를
+빼고 전부 0을 제외한다. 타입별로는 두 single-session 회상 타입이 모든 arm에서 포화(97~100)라
+움직임이 **multi-session(+20.3pp)·temporal-reasoning(+24.8pp)·preference(+13.3pp)** 에 몰린다 —
+검색이 완벽할 때 남는 것은 **찾기가 아니라 찾아온 것을 다루기**이고, 그 부분은 메모리 시스템의
+소유가 아니다.
+
+선택적 확장으로 `_s`에 mini/luna 두 arm(+$21)을 얹으면 "긴 haystack에서도 같은가"와 §1.3의
+**CoN 부호 역전**까지 간다. 미승인 상태다.
 
 ### 9.4 이 주장의 약점 (먼저 적어 둔다)
 
@@ -764,13 +790,14 @@ C4가 그 반론을 원천 차단한다:
 ```
 1. 다들 LongMemEval 점수로 메모리 순위를 매긴다          (현황: §5 비교가능성 행렬)
 2. 그 점수의 축을 분해하면 메모리의 몫이 작다            (C3 + C1/C2)
-3. 메모리를 완벽히 고정해도 이만큼 움직인다              (C4 ← 우리가 돌릴 실험)
+3. 메모리를 완벽히 고정해도 이만큼 움직인다              (C4 ← 실측: 12.6~15.4pp, docs/20)
 4. 게다가 애초에 비교가 불가능하다                       (§6 P1~P15, 4축)
 5. 필드도 같은 결론에 도달했다                           (§7 V2가 고친 것들)
 6. 그리고 아무도 안 재는 축이 있다 — write 비용          (§3.1: _s ingest = LoCoMo의 42배)
 ```
 
-새로 돌릴 것은 **3번 하나뿐**이다.
+새로 돌릴 것은 3번 하나뿐이었고, **2026-08-17에 돌았다**($3.74). 여섯 줄 전부가 이제
+[실측]/[인용]으로 채워져 있고 [연역]으로 남은 것은 C5(V2 설계 증거)뿐이다.
 
 ---
 
@@ -778,8 +805,11 @@ C4가 그 반론을 원천 차단한다:
 
 ### 10.1 재현 스크립트
 
-이 문서의 실측은 전부 `$0`이며 `scripts/repro/lme_audit/`의 10종으로 산출했다(같은 디렉터리의
-README가 실행법과 필요 입력을 담는다). CI에는 넣지 않는다 — 로컬 데이터셋과 upstream 클론이 필요하다.
+이 문서의 **감사 실측**은 전부 `$0`이며 `scripts/repro/lme_audit/`의 10종으로 산출했다(같은
+디렉터리의 README가 실행법과 필요 입력을 담는다). CI에는 넣지 않는다 — 로컬 데이터셋과 upstream
+클론이 필요하다. **유료 실측**(§8.4 R1~R2′)은 `scripts/repro/exp_lme_reading.py`가 돌리고
+`scripts/repro/lme_c4_analysis.py`가 사전등록된 판정 규칙을 집행한다(둘 다 아티팩트 계약은
+`run_status.py`가 읽는 형식).
 
 `lme_stats.py`(규모·절단) · `lme_tokens.py`(o200k 토큰) · `oracle_stats.py`(oracle 규모·비정렬) ·
 `cleaning_diff.py`(릴리스 diff) · `prompt_rediff.py`(프롬프트 바이트 대조) · `rediff.py`(집계기 대조) ·
@@ -806,7 +836,7 @@ README가 실행법과 필요 입력을 담는다). CI에는 넣지 않는다 �
 
 ### 10.3 미해결
 
-- 드라이버 배선 (호출부 0, $0 선행). 필수 가드는 §8.5
+- ~~드라이버 배선~~ **완료** (`scripts/repro/exp_lme_reading.py`, §8.5 가드 6종 하드코드)
 - terra/sol 레지스트리 등록 (견적 확정에 필요)
 - 원장 C-4 갱신 3건 — §3.2(릴리스 계보), LME-A1/A2(SSA 91% 삭제), **§6 P2의 "이중계상" 표현 교정**.
   원장은 레인 A 소유라 여기서 고치지 않는다
