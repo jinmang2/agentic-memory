@@ -105,3 +105,112 @@ class VectorStore(Protocol):
         ...
 
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class GraphStore(Protocol):
+    """Entity/edge/community store behind the graph read paths (Zep/Graphiti, G-Memory).
+
+    **Declared late, and the reason belongs in the contract.** The three backends —
+    `SqliteGraphStore`, `KuzuGraphStore`, `Neo4jGraphStore` — already carry an identical
+    seventeen-method surface, so nothing was broken when this was written; what was missing was
+    anything that *required* it. `DocStore` spent months without declaring `list_episodes` while
+    three call sites used it and one backend lacked it, and the loss showed up as a memory snapshot
+    that silently held no transcript. This protocol exists so a fourth graph backend cannot repeat
+    that, and `tests/test_store_contract.py` is what makes the requirement bite.
+
+    Two invariants that the method list alone does not convey:
+
+    - **Edges are invalidated, never deleted.** `invalidate_edge` stamps `invalid_at`, and `counts`
+      reports edges INCLUDING invalidated ones. Zep's temporal claim is this behaviour, and a
+      backend that deleted instead would still pass every signature check while erasing the
+      mechanism — so `active_only` defaults differ on purpose per method and are part of the
+      contract, not per-engine taste.
+    - **Communities are derived state, so `remove_community` is a hard delete** — membership
+      included. That asymmetry with edges is deliberate: a community can be recomputed from the
+      graph, an edge's history cannot be recovered once dropped.
+    """
+
+    def upsert_node(
+        self,
+        node_id: str,
+        namespace: str,
+        name: str,
+        summary: str = "",
+        entity_type: str = "Entity",
+    ) -> None:
+        """Upsert keyed on ``node_id``, NOT on ``name`` — reusing an id replaces that row."""
+        ...
+
+    def find_node_by_name(self, name: str, namespace: str) -> dict | None:
+        """Case-insensitive exact match within ``namespace``; first match, or None."""
+        ...
+
+    def upsert_edge(
+        self,
+        edge_id: str,
+        namespace: str,
+        src: str,
+        dst: str,
+        predicate: str,
+        content: str,
+        valid_at: str | None = None,
+    ) -> None:
+        """Full-row replace by ``edge_id``; reusing an id RESETS ``invalid_at``."""
+        ...
+
+    def edges_between(
+        self, src: str, dst: str, namespace: str, active_only: bool = True
+    ) -> list[dict]:
+        """Either direction between the pair. ``active_only`` defaults True."""
+        ...
+
+    def invalidate_edge(self, edge_id: str, t_invalid: str) -> None:
+        """Stamp an edge no-longer-true as of ``t_invalid``. Never deletes."""
+        ...
+
+    def edges_for_nodes(
+        self, node_ids: list[str], namespace: str, active_only: bool = True
+    ) -> list[dict]:
+        """Edges incident to any of the nodes — the graph-recall expansion frontier."""
+        ...
+
+    def neighbors(
+        self, node_id: str, namespace: str, hops: int = 1, direction: str = "both"
+    ) -> list[dict]:
+        """Nodes within ``hops`` steps over ACTIVE edges only."""
+        ...
+
+    def entity_projection(
+        self, namespace: str, active_only: bool = False
+    ) -> dict[str, dict[str, int]]:
+        """node id -> {neighbour id: edge count}, the label-propagation input.
+
+        Note the default: ``active_only=False`` here where the read paths use True, because
+        community structure is built over the whole history rather than the currently-true slice.
+        """
+        ...
+
+    def upsert_community(
+        self, community_id: str, namespace: str, name: str, summary: str = ""
+    ) -> None: ...
+    def set_community_members(self, community_id: str, namespace: str, node_ids: list[str]) -> None:
+        """Replace membership wholesale — not a merge."""
+        ...
+
+    def community_of_node(self, node_id: str, namespace: str) -> dict | None: ...
+    def neighbor_communities(self, node_id: str, namespace: str) -> list[dict]:
+        """One row per (relating edge, community) path, so a caller can weight by edge."""
+        ...
+
+    def communities(self, namespace: str) -> list[dict]: ...
+    def community_members(self, community_id: str) -> list[str]: ...
+    def remove_community(self, community_id: str) -> None:
+        """Hard delete, membership included — communities are derived state."""
+        ...
+
+    def counts(self) -> dict[str, int]:
+        """Row counts per table. The edge count INCLUDES invalidated edges."""
+        ...
+
+    def close(self) -> None: ...

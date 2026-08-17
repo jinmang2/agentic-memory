@@ -1,7 +1,7 @@
 """Every store implementation must carry the whole surface its Protocol declares.
 
-The `DocStore` and `VectorStore` protocols in `agmem.stores.base` are the contract the rest of the
-system codes against. Python does not enforce them — a Protocol is structural, and
+The `DocStore`, `VectorStore` and `GraphStore` protocols in `agmem.stores.base` are the contract the
+rest of the system codes against. Python does not enforce them — a Protocol is structural, and
 `@runtime_checkable` only compares method *names* at `isinstance` time, which nothing here calls — so
 a backend can be missing a method for months and only fail when some code path finally reaches it.
 
@@ -46,16 +46,22 @@ VECTOR_STORE_IMPLS = (
     ("qdrant_vec", "QdrantVectorStore"),
 )
 
-# Graph backends exist but `base.py` declares NO GraphStore protocol, so there is no surface to check
-# them against. Listed here so the completeness guard does not flag them, and recorded as the reason:
-# the missing protocol is a real gap, just not one this test can close by asserting.
-UNPROTOCOLED_IMPLS = (
+GRAPH_STORE_IMPLS = (
     ("sqlite_graph", "SqliteGraphStore"),
     ("kuzu_graph", "KuzuGraphStore"),
     ("neo4j_graph", "Neo4jGraphStore"),
 )
 
-ROSTERS = {"DocStore": DOC_STORE_IMPLS, "VectorStore": VECTOR_STORE_IMPLS}
+# Every store class in the package now belongs to a declared protocol. Kept as an empty tuple rather
+# than deleted: the completeness guard reads it, and an exemption list that exists and is empty says
+# "nothing is exempt" where a missing name would say "the guard forgot to look".
+UNPROTOCOLED_IMPLS: tuple[tuple[str, str], ...] = ()
+
+ROSTERS = {
+    "DocStore": DOC_STORE_IMPLS,
+    "VectorStore": VECTOR_STORE_IMPLS,
+    "GraphStore": GRAPH_STORE_IMPLS,
+}
 
 
 def _protocol_methods(protocol: type) -> list[str]:
