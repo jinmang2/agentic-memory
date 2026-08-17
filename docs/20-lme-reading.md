@@ -206,6 +206,59 @@ variable we pinned but did not validate (P3).
 smoke that preceded them was $0.03. This is the cheapest link in claim C's chain and it is the one
 that closes it.
 
+## Follow-ups on the same 500 questions
+
+The four arms above are paid for, and their records carry every hypothesis. That
+makes a set of second questions cheap enough to answer that not answering them
+would be a choice. **[실측]**
+
+### The judge is worth 2 points, and it does not change the answer
+
+§6 P3 says the judge is a free variable nobody keeps pinned: the official code
+asserts `gpt-4o-2024-08-06`, and the four systems publishing LongMemEval numbers
+use gpt-4o-mini, gpt-4.1-mini, gpt-5 and gpt-4o-mini — Mem0 with a rewritten
+prompt that tells the judge to *"lean toward yes"* when unsure. That criticism is
+one we owe our own numbers, so all four arms were re-scored with `gpt-4o-mini` as
+judge. Only judge calls were bought: 2,000 of them, **$0.078**, 22 minutes
+(`scripts/repro/lme_rejudge.py`).
+
+| arm | pinned gpt-4o | gpt-4o-mini judge | Δ | agreement |
+|---|---|---|---|---|
+| mini × direct | 79.20 | 77.60 | −1.60 | 97.6% |
+| mini × con | 83.60 | 82.20 | −1.40 | 96.2% |
+| luna × direct | 91.40 | 90.20 | −1.20 | 98.0% |
+| luna × con | 94.60 | 92.60 | −2.00 | 98.0% |
+
+(overall accuracy; task-averaged moves the same way, −0.25 to −1.89.)
+
+Two things, and they point opposite ways.
+
+**The headline is judge-dependent at the 1–2 pp scale.** The cheaper judge is
+consistently *stricter*, and 2.00 pp is larger than the CoN effect we measured on
+luna's task-averaged number (+2.18, whose interval already covered zero). **Any
+LongMemEval claim of about two points is inside the judge's own swing** — which
+is precisely why publishing a number without naming the judge, as every system in
+§5.1 does, makes it uncomparable.
+
+**The comparison is not.** The shift is systematic, so what the arms are being
+contrasted on barely moves:
+
+```
+spread, pinned gpt-4o judge     task-averaged 12.57    overall 15.40
+spread, gpt-4o-mini judge       task-averaged 12.63    overall 15.00
+arm ranking                      IDENTICAL under both judges
+```
+
+**C4's finding is judge-invariant** — the spread it rests on is 6–8x the judge's
+own effect. This is the general shape worth keeping from this benchmark: its
+*levels* are not comparable across papers, and its *contrasts*, held under one
+protocol, are.
+
+The exception is the row we already flagged as softest. Abstention falls further
+than any type under the swap — 70.00 → 66.67 and 86.67 → 80.00 — consistent with
+the hand-read finding above that some abstention verdicts turn on presentation
+rather than comprehension.
+
 ### Reproduce
 
 ```bash

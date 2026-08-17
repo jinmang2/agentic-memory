@@ -1,0 +1,134 @@
+{
+  "judge_model": "gpt-4o-mini",
+  "judge_pinned": false,
+  "arms": {
+    "gpt-4o-mini_lme_oracle_direct": {
+      "pinned_judge": {
+        "task_averaged": 79.57,
+        "overall": 79.2,
+        "abstention": 70.0
+      },
+      "new_judge": {
+        "task_averaged": 77.62,
+        "overall": 77.6,
+        "abstention": 66.67
+      },
+      "delta_pp": {
+        "task_averaged": -1.95,
+        "overall": -1.6
+      },
+      "agreement": 97.6,
+      "disagreements": 12,
+      "by_type_new": {
+        "single-session-user": 97.14,
+        "single-session-preference": 46.67,
+        "single-session-assistant": 100.0,
+        "multi-session": 69.92,
+        "temporal-reasoning": 69.92,
+        "knowledge-update": 82.05
+      },
+      "n": 500
+    },
+    "gpt-4o-mini_lme_oracle_con": {
+      "pinned_judge": {
+        "task_averaged": 83.89,
+        "overall": 83.6,
+        "abstention": 83.33
+      },
+      "new_judge": {
+        "task_averaged": 83.64,
+        "overall": 82.2,
+        "abstention": 80.0
+      },
+      "delta_pp": {
+        "task_averaged": -0.25,
+        "overall": -1.4
+      },
+      "agreement": 96.2,
+      "disagreements": 19,
+      "by_type_new": {
+        "single-session-user": 94.29,
+        "single-session-preference": 70.0,
+        "single-session-assistant": 98.21,
+        "multi-session": 73.68,
+        "temporal-reasoning": 75.94,
+        "knowledge-update": 89.74
+      },
+      "n": 500
+    },
+    "gpt-5.6-luna_lme_oracle_direct": {
+      "pinned_judge": {
+        "task_averaged": 89.96,
+        "overall": 91.4,
+        "abstention": 70.0
+      },
+      "new_judge": {
+        "task_averaged": 89.35,
+        "overall": 90.2,
+        "abstention": 66.67
+      },
+      "delta_pp": {
+        "task_averaged": -0.61,
+        "overall": -1.2
+      },
+      "agreement": 98.0,
+      "disagreements": 10,
+      "by_type_new": {
+        "single-session-user": 98.57,
+        "single-session-preference": 70.0,
+        "single-session-assistant": 98.21,
+        "multi-session": 86.47,
+        "temporal-reasoning": 87.97,
+        "knowledge-update": 94.87
+      },
+      "n": 500
+    },
+    "gpt-5.6-luna_lme_oracle_con": {
+      "pinned_judge": {
+        "task_averaged": 92.14,
+        "overall": 94.6,
+        "abstention": 86.67
+      },
+      "new_judge": {
+        "task_averaged": 90.25,
+        "overall": 92.6,
+        "abstention": 80.0
+      },
+      "delta_pp": {
+        "task_averaged": -1.89,
+        "overall": -2.0
+      },
+      "agreement": 98.0,
+      "disagreements": 10,
+      "by_type_new": {
+        "single-session-user": 98.57,
+        "single-session-preference": 63.33,
+        "single-session-assistant": 100.0,
+        "multi-session": 90.23,
+        "temporal-reasoning": 93.23,
+        "knowledge-update": 96.15
+      },
+      "n": 500
+    }
+  },
+  "ranking_pinned": [
+    "gpt-5.6-luna_lme_oracle_con",
+    "gpt-5.6-luna_lme_oracle_direct",
+    "gpt-4o-mini_lme_oracle_con",
+    "gpt-4o-mini_lme_oracle_direct"
+  ],
+  "ranking_new_judge": [
+    "gpt-5.6-luna_lme_oracle_con",
+    "gpt-5.6-luna_lme_oracle_direct",
+    "gpt-4o-mini_lme_oracle_con",
+    "gpt-4o-mini_lme_oracle_direct"
+  ],
+  "ranking_preserved": true,
+  "cost_usd": 0.078273,
+  "timing_s": 1312.9,
+  "llm_budget": {
+    "judge": {
+      "calls": 2000
+    }
+  }
+}
