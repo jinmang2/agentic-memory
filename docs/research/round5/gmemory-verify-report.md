@@ -1,5 +1,24 @@
 # G-Memory 충실도 검증 리포트 (2026-07-17)
 
+> ## ⚠️ 상태: 2026-07-17 시점 스냅샷 — "우리 구현" 서술은 현행이 아니다
+>
+> 이 문서의 **upstream/논문 분석은 유효**하나, **우리 쪽 구현을 기술한 모든 칸과 §5 배선 점검·§6 권고는
+> round-12 재감사에서 조치되어 낡았다**(커밋 `6fad7bb`, 스위트 388→441). 요약:
+>
+> | 당시 지적 | 현재 |
+> |---|---|
+> | §2.2 ADD score=0, AGREE 부재, REMOVE hard delete | **해소** — ADD 2 / EDIT·AGREE +1 / REMOVE soft −1(cap 시 −3) / score<=0 프루닝, upstream 상수와 일치 |
+> | §2.2 앵커 1개·단일 프롬프트 finetune | **해소** — 5 랜덤 앵커 × (compare-pair + success-chunk), `relative_tasks` 프롬프트별 기록 |
+> | §1 Ω_k(correlation tasks) 부재 | **해소** — `positive/negative_correlation_tasks` 도입 |
+> | §1·§3 query graph k-hop 부재 | **해소** — `task_edges` + `retrieval/steps.py:881 TaskGraphExpansion`(식5 재랭크 + 식6 상관 회수) |
+> | §3 성공/실패 분리 채널·threshold 0.3 | **재해석** — 쉬핑 하네스는 실패 채널을 **버리고** `1/0/3/0.0`로 돈다(GM-5). `GMEMORY_READ_RECIPE`로 기록 |
+> | §5 W-2 reward 폐루프 미작동 / W-3 삭제 유령 / W-4 궤적 오염 | **해소** — 서빙 insight 한정 피드백 + score<=0 프루닝, `is_servable` 필터 |
+> | §5 W-5 `project_insights` 호출자 부재 | **미해소**(설계상 MAS 루프가 부를 public API) |
+> | §1·§3 StateChain interaction graph 부재 | **미포트 유지 — 손실 없음이 확인됨**: upstream도 노드·엣지를 읽지 않는다(GM-14) |
+> | §4 "0.7 cosine 게이트" | **정정** — 실효 cosine **0.85**(GM-2 / 원장 B-2). 부록의 하이퍼파라미터 표도 이 정정을 적용해 읽을 것 |
+>
+> 최신 정본은 **`docs/research/gmemory-reread-2026-08-17.md`** (신규 결함 GM-12~GM-15 포함).
+
 ## 0. 검증 소스
 
 - **로컬**: `/home/jinmang2/agentic_memory/src/agmem/organizers/gmemory.py` (198줄), `docs/10-fidelity-audit.md` 43행, `docs/research/g-memory.md`

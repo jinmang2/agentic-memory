@@ -1,6 +1,11 @@
 # G-Memory 리서치 노트 (원자료)
 
 > 출처: 병렬 리서치 세션 (2026-07-16). arXiv:2506.07398, github.com/bingreeky/GMemory 기반.
+>
+> **2026-08-17 갱신**: 전면 재조사본 `docs/research/gmemory-reread-2026-08-17.md`가 이 문서의
+> 상위 집합이며 **G-Memory를 다시 볼 때의 진입점**이다(논문 §3–4 형식론, MAS/환경 계층,
+> finetune·failure 의미론, 우리 포트 지도, 신규 결함 GM-12~GM-15). 이 문서의 사실관계는
+> 아래 정정 두 건을 제외하면 유효하다.
 
 ## 논문 정보
 
@@ -13,6 +18,9 @@
 - **Insight Graph** — 상위 레벨, cross-trial/cross-task 일반화 규칙("insights"). 코드상으로는 그래프가 아니라 `{rule, score, positive_correlation_tasks, negative_correlation_tasks}` 레코드의 JSON 리스트.
 - **Query Graph** — 중간 레벨. 과거 task query 간 유사도 그래프. retrieval 시 k-hop 이웃 확장에 사용.
 - **Interaction Graph** — 세밀한 레벨. task별 multi-agent 협업 궤적(에이전트 메시지의 directed graph 체인)을 압축 저장.
+  **[정정 2, 2026-08-17]** "압축 저장"까지는 맞으나 **읽히지 않는다** — 발화 노드·엣지를 읽는 코드가
+  repo 전체에 없고(GM-14), AutoGen에서는 엣지조차 생성되지 않는다(`upstream_agent_ids=[]`).
+  실질은 "reward<0 스텝을 제거한 선형 action/observation 로그"다.
 
 **Retrieval = bi-directional traversal**: 임베딩 기반 coarse retrieval + query graph k-hop 확장. 위쪽(insight)으로는 전략적 지침, 아래쪽(interaction trajectory)으로는 LLM 기반 sparsification/condensation을 거친 구체 궤적. 추가로 **role-specific memory injection**: insight를 에이전트 role별로 LLM이 재작성(projection)해서 주입.
 
@@ -72,10 +80,25 @@ langchain 0.3.25, langchain_chroma, openai, sentence_transformers 3.4.1, finch_c
 - 벤치마크 5종: HotpotQA, FEVER (지식), ALFWorld, SciWorld (embodied), PDDL (planning).
 - 백본 3종: **GPT-4o-mini, Qwen2.5-7B-Instruct, Qwen2.5-14B-Instruct** — small-model 친화적 스토리.
 - 향상폭: ALFWorld +11.20~20.89% (예: 58.21%→79.10%; Table 3 AutoGen+ALFWorld 85.82%), SciWorld +9.53~13.78% (progress rate 기준, ~60%), PDDL +4.02~10.32%, HotpotQA +3.73~10.12%, FEVER +3.32~9.11%.
-- latency/token 비용의 정량 테이블은 접근 가능한 소스에서 미확인 ("marginal token overhead" 주장만).
-- 전체 Table 1/3 그리드는 PDF 직접 확인 필요 (arXiv HTML 404, PDF 10MB 초과).
+- **[정정 1, 2026-08-17]** "arXiv HTML 404"는 2026-07 시점 사실이며 **지금은 무효** —
+  `arxiv.org/html/2506.07398v2`가 열린다. 거기서 확인한 추가 수치:
+  GPT-4o-mini 평균 AutoGen 57.18%(+8.91) / DyLAN 50.88%(+7.76) / MacNet 51.95%(+9.94);
+  ablation은 fine-grained interaction 제거 −4.47(AutoGen)/−3.82(DyLAN), insight 제거 −3.95/−3.39;
+  민감도는 1-hop 최적·k∈{1,2}(k=5 크게 악화).
+- 비용: 논문은 **LLM 콜 수를 보고하지 않고 총 토큰만** 낸다 — PDDL +10.32%에 1.4×10⁶ 토큰
+  (MetaGPT-M 2.2×10⁶에 +4.07%), §5.3 Fig 3/7. 하네스 operating point 기준 우리 추정치는
+  **태스크당 평균 5~6콜**(재조사본 §5).
+- 논문은 insight score / reward / ADD·EDIT·REMOVE·AGREE / 클러스터 병합을 **한 번도 언급하지 않는다**
+  (식10–11의 생성·Ω 갱신만) — 논문↔코드 불일치(GM-1)의 1차 근거.
 
 ## 4. 재현 관점 — ⚠️ 커뮤니티에서 재현 어려움이 공식적으로 보고됨
+
+> **2026-08-17 추가 — 코드 자체의 재현 장애 4건** (근거·검증법은 재조사본 §6, 원장 GM-12~GM-15):
+> ① DyLAN은 `backward`를 호출하지 않아 **reward shaping이 DyLAN 컬럼 전체에서 미발화**
+> ② 식(5) 1-hop 확장 결과를 재바인딩으로 폐기하는 분기(`GMemory.py:150-164`, 뒤따르는 루프는 죽은 코드)
+> ③ interaction graph write-only ④ key-step 추출 전 궤적의 **모든 숫자 제거**(`:261`).
+> 여기에 작업 디렉토리를 지우지 않는 하네스(`run.py:146-147`)가 겹치면 #22의 run 간 편차를
+> 부분적으로 설명한다.
 
 - **#22**: AutoGen+Qwen2.5-14B(vLLM)로 ALFWorld 67–76% (논문 85.82%) — 3 run 편차 큼. SciWorld ave_reward 0.44–0.56 vs 논문 ~60%. 저자 답변은 "LLM/메모리 랜덤성" 언급 후 미해결.
 - **데이터 라벨 버그**: SciWorld 일부 에피소드가 score=100인데 won=false (test.jsonl subgoal 매칭 경직성) — 쉬핑된 eval 데이터 자체 품질 문제.
