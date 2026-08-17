@@ -41,9 +41,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 RECORDS = ROOT / "results" / "repro"
 
-# Prices are the campaign's single model, stated where they are used rather than
-# imported, because this script must keep working when nothing else does.
-RATES = {"gpt-4o-mini": (0.15 / 1e6, 0.60 / 1e6)}
+# Prices stated here rather than imported, because this script must keep working
+# when nothing else does. It is no longer one model: the LongMemEval arms read
+# with one model and judge with another, and the judge's output costs 16.7x the
+# reader's, so a single-rate total would understate a finished arm by more than
+# the arm cost.
+RATES = {
+    "gpt-4o-mini": (0.15 / 1e6, 0.60 / 1e6),
+    "gpt-4o-2024-08-06": (2.50 / 1e6, 10.00 / 1e6),
+    "gpt-5.6-luna": (0.20 / 1e6, 1.20 / 1e6),
+    "text-embedding-3-small": (0.02 / 1e6, 0.0),
+}
+DEFAULT_MODEL = "gpt-4o-mini"
 
 
 def count_lines(path: Path) -> int:
@@ -53,12 +62,16 @@ def count_lines(path: Path) -> int:
         return sum(1 for line in fh if line.strip())
 
 
-def spend_from_trace(path: Path, model: str = "gpt-4o-mini") -> tuple[float, int]:
+def spend_from_trace(path: Path, model: str = DEFAULT_MODEL) -> tuple[float, int]:
     """(usd, calls) across every process of this run. A truncated final line —
-    the shape a kill leaves — ends the count rather than raising."""
+    the shape a kill leaves — ends the count rather than raising.
+
+    Each line is priced at the rate of the model IT names, not at one rate for
+    the file: a run whose reader and judge differ has two rates in one trace, and
+    `model` is only the fallback for a line that names something unregistered."""
     if not path.exists():
         return 0.0, 0
-    rate_in, rate_out = RATES.get(model, RATES["gpt-4o-mini"])
+    fallback = RATES.get(model, RATES[DEFAULT_MODEL])
     usd = 0.0
     calls = 0
     for line in path.open(encoding="utf-8"):
@@ -67,6 +80,7 @@ def spend_from_trace(path: Path, model: str = "gpt-4o-mini") -> tuple[float, int
         except json.JSONDecodeError:
             break
         calls += 1
+        rate_in, rate_out = RATES.get(str(call.get("model")), fallback)
         usd += (call.get("tokens_in") or 0) * rate_in + (call.get("tokens_out") or 0) * rate_out
     return usd, calls
 
