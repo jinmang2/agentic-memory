@@ -46,6 +46,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
+from demo_svg import (
+    ACCENT,
+    BACKGROUND,
+    GRID,
+    INK,
+    MUTED,
+    decade_label,
+    reflow,
+    text_element,
+    thousands,
+    wrap,
+)
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR = REPO_ROOT / "results" / "repro"
 DEFAULT_SVG = REPO_ROOT / "docs" / "demos" / "assets" / "cost-is-tokens.svg"
@@ -271,72 +284,10 @@ def collect() -> tuple[dict[str, ArmFacts], dict]:
 
 # --------------------------------------------------------------------------- SVG
 
-# A committed SVG is rendered by GitHub as an <img>, where the page's dark theme does not reach the
-# document's own CSS. So the panel paints its own light ground explicitly and never relies on the
-# host background — a transparent figure with dark text vanishes for half the readers.
-BACKGROUND = "#ffffff"
-INK = "#111827"
-MUTED = "#6b7280"
-GRID = "#e5e7eb"
-
 WIDTH, HEIGHT = 1000, 470
 PANEL_TOP, PANEL_BOTTOM = 86, 366
 PANEL_A_LEFT, PANEL_A_RIGHT = 72, 468
 PANEL_B_LEFT, PANEL_B_RIGHT = 596, 962
-
-
-def escape(text: str) -> str:
-    """XML-escape a label. Arm names and numbers only, but the figure is committed, so be exact."""
-    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-def text_element(
-    x: float,
-    y: float,
-    content: str,
-    *,
-    size: float = 12,
-    fill: str = INK,
-    anchor: str = "start",
-    weight: str = "normal",
-) -> str:
-    """One <text> node, with the family fixed so the committed file renders identically everywhere."""
-    return (
-        f'<text x="{x:.1f}" y="{y:.1f}" font-size="{size}" fill="{fill}" '
-        f'text-anchor="{anchor}" font-weight="{weight}" '
-        f'font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"'
-        f">{escape(content)}</text>"
-    )
-
-
-def thousands(value: float) -> str:
-    """Group digits so a six-figure character count reads as one at a glance."""
-    return f"{value:,.0f}"
-
-
-def decade_label(exponent: int) -> str:
-    """Axis label for a power of ten, as a reader says it rather than as a formula."""
-    if exponent < 3:
-        return thousands(10**exponent)
-    if exponent < 6:
-        return f"{10 ** (exponent - 3)}K"
-    return f"{10 ** (exponent - 6)}M"
-
-
-def wrap(text: str, width: int) -> list[str]:
-    """Greedy wrap by word count. SVG has no flow layout, so the caption wraps itself or overruns."""
-    lines: list[str] = []
-    current = ""
-    for word in text.split():
-        candidate = f"{current} {word}".strip()
-        if len(candidate) > width and current:
-            lines.append(current)
-            current = word
-        else:
-            current = candidate
-    if current:
-        lines.append(current)
-    return lines
 
 
 def panel_playbook(facts: dict[str, ArmFacts]) -> list[str]:
@@ -514,7 +465,7 @@ def panel_cost(facts: dict[str, ArmFacts]) -> list[str]:
             mid_y + 11,
             f"x{ratio:.1f} cost",
             size=12,
-            fill="#dc2626",
+            fill=ACCENT,
             weight="600",
             anchor="end",
         )
@@ -614,47 +565,6 @@ def render_svg(facts: dict[str, ArmFacts]) -> str:
 
 
 # ---------------------------------------------------------------------- markdown
-
-MARKDOWN_WIDTH = 100
-LIST_MARKER = re.compile(r"^([-*+]\s|\d+\.\s)")
-
-
-def reflow(markdown: str) -> str:
-    """Re-wrap prose paragraphs to the repo's 100 columns, leaving structure alone.
-
-    The document is assembled from f-strings whose interpolated numbers have no fixed width, so
-    without this the committed file is ragged in a way that reads as carelessness and makes every
-    regeneration a noisy diff. Tables, headings, fences, quotes and list items are structural and
-    pass through untouched.
-    """
-    out: list[str] = []
-    paragraph: list[str] = []
-    in_fence = False
-
-    def flush() -> None:
-        if paragraph:
-            out.extend(wrap(" ".join(paragraph), MARKDOWN_WIDTH))
-            paragraph.clear()
-
-    for line in markdown.split("\n"):
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            in_fence = not in_fence
-        # `**bold` opens a prose paragraph here and `* ` opens a list, so the list test requires
-        # the space — without it every emphasised lead sentence escapes the reflow and stays ragged.
-        structural = (
-            in_fence
-            or not stripped
-            or stripped.startswith(("|", "#", ">", "![", "```"))
-            or LIST_MARKER.match(stripped) is not None
-        )
-        if structural:
-            flush()
-            out.append(line)
-        else:
-            paragraph.append(stripped)
-    flush()
-    return "\n".join(out)
 
 
 def render_markdown(
