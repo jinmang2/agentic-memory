@@ -259,6 +259,77 @@ than any type under the swap — 70.00 → 66.67 and 86.67 → 80.00 — consist
 the hand-read finding above that some abstention verdicts turn on presentation
 rather than comprehension.
 
+### How much of a gap is nothing at all
+
+The pre-registration's own weakness list starts with *single seed*. So the
+luna × con arm was simply run again, same everything, and the two runs paired:
+
+```
+luna·con  -  luna·con (replicate)   task_avg -0.47 [-3.39, +2.34]   overall +0.40 [-1.40, +2.20]
+                                    McNemar 11/9  p=0.82   (20 of 500 verdicts differ)
+```
+
+**Run-to-run noise is about half a point, with an interval of ±2–3 pp.** This arm
+is the honest place to measure it: gpt-5.6-luna admits no temperature, so it
+answers at the provider's default rather than at 0, and its replicate variance is
+real sampling rather than an API artefact. Even so, 480 of 500 verdicts are
+identical.
+
+Put beside the judge swap, there are now two independent ~2 pp noise sources
+measured on this benchmark, and the same conclusion falls out of both: **a
+two-point LongMemEval claim is not a finding.** C4's 12.6–15.4 pp is 6–30x either
+one, which is why it survives both.
+
+### Upstream's other history format, and its interaction with reading
+
+§5.5 reports that JSON does not consistently beat NL *without* chain-of-note and
+always beats it *with* — an interaction of up to 10 pp between two flags usually
+reported as neither. Both formats are transcribed from upstream and both render
+byte-identically to it (`prompt_rediff.py` configs D and E, 500/500 each), so a
+gap here is the format's, not our rendering's. Measured on mini, all four cells:
+
+| | json | nl | json − nl (overall) |
+|---|---|---|---|
+| **con** | 83.60 | 81.20 | **+2.40** [−0.40, +5.40], McNemar 34/22, p=0.14 |
+| **direct** | 79.20 | 79.00 | **+0.20** [−2.20, +2.60], McNemar 21/20, p=1.00 |
+
+**The direction reproduces the paper's interaction exactly** — JSON's advantage
+exists with chain-of-note (+2.40) and is indistinguishable from zero without it
+(+0.20) — but neither cell separates on its own at 500 questions, and we did not
+buy an interval for the difference-of-differences. So: consistent with §5.5,
+not a confirmation of it. What it does establish for our own arms is that the
+format flag is worth about as much as the judge — another reason a bare number
+from another paper cannot be compared.
+
+### What a retrieval layer costs when the haystack already fits
+
+The same arm answered from the memory's top-10 instead of the whole haystack
+(`--retrieval 10`, real embedder, everything else identical):
+
+| mini × con | task-averaged | overall | abstention | cost |
+|---|---|---|---|---|
+| full context | 83.89 | 83.60 | 83.33 | $1.05 |
+| retrieval top-10 | 81.97 | 80.60 | **66.67** | $0.85 |
+| difference | +1.92 [−1.88, +5.77] | **+3.00** [−0.40, +6.60] | −16.67 | |
+
+**Retrieval costs about 3 points here, and that is the expected sign, not a
+surprise**: oracle is evidence-only, the whole haystack is 6.1 K tokens at the
+median, and it already fits. A retrieval layer in that condition can only drop
+something the reader would otherwise have had. The interval covers zero, so the
+tax is not separated at 500 questions — but the direction is consistent across
+both accuracies and the discordance is asymmetric (48 questions the full-context
+arm gets and retrieval misses, against 33 the other way).
+
+The type it costs most is **abstention, −16.67 pp**. That fits the mechanism:
+answering "this was never mentioned" requires having seen what *was* mentioned,
+and top-10 turns of an already-short haystack is exactly the condition under
+which a false premise stops being visibly false.
+
+**This is a ceiling-condition measurement and it does not generalise downward.**
+It says what a memory layer costs when retrieval is not needed. It says nothing
+about what one buys when it is — that question lives on `_s`, where the paper's
+own numbers show GPT-4o falling from .870 on oracle to .606 on the full haystack.
+
 ### Reproduce
 
 ```bash
