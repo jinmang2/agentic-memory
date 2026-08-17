@@ -234,12 +234,28 @@ interval narrower than the truth. Neither is worth an interval, so `finer_paired
 1. **The generator is not the paper's.** `gpt-4o-mini` against DeepSeek-V3.1. Our base is 20.9 points
    under the paper's baseline, so this is a different operating point, and a mechanism that needs a
    strong reasoner to exploit its own playbook would not show up here.
-2. **Our adaptation loop is 3 calls per sample; upstream's is 3 to 8.** Upstream regenerates after
-   reflecting, up to `max_num_rounds`=3 times, and stops early when a retry lands (`ace.py:498-543`);
-   we reflect once at `on_task_end` and never re-answer. **This is the largest open question in the
-   table** — upstream's extra calls can flip a sample to correct *inside* the training step, so its
-   reflector sees outcomes ours never produces, and it is not excluded that those retries are what
-   makes the mechanism pay. An `online_retry` arm is what would close it.
+2. **Our adaptation loop is 3 calls per sample; upstream's online mode is 5 to 10.** Earlier
+   revisions of this document said "3 to 8", which counted only the retry block; reading the whole
+   step at the pinned SHA gives:
+
+   | upstream, per sample | calls | ours |
+   |---|---|---|
+   | window test pass — **the answer that is scored** (`ace.py:955`) | 1 | 1 (and ours is also the trajectory reflected on) |
+   | `_train_step` answers the same sample **again** with the same playbook (`ace.py:465-472`) | 1 | 0 |
+   | reflect; on an incorrect sample also regenerate, up to `max_num_rounds`=3 rounds with early stop when a retry lands (`ace.py:498-543`), on a correct one reflect once (`ace.py:548-570`) | 1–6 | 1 |
+   | curate — `curator_frequency`=1 on FiNER (`eval/finance/run.py:49`) | 1 | 1 |
+   | post-curator generate, filed as `post_train_result` and never fed back (`ace.py:608-625`) | 1 | 0 |
+
+   Two of those extra calls buy no learning: one re-answers a question already answered under the
+   same playbook, and one exists to measure post-training accuracy. **The retry block is the one that
+   can change what gets learned** — it can flip a sample to correct *inside* the training step, so
+   the reflector sees outcomes ours never produces, bullet counters accrue per round, and the curator
+   receives the reflection written about the *final* attempt rather than the first. **This is the
+   largest open question in the table**, and an `online_retry` arm is what would close it.
+
+   Reading the online loop also settles a question worth stating: **the reported accuracy is not
+   contaminated by training on the sample being scored.** The window is tested in full before any
+   training happens on it (`ace.py:950-996`), which is the protocol our arms follow.
 3. **One attempt is scored and learned from.** Upstream answers a window for scoring and then calls
    the generator *again* inside its training step; we reflect on the attempt already scored.
 4. **Reflector and curator share one role**, so they cannot take different models or temperatures;
