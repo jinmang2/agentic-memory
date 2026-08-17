@@ -293,8 +293,47 @@ def zep_profile(
     return _canned
 
 
+def _rb_canned(role: str, prompt: str) -> str:
+    """Schema-valid responses for ReasoningBank's write path.
+
+    **The call count here is control-flow-fixed, unlike Zep's.** `on_task_end`
+    makes exactly one `distill` call per task, and the `judge` call fires only
+    when the caller's outcome is unlabeled (`_is_labeled`). Both benchmarks that
+    drive this organizer supply an explicit `success`/`failure`, so the judge is
+    off the path and no yield band is needed — which is why this profile can be
+    a fixed reply where `zep_profile()` had to be parameterized.
+
+    Three items, matching upstream's `DEFAULT_MAX_ITEMS` and the "at most 3" its
+    SUCCESSFUL_SI/FAILED_SI advertise: the item COUNT is what scales the store,
+    and therefore what scales a top-k read's retrieval work downstream, so
+    answering with one would under-count the read side of a quote.
+
+    The judge branch is answered anyway rather than left to the fallback. A
+    profile that returns "stub answer" for a role the organizer may call would
+    make `StructuredCaller` record a drop, and a drop silently subtracts a call
+    from the very count being quoted.
+    """
+    if role == "judge":
+        return '{"success": true, "reason": "canned verdict"}'
+    if role == "distill":
+        return json.dumps(
+            {
+                "items": [
+                    {
+                        "title": f"Canned strategy {i}",
+                        "description": "A transferable step distilled from the trajectory.",
+                        "content": "Check the candidate list before committing to a tag.",
+                    }
+                    for i in range(1, 4)
+                ]
+            }
+        )
+    return "stub answer"
+
+
 CANNED_RESPONSES: dict[str, Callable[[str, str], str]] = {
     "amem": _amem_canned,
+    "rb": _rb_canned,
     "nemori": _nemori_canned,
     "mem0": _mem0_canned,
     # Three points of the same Zep profile, not three profiles: the middle one

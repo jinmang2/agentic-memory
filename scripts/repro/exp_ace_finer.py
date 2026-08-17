@@ -67,6 +67,10 @@ from agmem._env import load_env_local
 from agmem.bench import finer
 from agmem.config import AgmemConfig
 from agmem.organizers.ace import ACEOrganizer
+from agmem.organizers.reasoning_bank.organizer import (
+    DEFAULT_MAX_ITEMS as RB_DEFAULT_MAX_ITEMS,
+)
+from agmem.organizers.reasoning_bank.organizer import ReasoningBankOrganizer
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 OUT = ROOT / "results" / "repro"
@@ -80,6 +84,22 @@ ACE_ROLE_TEMPS = {
     "generate": {"temperature": 0.0},
     "distill": {"temperature": 0.0, "max_tokens": 4096},
 }
+
+# The organizer this runner drives, paired with the read path that belongs to it.
+# Track 4 added the second entry; the first is the one four paid arms were bought
+# through, and `tests/test_finer_runner.py` pins that selecting it changes nothing.
+#
+# The two are paired here rather than exposed as separate flags on purpose. ACE's
+# read contract is whole-playbook injection; ReasoningBank's pinned operating
+# point is top-1 (`RB_READ_RECIPE`). A CLI that let them be mixed would let an arm
+# claim a lineage it did not actually read in.
+ORGANIZER_READS = {"ace": "playbook", "rb": "experiences"}
+
+# Items the dry-run fake emits per RB extraction. Imported from the organizer rather
+# than restated so a quote cannot be built against a budget the prompt no longer
+# advertises — upstream's SUCCESSFUL_SI/FAILED_SI say "at most 3" and the schema's
+# maxItems is rendered from the same knob (round-12 #15).
+RB_DRY_RUN_ITEMS = RB_DEFAULT_MAX_ITEMS
 
 
 def _load_repro_helpers():
@@ -144,6 +164,41 @@ class DryRunLLM:
             else:
                 body = "Dry-run insight about tag selection, repeated verbatim."
             reply = {"operations": [{"type": "ADD", "section": "gaap_tagging", "content": body}]}
+        elif isinstance(schema, dict) and schema.get("required") == ["items"]:
+            # Matched on the schema's own `required`, NOT on a substring of it:
+            # `items` is a JSON Schema keyword that every array property carries,
+            # so `"items" in str(schema)` would also catch ACE's reflector (its
+            # `bullet_tags` is an array) and answer it with the wrong shape.
+            #
+            # ReasoningBank's extraction (track 4). Answered explicitly rather than
+            # falling through to the reflector shape below: `on_task_end` demands
+            # `items`, so a reply without it is a DROP, and a dropped call is
+            # subtracted from the very ledger the quote is read off — the dry run
+            # would have priced an arm that learned nothing.
+            #
+            # `DEFAULT_MAX_ITEMS` items every time, because RB has no dedup gate:
+            # what the curator proposes is what the store keeps, so the item count
+            # is deterministic where ACE's needed bracketing. `growth` still varies
+            # their text — disjoint under "max" so the vector store holds distinct
+            # candidates for the top-1 read to choose between — but the interval it
+            # brackets is NARROW here, and that is a finding rather than a
+            # convenience: the read serves ONE item, so store size does not ride
+            # into every prompt the way ACE's whole playbook does.
+            self._curated += 1
+            if self.growth == "max":
+                body = " ".join(f"rb{self._curated}y{j}" for j in range(18))
+            else:
+                body = "Dry-run strategy about tag selection, repeated verbatim."
+            reply = {
+                "items": [
+                    {
+                        "title": f"Dry-run item {self._curated}-{i}",
+                        "description": "A transferable step distilled from the trajectory.",
+                        "content": body,
+                    }
+                    for i in range(RB_DRY_RUN_ITEMS)
+                ]
+            }
         else:
             reply = {
                 "reasoning": "r" * 200,
@@ -165,9 +220,17 @@ def build_memory(args, embedder, trace_path: Path | None, roles) -> AgenticMemor
         use_guided_json=False,
         sync_write=True,
     )
+    # The ACE branch is spelled exactly as it was before Track 4 threaded a second
+    # organizer through here, because four bought arms are that call.
+    if args.organizer == "rb":
+        organizers = [ReasoningBankOrganizer()]
+    else:
+        organizers = [
+            ACEOrganizer(dedup_threshold=args.dedup_threshold, max_rounds=args.max_rounds)
+        ]
     mem = AgenticMemory(
         namespace=args.namespace,
-        organizers=[ACEOrganizer(dedup_threshold=args.dedup_threshold, max_rounds=args.max_rounds)],
+        organizers=organizers,
         embedder=embedder,
         config=cfg,
     )
@@ -187,12 +250,18 @@ def run_arm(
     skip_before: int = 0,
     over_budget=None,
     retries: bool = False,
+    memory_source=None,
 ) -> tuple[list[dict], list[dict]]:
     """Walk the split. Returns (rows, per_window).
 
     With `adapt=False` this is upstream's `eval_only` over the whole split; the
     window boundaries still exist so the two arms produce comparable curves,
-    but nothing is learned between them."""
+    but nothing is learned between them.
+
+    `memory_source` selects which read path fills the generator's memory slot;
+    None means `finer.read_playbook`, which is ACE's contract and what the four
+    docs/19 arms were bought through."""
+    read = memory_source or finer.read_playbook
     rows: list[dict] = []
     per_window: list[dict] = []
     for start, chunk in finer.windows(samples, window):
@@ -212,7 +281,7 @@ def run_arm(
         for sample in chunk:
             capture: dict[str, Any] = {}
             try:
-                pred, _bullets = finer.answer(mem, sample, capture=capture)
+                pred, _bullets = finer.answer(mem, sample, capture=capture, memory_source=read)
                 failed = False
             except Exception as exc:  # noqa: BLE001 - a failure must score, not vanish
                 # Upstream drops a raising sample out of the denominator
@@ -254,7 +323,14 @@ def run_arm(
                 # while learning, which is the whole point of the arm, and each
                 # extra attempt is recorded so the artifact says what they did.
                 attempts: list[dict] = []
-                finer.adapt(mem, sample, row, retries=retries, attempts=attempts)
+                finer.adapt(
+                    mem,
+                    sample,
+                    row,
+                    retries=retries,
+                    attempts=attempts,
+                    memory_source=read,
+                )
                 if attempts:
                     row["retry_attempts"] = [
                         {"pred": a["pred"], "is_correct": a["is_correct"]} for a in attempts
@@ -348,6 +424,16 @@ def resume_state(records_path: Path, samples: list[dict], window: int, log) -> l
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--arm", choices=["base", "online"], required=True)
+    ap.add_argument(
+        "--organizer",
+        choices=sorted(ORGANIZER_READS),
+        default="ace",
+        help=(
+            "which self-evolving memory to grow alongside (default ace, the four docs/19 arms). "
+            "'rb' is ReasoningBank on the same 441 questions — NOT a reproduction of its published "
+            "agentic claims, which need WebArena or SWE-Bench; see the track 4 re-selection note"
+        ),
+    )
     ap.add_argument("--data", type=Path, default=UPSTREAM_DATA)
     ap.add_argument("--split", default="test")
     ap.add_argument("--limit", type=int, default=None, help="first N samples (smoke runs)")
@@ -518,7 +604,8 @@ def main() -> None:
             sink=sink,
             skip_before=len(kept),
             over_budget=over_budget,
-            retries=args.max_rounds > 1,
+            retries=args.organizer == "ace" and args.max_rounds > 1,
+            memory_source=finer.MEMORY_SOURCES[ORGANIZER_READS[args.organizer]],
         )
         rows = kept + new_rows
         with (OUT / f"{args.tag}.memory.jsonl").open("w", encoding="utf-8") as fh:
@@ -565,25 +652,61 @@ def main() -> None:
             "n_samples": len(samples),
             "window": args.window,
             "role_temps": ACE_ROLE_TEMPS,
-            "organizers": ["ace"],
-            "dedup_threshold": args.dedup_threshold,
-            "dedup_enabled": args.dedup_threshold <= 1.0,
-            "max_rounds": args.max_rounds,
-            "deviations": [
-                "D1_structured_output",
-                # D3/D4 are one knob seen twice: with `max_rounds` above 1 the
-                # organizer re-answers a failed sample from its own reflection,
-                # which is both the extra attempt and the retry loop. What stays
-                # deviant either way is the two upstream calls that buy no
-                # learning (ace.py:465-472, :608-625) — named so a reader cannot
-                # take "retries on" for "call structure identical".
-                *(
-                    ["D3_one_attempt", "D4_no_retries"]
-                    if args.max_rounds <= 1
-                    else ["D3D4_retries_on_no_duplicate_or_post_curate_generation"]
-                ),
-                "D5_dedup_on" if args.dedup_threshold <= 1.0 else "D5_dedup_off_upstream_default",
-            ],
+            "organizers": [args.organizer],
+            "read_path": ORGANIZER_READS[args.organizer],
+            # ACE-only knobs. Emitted unconditionally for `--organizer ace` so the
+            # four bought arms' stamps are unchanged; omitted for any other
+            # organizer, because a `dedup_threshold` on an arm with no curator
+            # would read as a setting that was in force.
+            **(
+                {
+                    "dedup_threshold": args.dedup_threshold,
+                    "dedup_enabled": args.dedup_threshold <= 1.0,
+                    "max_rounds": args.max_rounds,
+                }
+                if args.organizer == "ace"
+                else {}
+            ),
+            "deviations": (
+                [
+                    "D1_structured_output",
+                    # D3/D4 are one knob seen twice: with `max_rounds` above 1 the
+                    # organizer re-answers a failed sample from its own reflection,
+                    # which is both the extra attempt and the retry loop. What stays
+                    # deviant either way is the two upstream calls that buy no
+                    # learning (ace.py:465-472, :608-625) — named so a reader cannot
+                    # take "retries on" for "call structure identical".
+                    *(
+                        ["D3_one_attempt", "D4_no_retries"]
+                        if args.max_rounds <= 1
+                        else ["D3D4_retries_on_no_duplicate_or_post_curate_generation"]
+                    ),
+                    "D5_dedup_on"
+                    if args.dedup_threshold <= 1.0
+                    else "D5_dedup_off_upstream_default",
+                ]
+                if args.organizer == "ace"
+                else [
+                    "D1_structured_output",
+                    # The one a reader must not miss: this is not RB's benchmark.
+                    # Its published claims are agentic (WebArena, SWE-Bench), both
+                    # unreachable here — a five-site Docker environment and a
+                    # hosted grader against a floored gpt-4o-mini respectively.
+                    # FiNER tests the MECHANISM on a single-turn task, against the
+                    # same base arm docs/19 already bought.
+                    "RB_D1_not_the_published_benchmark_finer_not_webarena_or_swebench",
+                    # The generator prompt is ACE's, unchanged, so the arms differ
+                    # only in what memory puts in the slot. Deliberate: the
+                    # question is whether docs/19's null is ACE's or the task's,
+                    # and that only reads with the generator held fixed.
+                    "RB_D2_shared_ace_generator_prompt_memory_content_is_the_only_variable",
+                    # Upstream embeds stored and incoming text alike as
+                    # RETRIEVAL_DOCUMENT and prefixes an authored domain
+                    # instruction (memory_management.py:49,83,128). We pin types
+                    # and k only — see configs.rb_upstream.
+                    "RB_D3_retrieval_geometry_not_reproduced",
+                ]
+            ),
             "context_markers_absent": fell_through,
             "git_sha": helpers.git_sha(),
             "utc_started": utc_started,

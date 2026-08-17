@@ -67,6 +67,11 @@ CONFIG_TO_CANNED: dict[str, str] = {
     # config against "zep_low"/"zep_high" too (both are registered in
     # CANNED_RESPONSES) and report the range — see counting.py's zep section.
     "zep_cross_encoder": "zep",
+    # Track 4. A single point, not a band: ReasoningBank's `on_task_end` makes
+    # exactly one distill call per task and its judge fires only on an unlabeled
+    # outcome, which FiNER never supplies — so unlike Zep there is no yield the
+    # canned response cannot measure.
+    "rb_upstream": "rb",
 }
 
 

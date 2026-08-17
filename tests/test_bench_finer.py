@@ -13,6 +13,7 @@ import pytest
 from helpers import StubLLM, make_mem_multi
 
 from agmem.bench.finer import (
+    MEMORY_SOURCES,
     NO_ANSWER,
     SPLITS,
     TAGS_PER_SAMPLE,
@@ -24,12 +25,19 @@ from agmem.bench.finer import (
     load_finer,
     parse_instruction_and_input,
     process_task_data,
+    read_experiences,
+    read_playbook,
     score_sample,
     split_tags,
     tag_counts,
     windows,
 )
 from agmem.organizers.ace import ACEOrganizer
+from agmem.organizers.reasoning_bank.organizer import (
+    DEFAULT_MAX_ITEMS,
+    RB_READ_RECIPE,
+    ReasoningBankOrganizer,
+)
 
 
 def _row(pred, target, failed=False):
@@ -296,3 +304,119 @@ def test_the_generators_reasoning_reaches_the_reflector():
     assert step["reasoning"].startswith("I matched 231,312")
     assert step["bullets_cited"] == ["gaap-00007"]
     assert captured["outcome"] == "failure", "3-of-4 is a failure to learn from (trap 5)"
+
+
+# ---------------- track 4: the second self-evolving arm on the same 441 ----------------
+
+
+def test_the_default_read_is_still_aces_whole_playbook():
+    """`answer`'s default memory source must be the one four paid arms were bought through.
+
+    The docs/19 arms are comparable only if the read path they ran under is the read path this
+    function still takes when nobody asks for anything else. A new default would silently make
+    every future arm incomparable with them, and nothing else in the suite would notice.
+    """
+    assert MEMORY_SOURCES["playbook"] is read_playbook
+    import inspect
+
+    assert inspect.signature(answer).parameters["memory_source"].default is read_playbook
+
+
+def test_reasoning_banks_read_serves_top_1_experiences_and_nothing_else():
+    """RB's pinned operating point is `experiences_topk = 1`, and only `experiences`.
+
+    Both halves matter. Serving a second memory type would mix a lineage RB does not have; serving
+    a larger k would quietly turn the arm into the breadth condition ACE already occupies, which is
+    the axis the two arms exist to vary against each other.
+    """
+    seen = {}
+
+    class _Mem:
+        def search(self, query, memory_types=None, k=10):
+            seen.update(query=query, memory_types=memory_types, k=k)
+
+            class _Bundle:
+                @staticmethod
+                def render():
+                    return "## Canned\ndesc\ncontent"
+
+            return _Bundle()
+
+    rendered = read_experiences(_Mem(), {"question": "which tag applies?"})
+    assert seen["memory_types"] == ("experiences",)
+    assert seen["k"] == RB_READ_RECIPE["experiences_topk"] == 1
+    assert seen["query"] == "which tag applies?"
+    assert "Canned" in rendered
+
+
+def test_an_empty_experience_store_reads_as_empty_not_as_blank():
+    """An empty read must render the same sentinel the playbook path uses.
+
+    `answer` puts this straight into the prompt; a bare empty string would leave the generator's
+    memory section looking like a formatting bug, and the base arm's prompt says `(empty)` there.
+    """
+
+    class _Mem:
+        def search(self, query, memory_types=None, k=10):
+            class _Bundle:
+                @staticmethod
+                def render():
+                    return "   "
+
+            return _Bundle()
+
+    assert read_experiences(_Mem(), {"question": "q"}) == "(empty)"
+
+
+def test_reasoning_bank_spends_exactly_one_write_call_per_task_on_finer():
+    """The cost structure the track 4 quote rests on: 1 distill per sample, no judge.
+
+    RB's judge fires only when the outcome is unlabeled (`_is_labeled`), and `finer.adapt` always
+    supplies an explicit success/failure. If that ever changed, the arm would cost roughly double
+    and the quote would be wrong by that factor with nothing else failing — so it is pinned here
+    rather than left to be discovered on the bill.
+    """
+    items = {
+        "items": [
+            {"title": f"t{i}", "description": "d", "content": "c"} for i in range(DEFAULT_MAX_ITEMS)
+        ]
+    }
+    llm = StubLLM({"distill": [items, items, items]})
+    mem = make_mem_multi([ReasoningBankOrganizer()], llm)
+    try:
+        for i in range(3):
+            row = _row("a,b,c,d", "a,b,c,d" if i == 0 else "w,x,y,z")
+            row["reasoning"] = "because"
+            adapt(mem, {"question": f"q{i}", "context": "c", "target": row["target"]}, row)
+        roles = [role for role, _ in llm.calls]
+        assert roles == ["distill", "distill", "distill"], (
+            f"expected one distill per task and no judge call, got {roles}"
+        )
+    finally:
+        mem.close()
+
+
+def test_reasoning_bank_learns_from_a_failure_not_only_a_success():
+    """RB's claim is that failed trajectories carry signal too, and FiNER supplies both labels.
+
+    An arm that only distilled successes would be a different mechanism — and on this benchmark it
+    would learn from roughly a sixth of the samples, since the base arm's sample accuracy is 16%.
+    Asserted through the system instruction, which is where upstream's success/failure split lives.
+    """
+    items = {"items": [{"title": "t", "description": "d", "content": "c"}]}
+    llm = StubLLM({"distill": [items, items]})
+    mem = make_mem_multi([ReasoningBankOrganizer()], llm)
+    try:
+        wrong = _row("w,x,y,z", "a,b,c,d")
+        wrong["reasoning"] = "misread the excerpt"
+        adapt(mem, {"question": "q", "context": "c", "target": "a,b,c,d"}, wrong)
+        right = _row("a,b,c,d", "a,b,c,d")
+        right["reasoning"] = "matched the element"
+        adapt(mem, {"question": "q2", "context": "c", "target": "a,b,c,d"}, right)
+        assert len(llm.systems) == 2, "both outcomes must reach the distiller"
+        assert llm.systems[0] != llm.systems[1], (
+            "failure and success must select different system instructions "
+            "(_failure_si vs _success_si)"
+        )
+    finally:
+        mem.close()

@@ -108,7 +108,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -369,24 +369,70 @@ def aggregate(rows: list[dict[str, Any]]) -> dict[str, float]:
 # ---------------- pipeline ----------------
 
 
+def read_playbook(mem: AgenticMemory, sample: dict[str, Any]) -> str:
+    """ACE's read: the WHOLE playbook, never top-k (organizers/ace §read contract).
+
+    The facade enforces the contract by keeping `playbook` out of
+    `default_memory_types`, so this cannot be reached by an ordinary search. The
+    `sample` argument is unused and present only so every memory source shares one
+    signature — the four arms of docs/19 were bought through this function and its
+    output must not move.
+    """
+    return mem.get_playbook() or "(empty)"
+
+
+def read_experiences(mem: AgenticMemory, sample: dict[str, Any], k: int = 1) -> str:
+    """ReasoningBank's read: top-k distilled experiences for this question.
+
+    `k` defaults to upstream's pinned operating point — `RB_READ_RECIPE`'s
+    `experiences_topk` is **1** — which is the sharpest difference between the two
+    self-evolving arms this benchmark now carries: ACE hands the generator its
+    entire playbook (639 K characters by the last window of the nodedup arm),
+    RB hands it one item.
+
+    **The generator's prompt is NOT changed for this path, deliberately.** RB's
+    items land in the same slot ACE's playbook does, under the same instructions.
+    That is a misnomer in the prompt text and an experimental choice everywhere
+    else: the question this arm exists to answer is whether docs/19's null belongs
+    to ACE or to the task, and that only reads if the generator is held fixed and
+    the memory content is the single thing that varies. A prompt tuned for RB
+    would answer a different question and could not be compared with the `base`
+    arm that was already bought.
+    """
+    bundle = mem.search(sample["question"], memory_types=("experiences",), k=k)
+    rendered = bundle.render()
+    return rendered.strip() or "(empty)"
+
+
+# Read paths by name, so a runner selects one from `--config` instead of the
+# benchmark branching on organizer types it should not know about.
+MEMORY_SOURCES = {
+    "playbook": read_playbook,
+    "experiences": read_experiences,
+}
+
+
 def answer(
     mem: AgenticMemory,
     sample: dict[str, Any],
     reflection: str = "(empty)",
     capture: dict[str, Any] | None = None,
+    memory_source: Callable[[AgenticMemory, dict[str, Any]], str] = read_playbook,
 ) -> tuple[str, list[str]]:
-    """One generator turn: inject the FULL playbook, generate, extract.
+    """One generator turn: inject what `memory_source` returns, generate, extract.
 
-    The playbook comes from `mem.get_playbook()` — ACE's read contract is whole-
-    playbook injection, never top-k (organizers/ace §read contract), and the
-    facade enforces it by keeping `playbook` out of `default_memory_types`.
+    `memory_source` defaults to `read_playbook`, which is ACE's whole-playbook
+    contract and byte-identical to what this function did when the four docs/19
+    arms were bought. `read_experiences` is the ReasoningBank alternative; see
+    its docstring for why the prompt is shared rather than specialised.
+
     Returns `(final_answer, bullet_ids)`; `bullet_ids` is what the generator
     claims it used, which is the signal upstream's reflector attributes counters
     with. Raises `RuntimeError` when no structured client is configured, rather
     than scoring a run that never called a model."""
     if mem.structured is None:
         raise RuntimeError("finer.answer requires a structured LLM client")
-    playbook = mem.get_playbook() or "(empty)"
+    playbook = memory_source(mem, sample)
     prompt = GENERATOR_PROMPT.format(
         playbook=playbook,
         reflection=reflection,
@@ -448,7 +494,10 @@ def _trajectory_step(sample: dict[str, Any], row: dict[str, Any], step: int = 1)
 
 
 def retry_generator(
-    mem: AgenticMemory, sample: dict[str, Any], attempts: list[dict[str, Any]] | None = None
+    mem: AgenticMemory,
+    sample: dict[str, Any],
+    attempts: list[dict[str, Any]] | None = None,
+    memory_source: Callable[[AgenticMemory, dict[str, Any]], str] = read_playbook,
 ):
     """A callback that re-answers this sample from a reflection, and scores it.
 
@@ -466,7 +515,9 @@ def retry_generator(
     def regenerate(reflection: str) -> tuple[dict[str, Any], str]:
         capture: dict[str, Any] = {}
         try:
-            pred, _bullets = answer(mem, sample, reflection=reflection, capture=capture)
+            pred, _bullets = answer(
+                mem, sample, reflection=reflection, capture=capture, memory_source=memory_source
+            )
             failed = False
         except Exception:  # noqa: BLE001 - a failed retry is a failed attempt, not a crash
             pred, failed = NO_ANSWER, True
@@ -488,6 +539,7 @@ def adapt(
     row: dict[str, Any],
     retries: bool = False,
     attempts: list[dict[str, Any]] | None = None,
+    memory_source: Callable[[AgenticMemory, dict[str, Any]], str] = read_playbook,
 ) -> None:
     """The training half of one online step: hand the graded attempt to the
     organizers as a finished task.
@@ -516,7 +568,9 @@ def adapt(
         # benchmark owns the generator, so the callback is handed over for this
         # sample and taken back afterwards — leaving one wired would let the
         # next sample be re-answered against a stale question.
-        regenerate = retry_generator(mem, sample, attempts)
+        # The retry re-answers against the SAME memory source the first attempt
+        # used; a retry reading a different store would not be the same arm.
+        regenerate = retry_generator(mem, sample, attempts, memory_source=memory_source)
         for org in mem.organizers:
             if hasattr(org, "set_retry_generator"):
                 org.set_retry_generator(regenerate)
