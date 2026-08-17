@@ -10,11 +10,17 @@ the block layout (:252) and the template (:55) are copied as they stand.
 Ours is `render_sessions` + `ANSWER_PROMPT_CON`, i.e. exactly what
 `run_instance(full_context=True, reading_method="con")` sends.
 
-Three configurations are compared, because they are the three ways this can be
-run and only one of them is faithful:
-  A  topk >= n_sessions on _s      -> should be byte-identical
+Four configurations are compared, because they are the ways this can be run and
+only two of them are faithful:
+  A  topk >= n_sessions on _s        -> byte-identical
   B  topk = 50 (run_generation.sh's default) on _s
-  C  oracle, whose sessions are not date-sorted
+  C  oracle, rendered as it ships    -> NOT sorted, so 34/500 differ
+  D  oracle, `sort_haystack_by_date` -> byte-identical, and this is what the
+     driver must do (docs/research/longmemeval.md §8.5 guard 1)
+
+C and D are the same 500 instances and the same code path; the only difference
+is the one call the driver makes before rendering. That is the point of keeping
+C: it prices the guard.
 """
 
 import copy
@@ -27,6 +33,7 @@ from agmem.bench.longmemeval import (
     ANSWER_PROMPT_CON,
     load_longmemeval,
     render_sessions,
+    sort_haystack_by_date,
 )
 
 S = os.path.expanduser("~/.agmem/datasets/longmemeval_s_cleaned.json")
@@ -74,7 +81,7 @@ def our_prompt(entry, max_sessions=None):
     )
 
 
-def compare(name, path, n, topk, max_sessions):
+def compare(name, path, n, topk, max_sessions, sort=False):
     data = load_longmemeval(path)[:n]
     same = 0
     diffs = []
@@ -82,7 +89,10 @@ def compare(name, path, n, topk, max_sessions):
         # upstream pops in place; give each side its own copy so neither is
         # scored against an instance the other already mutated.
         up = upstream_prompt(copy.deepcopy(inst), topk)
-        ours = our_prompt(copy.deepcopy(inst), max_sessions)
+        ours = our_prompt(
+            sort_haystack_by_date(copy.deepcopy(inst)) if sort else copy.deepcopy(inst),
+            max_sessions,
+        )
         if up == ours:
             same += 1
         else:
@@ -97,4 +107,5 @@ def compare(name, path, n, topk, max_sessions):
 
 compare("A  _s, topk=1000 (README's recommendation)", S, 60, 1000, None)
 compare("B  _s, topk=50 (run_generation.sh default)", S, 60, 50, 50)
-compare("C  oracle, topk=1000 (dates not sorted)", ORACLE, 200, 1000, None)
+compare("C  oracle, topk=1000 (dates not sorted)", ORACLE, 500, 1000, None)
+compare("D  oracle, sort_haystack_by_date (the driver's path)", ORACLE, 500, 1000, None, sort=True)

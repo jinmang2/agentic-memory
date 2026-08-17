@@ -20,6 +20,7 @@ from agmem.bench.longmemeval import (
     iter_turns,
     render_sessions,
     run_instance,
+    sort_haystack_by_date,
     upstream_max_history_tokens,
 )
 from agmem.embed.fake import FakeEmbedder
@@ -113,6 +114,74 @@ def test_max_sessions_zero_means_zero_not_all():
     the largest run is the kind of error that only shows up in the bill."""
     assert list(iter_turns(INSTANCE, max_sessions=0)) == []
     assert render_sessions(INSTANCE, max_sessions=0) == ""
+
+
+UNSORTED = {
+    **INSTANCE,
+    "haystack_session_ids": ["late", "early", "mid"],
+    "haystack_dates": [
+        "2023/05/20 (Sat) 09:00",
+        "2023/05/01 (Mon) 09:00",
+        "2023/05/10 (Wed) 09:00",
+    ],
+    "haystack_sessions": [
+        [{"role": "user", "content": "third thing"}],
+        [{"role": "user", "content": "first thing"}],
+        [{"role": "user", "content": "second thing"}],
+    ],
+}
+
+
+def test_oracle_haystack_is_sorted_as_pairs_not_as_arrays():
+    """`longmemeval_oracle.json` ships out of date order and upstream sorts right
+    before formatting (run_generation.py:225). The three haystack arrays are
+    positional, so sorting dates alone would re-label every session and mis-key
+    the retrieval gold — the failure this permutes-together shape prevents."""
+    out = sort_haystack_by_date(UNSORTED)
+    assert out["haystack_dates"] == [
+        "2023/05/01 (Mon) 09:00",
+        "2023/05/10 (Wed) 09:00",
+        "2023/05/20 (Sat) 09:00",
+    ]
+    assert out["haystack_session_ids"] == ["early", "mid", "late"]
+    assert [s[0]["content"] for s in out["haystack_sessions"]] == [
+        "first thing",
+        "second thing",
+        "third thing",
+    ]
+    assert [t[0] for t in iter_turns(out)] == ["early", "mid", "late"]
+
+
+def test_sorting_leaves_the_loaded_instance_untouched():
+    """A driver sorts 500 instances; sorting in place would mutate the dataset
+    under every later reader of it, including the scorer."""
+    before = list(UNSORTED["haystack_dates"])
+    sort_haystack_by_date(UNSORTED)
+    assert UNSORTED["haystack_dates"] == before
+
+
+def test_sorting_is_stable_so_equal_dates_keep_haystack_order():
+    tied = {
+        **INSTANCE,
+        "haystack_session_ids": ["a", "b"],
+        "haystack_dates": ["2023/05/01 (Mon) 09:00", "2023/05/01 (Mon) 09:00"],
+        "haystack_sessions": [
+            [{"role": "user", "content": "a"}],
+            [{"role": "user", "content": "b"}],
+        ],
+    }
+    assert sort_haystack_by_date(tied)["haystack_session_ids"] == ["a", "b"]
+
+
+def test_sorting_is_what_renumbers_the_rendered_sessions():
+    """Session numbering is applied AFTER the permutation, as upstream's
+    enumerate over sorted chunks is — so the guard changes the prompt bytes, not
+    just an ordering nobody sees."""
+    unsorted_prompt = render_sessions(UNSORTED)
+    sorted_prompt = render_sessions(sort_haystack_by_date(UNSORTED))
+    assert unsorted_prompt != sorted_prompt
+    assert sorted_prompt.index("first thing") < sorted_prompt.index("third thing")
+    assert "### Session 1:\nSession Date: 2023/05/01 (Mon) 09:00" in sorted_prompt
 
 
 # ---------------- abstention ----------------
@@ -315,6 +384,61 @@ def test_direct_reading_method_switches_prompt_and_budget():
         assert call["prompt"].rstrip().endswith("Answer:")
         assert "step by step" not in call["prompt"]
         assert call["max_tokens"] == 500
+    finally:
+        mem.close()
+
+
+def test_sampling_params_are_spoken_in_the_roles_own_dialect():
+    """Upstream pins `temperature=0` and `max_tokens=800`, and a literal override
+    of both is a hard 400 on the newer Chat Completions models: gpt-5.6-luna
+    requires `max_completion_tokens` and refuses any non-default temperature
+    (both recorded on its ModelSpec). The arm definition must not have to change
+    with the reader, so the key comes off the RoleConfig and the temperature is
+    dropped when the role was built without one."""
+    mem = _mem()
+    try:
+        stub = _StubLLM()
+        stub.roles = {
+            "generate": RoleConfig(
+                endpoint="x",
+                model="gpt-5.6-luna",
+                temperature=None,
+                max_tokens_key="max_completion_tokens",
+            )
+        }
+        mem.llm = stub
+        answer(mem, INSTANCE, reading_method="con", history="h")
+        call = stub.calls[-1]
+        assert call["max_completion_tokens"] == 800
+        assert "max_tokens" not in call and "temperature" not in call
+    finally:
+        mem.close()
+
+
+def test_a_conventional_role_still_gets_upstreams_literal_kwargs():
+    mem = _mem()
+    try:
+        stub = _StubLLM()
+        stub.roles = {"generate": RoleConfig(endpoint="x", model="gpt-4o-mini", temperature=0.0)}
+        mem.llm = stub
+        answer(mem, INSTANCE, reading_method="direct", history="h")
+        call = stub.calls[-1]
+        assert call["max_tokens"] == 500 and call["temperature"] == 0.0
+    finally:
+        mem.close()
+
+
+def test_budget_key_labels_the_row_so_concurrent_arms_can_be_priced():
+    """500 questions answered by a thread pool over ONE client: a per-row cost
+    cannot be recovered by diffing a shared budget, because the diff belongs to
+    whichever rows finished in between."""
+    mem = _mem()
+    try:
+        mem.llm = _StubLLM({"judge": "yes"})
+        mem.llm.roles = {"judge": RoleConfig(endpoint="x", model=JUDGE_MODEL_PIN)}
+        run_instance(mem, INSTANCE, full_context=True, enforce_pin=False, budget_key="q1")
+        keys = [c.get("budget_key") for c in mem.llm.calls]
+        assert keys == ["generate|q1", "judge|q1"]
     finally:
         mem.close()
 

@@ -163,6 +163,57 @@ def iter_turns(
             )
 
 
+def sort_haystack_by_date(instance: dict[str, Any]) -> dict[str, Any]:
+    """``instance`` with its haystack re-ordered chronologically, as a copy.
+
+    Upstream sorts the assembled chunks right before formatting
+    (``retrieved_chunks.sort(key=lambda x: x[0])``, run_generation.py:225) —
+    a plain string sort on the date, which is well-defined because every date in
+    this benchmark is ``YYYY/MM/DD (HH:MM)``. It is stable, so equal dates keep
+    haystack order.
+
+    It is a no-op on ``_s``/``_m``, whose haystacks ship in date order, and it is
+    NOT a no-op on ``longmemeval_oracle.json``: measured on the released file,
+    34/500 instances render a different prompt sorted than unsorted (same bytes,
+    different session order), which is exactly the byte-diff
+    ``scripts/repro/lme_audit/prompt_rediff.py`` reports. An oracle run that
+    skips this is comparing against the paper's .870/.924 with a prompt the
+    paper never sent.
+
+    The three parallel arrays are permuted TOGETHER — ``haystack_sessions``,
+    ``haystack_dates`` and ``haystack_session_ids`` are indexed by position
+    (run_generation.py:75-81), so sorting one alone would silently re-label
+    every session and mis-key the retrieval gold. Upstream carries no ids
+    through ``prepare_prompt`` and so cannot make that mistake there; we can.
+
+    Returns a shallow copy and leaves the argument untouched, for the same
+    reason ``render_sessions`` strips ``has_answer`` onto a copy: the caller
+    still needs the original instance for scoring, and a driver that sorts
+    in place would mutate the loaded dataset under every later reader of it.
+    Session numbering (``### Session {i+1}``) is applied by ``render_sessions``
+    AFTER the permutation, matching upstream's enumerate over sorted chunks.
+    """
+    sessions = instance.get("haystack_sessions", [])
+    dates = instance.get("haystack_dates", [])
+    ids = instance.get("haystack_session_ids", [])
+
+    def date_at(i: int) -> str:
+        return str(dates[i]) if i < len(dates) else ""
+
+    order = sorted(range(len(sessions)), key=date_at)
+    out = dict(instance)
+    out["haystack_sessions"] = [sessions[i] for i in order]
+    # A ragged array is padded rather than filtered: dropping the tail would
+    # shorten the array and re-pair every session with the wrong date, which is
+    # the failure this function exists to prevent. "" and ``session_{i}`` are
+    # the fallbacks ``iter_turns``/``render_sessions`` already use.
+    if dates:
+        out["haystack_dates"] = [date_at(i) for i in order]
+    if ids:
+        out["haystack_session_ids"] = [ids[i] if i < len(ids) else f"session_{i}" for i in order]
+    return out
+
+
 def evidence_session_ids(instance: dict[str, Any]) -> set[str]:
     """``answer_session_ids`` -- the session-level recall gold.
 
@@ -216,7 +267,8 @@ def render_sessions(instance: dict[str, Any], max_sessions: int | None = None) -
     session as a list of ``{role, content}``. Sessions are emitted in haystack
     order, which is already chronological for the ``_s``/``_m`` variants --
     ``longmemeval_oracle.json`` is NOT sorted, a documented upstream quirk, so
-    an oracle run must sort before calling this.
+    an oracle run must call ``sort_haystack_by_date`` before this (34/500
+    instances render differently otherwise).
 
     ``has_answer`` is stripped from every turn first, as upstream's clean-up
     loop does before formatting (:177-191). That is not cosmetic: the label
@@ -255,6 +307,44 @@ def upstream_max_history_tokens(model_max_length: int, reading_method: str = "co
     return model_max_length - gen_length - UPSTREAM_CONTEXT_RESERVE
 
 
+def _sampling_kwargs(
+    mem: AgenticMemory, role: str, max_tokens: int, temperature: float
+) -> dict[str, Any]:
+    """Upstream's ``temperature``/``max_tokens`` for one call, expressed the way
+    THIS role's model accepts them.
+
+    Both benchmark constants are per-reading-method, not per-run, so they have to
+    be passed as call overrides rather than baked into the role config — and a
+    literal ``max_tokens=800, temperature=0.0`` override is what
+    ``LLMClient.chat`` puts on the wire, ahead of everything the role knows.
+    That is fine for gpt-4o/gpt-4o-mini and a hard 400 for the newer Chat
+    Completions models: gpt-5.6-luna rejects ``max_tokens`` (it requires
+    ``max_completion_tokens``) and rejects any non-default ``temperature``,
+    both documented on its ``ModelSpec`` (bench/registry.py). Reading the key
+    off ``RoleConfig.max_tokens_key`` and dropping ``temperature`` when the role
+    was built with ``temperature=None`` (``make_roles(fixed_sampling=True)``,
+    the flag that says the model has no temperature to set) is what lets the
+    same arm definition run on both.
+
+    **Disclose this as a deviation when the reader is fixed-sampling**: upstream
+    pins ``temperature=0`` for every model it evaluates (run_generation.py:363),
+    and a model that only samples at 1.0 is not being read deterministically.
+    It is not a choice we can make differently — the request fails otherwise —
+    but it belongs in the run's stamp, not in a footnote.
+
+    Falls back to upstream's literal kwargs when the role config is unreadable
+    (a stub client in tests), which keeps every existing caller byte-identical.
+    """
+    roles = getattr(mem.llm, "roles", None)
+    cfg = roles.get(role) if isinstance(roles, dict) else None
+    if cfg is None:
+        return {"temperature": temperature, "max_tokens": max_tokens}
+    kwargs: dict[str, Any] = {getattr(cfg, "max_tokens_key", "max_tokens"): max_tokens}
+    if getattr(cfg, "temperature", temperature) is not None:
+        kwargs["temperature"] = temperature
+    return kwargs
+
+
 def answer(
     mem: AgenticMemory,
     instance: dict[str, Any],
@@ -266,6 +356,7 @@ def answer(
     max_history_tokens: int | None = None,
     capture: dict[str, Any] | None = None,
     searcher: Any | None = None,
+    budget_key: str | None = None,
 ) -> str:
     """One QA turn: retrieve, then generate with the official answer prompt.
 
@@ -293,6 +384,17 @@ def answer(
 
     ``memory_types=None`` defers to the memory's ``default_memory_types``, so a
     caller does not have to know what the configured organizers produce.
+
+    ``budget_key`` labels this call's row in the client's ``BudgetTracker`` and
+    in its I/O trace (``LLMClient.chat``'s own parameter, which never reaches
+    the API payload). A LongMemEval run is one question per instance answered by
+    a THREAD POOL sharing one client, so a driver cannot get per-question tokens
+    by diffing a shared budget — the diff belongs to whichever rows happened to
+    finish in between. Passing e.g. ``f"generate|{question_id}"`` gives each row
+    its own exact usage, and the driver folds the keys back into role totals
+    before pricing (the judge model is not the reader model, and a per-row key
+    would otherwise be priced at the reader's rates). ``None`` keeps the
+    tracker's old shape: one bucket per role.
 
     Raises ``RuntimeError`` if no ``generate`` LLM is configured. Returns the
     reply stripped; unlike LoCoMo's ``answer`` it is NOT truncated to the first
@@ -369,11 +471,23 @@ def answer(
         question_date=str(instance.get("question_date", "")),
         question=question,
     )
+    if capture is not None:
+        # The assembled prompt, not just the history: a driver's row-level
+        # fingerprint (sha256 + length) has to cover the template and the
+        # question date too, or two arms that differ only in reading method
+        # fingerprint identically. Recorded here rather than rebuilt by the
+        # caller so the hash can never describe a prompt we did not send.
+        capture["prompt"] = prompt
     reply = mem.llm.chat(
         "generate",
         [{"role": "user", "content": prompt}],
-        temperature=GEN_TEMPERATURE,
-        max_tokens=(GEN_MAX_TOKENS_CON if reading_method == "con" else GEN_MAX_TOKENS_DIRECT),
+        budget_key=budget_key,
+        **_sampling_kwargs(
+            mem,
+            "generate",
+            GEN_MAX_TOKENS_CON if reading_method == "con" else GEN_MAX_TOKENS_DIRECT,
+            GEN_TEMPERATURE,
+        ),
     )
     return reply.strip()
 
@@ -488,6 +602,7 @@ def judge_answer(
     instance: dict[str, Any],
     hypothesis: str,
     enforce_pin: bool = True,
+    budget_key: str | None = None,
 ) -> bool | None:
     """Binary judge verdict for one answered instance, or ``None`` when no
     ``judge`` role is configured.
@@ -522,8 +637,8 @@ def judge_answer(
     reply = mem.llm.chat(
         "judge",
         [{"role": "user", "content": prompt}],
-        temperature=JUDGE_TEMPERATURE,
-        max_tokens=JUDGE_MAX_TOKENS,
+        budget_key=budget_key,
+        **_sampling_kwargs(mem, "judge", JUDGE_MAX_TOKENS, JUDGE_TEMPERATURE),
     )
     return "yes" in reply.strip().lower()
 
@@ -608,6 +723,7 @@ def run_instance(
     judge: bool = True,
     enforce_pin: bool = True,
     capture_retrieval: bool = False,
+    budget_key: str | None = None,
 ) -> dict[str, Any]:
     """Ingest one instance's haystack into ``mem``, answer its question, judge it.
 
@@ -624,7 +740,15 @@ def run_instance(
 
     Judging is on by default because there is no string metric to fall back to:
     an unjudged LongMemEval run has no score at all, only hypotheses.
-    ``enforce_pin`` is forwarded to ``judge_answer``."""
+    ``enforce_pin`` is forwarded to ``judge_answer``.
+
+    ``budget_key`` is forwarded to both calls with a ``generate|``/``judge|``
+    prefix, so a concurrent driver can attribute tokens to this question rather
+    than to a shared bucket — see ``answer``. An oracle instance is NOT sorted
+    here: sorting is the caller's decision because it depends on the dataset
+    variant (``sort_haystack_by_date`` is a no-op on ``_s``, load-bearing on
+    ``longmemeval_oracle.json``), and doing it silently would hide from the
+    record which prompt was actually sent."""
     turns = ingest(mem, instance, max_sessions)
     capture: dict[str, Any] | None = {} if capture_retrieval else None
     hypothesis = answer(
@@ -637,6 +761,7 @@ def run_instance(
         history=render_sessions(instance, max_sessions) if full_context else None,
         max_history_tokens=max_history_tokens,
         capture=capture,
+        budget_key=f"generate|{budget_key}" if budget_key else None,
     )
     row = {
         "question_id": str(instance["question_id"]),
@@ -644,7 +769,17 @@ def run_instance(
         "question": str(instance["question"]),
         "answer": str(instance["answer"]),
         "hypothesis": hypothesis,
-        "label": judge_answer(mem, instance, hypothesis, enforce_pin) if judge else None,
+        "label": (
+            judge_answer(
+                mem,
+                instance,
+                hypothesis,
+                enforce_pin,
+                budget_key=f"judge|{budget_key}" if budget_key else None,
+            )
+            if judge
+            else None
+        ),
         "turns": turns,
     }
     if capture is not None:
