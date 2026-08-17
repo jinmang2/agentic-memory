@@ -1,0 +1,86 @@
+{
+  "_note": "Derived index, not a measurement. Item-type counts and quoted items read off the gitignored results/repro/*.memory.jsonl snapshots by scripts/repro/demo_methodology_switch.py, cached so the demo regenerates without them. Rebuild with --rescan where the snapshots exist.",
+  "anchor": "support group",
+  "mtime_ns": {
+    "gpt-4o-mini_conv0_ingest_e3s_c0": 1785909632103451383,
+    "gpt-4o-mini_mem0_v0194_conv0_ingest_e3sM_c0": 1785973588583186178,
+    "gpt-4o-mini_nemori_merge085_conv0_ingest_e3sB_c0": 1785891929389970738,
+    "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA_c0": 1785809981630028264,
+    "gpt-4o-mini_zep_cross_encoder_conv0_ingest_e3sZ_c0": 1786107909505894505
+  },
+  "stats": {
+    "gpt-4o-mini_conv0_ingest_e3s_c0": {
+      "counts": {
+        "episodic": 419,
+        "notes": 419
+      },
+      "quoted": [
+        {
+          "content": "(1:56 pm on 8 May, 2023) Caroline: The support group has made me feel accepted and given me courage to embrace myself.",
+          "memory_type": "notes"
+        }
+      ]
+    },
+    "gpt-4o-mini_mem0_v0194_conv0_ingest_e3sM_c0": {
+      "counts": {
+        "episodic": 419,
+        "semantic": 424
+      },
+      "quoted": [
+        {
+          "content": "Caroline went to a LGBTQ support group on 7 May, 2023",
+          "memory_type": "semantic"
+        }
+      ]
+    },
+    "gpt-4o-mini_nemori_merge085_conv0_ingest_e3sB_c0": {
+      "counts": {
+        "episodes": 53,
+        "semantic": 150
+      },
+      "quoted": [
+        {
+          "content": "{'date': 'May 7, 2023', 'event': 'Caroline attended an LGBTQ support group', 'impact': 'Caroline found the stories shared in the group powerful and inspiring.'}",
+          "memory_type": "semantic"
+        },
+        {
+          "content": "On May 8, 2023, at 1:56 PM, Caroline and Melanie greeted each other warmly during their conversation. Melanie shared that she was overwhelmed balancing her kids and work, while Caroline revealed her recent experience attending an LGBTQ support group the day before (May 7, 2023), describing it as powerful. Intrigued, Melanie asked about the impactful stories Caroline heard, to which Caroline expressed her admiration for the inspiring transgender stories that filled her with happiness and gratitude for the support provided there. Caroline noted that the group had helped her feel accepted and gave her the courage to embrace her true self. Melanie praised Caroline's bravery and inquired about her future plans. Caroline responded enthusiastically, stating her intention to continue her education and explore career options, particularly in counseling or mental health, expressing her desire to help others facing similar challenges.",
+          "memory_type": "episodes"
+        }
+      ]
+    },
+    "gpt-4o-mini_nemori_upstream_conv0_ingest_e3sA_c0": {
+      "counts": {
+        "episodes": 51,
+        "semantic": 142
+      },
+      "quoted": [
+        {
+          "content": "{'date': '2023-05-07', 'event': 'Caroline attended an LGBTQ support group', 'description': 'The group focused on sharing transgender stories, which Caroline found powerful and inspiring.'}",
+          "memory_type": "semantic"
+        },
+        {
+          "content": "On June 27, 2023, at 10:37 AM, Melanie and Caroline engaged in a heartfelt conversation about personal growth and future aspirations. Melanie expressed her appreciation for family time and inquired about Caroline's recent endeavors. Caroline shared her interest in pursuing a career in counseling and mental health, motivated by her own experiences and the support she received. She revealed that she attended an LGBTQ+ counseling workshop the previous Friday (June 23, 2023), which inspired her to focus on helping trans individuals accept themselves and improve their mental health. Melanie responded positively, acknowledging Caroline's dedication and expressing admiration for her commitment to making a difference in others' lives. Caroline explained that her journey and the impact of support groups ignited her passion for mental health advocacy. The conversation ended on a high note, with Melanie congratulating Caroline for her pursuit of what truly matters to her, highlighting the significant impact she could have on others in need.",
+          "memory_type": "episodes"
+        }
+      ]
+    },
+    "gpt-4o-mini_zep_cross_encoder_conv0_ingest_e3sZ_c0": {
+      "counts": {
+        "entities": 219,
+        "episodic": 419,
+        "facts": 750
+      },
+      "quoted": [
+        {
+          "content": "Caroline attended a LGBTQ support group.",
+          "memory_type": "facts"
+        },
+        {
+          "content": "support system: The network of people providing love and encouragement, similar to support groups.",
+          "memory_type": "entities"
+        }
+      ]
+    }
+  }
+}

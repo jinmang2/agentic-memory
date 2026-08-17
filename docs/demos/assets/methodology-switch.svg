@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 470" width="1000" height="470" role="img" aria-label="What five memory methodologies stored from one identical conversation">
+<rect width="1000" height="470" fill="#ffffff"/>
+<text x="40.0" y="34.0" font-size="17" fill="#111827" text-anchor="start" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">One conversation, five methodologies, five different memories</text>
+<text x="40.0" y="56.0" font-size="11.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">LoCoMo conversation 0 — 419 turns, gpt-4o-mini, text-embedding-3-small, one harness. The --config name is what differs; the runs also sit at different repo commits, which the page states.</text>
+<text x="198.0" y="121.0" font-size="11.5" fill="#111827" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">A-Mem</text>
+<text x="198.0" y="135.0" font-size="9.5" fill="#6b7280" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">--config amem</text>
+<rect x="210.0" y="104" width="252.9" height="26" fill="#2563eb"/>
+<text x="336.5" y="116.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">notes</text>
+<text x="336.5" y="128.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">419</text>
+<text x="472.9" y="116.0" font-size="11" fill="#111827" text-anchor="start" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">419 items</text>
+<text x="472.9" y="130.0" font-size="10.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">$0.185 · 837 calls</text>
+<text x="198.0" y="179.0" font-size="11.5" fill="#111827" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">Mem0</text>
+<text x="198.0" y="193.0" font-size="9.5" fill="#6b7280" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">--config mem0_v0194</text>
+<rect x="210.0" y="162" width="255.9" height="26" fill="#059669"/>
+<text x="338.0" y="174.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">semantic</text>
+<text x="338.0" y="186.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">424</text>
+<text x="475.9" y="174.0" font-size="11" fill="#111827" text-anchor="start" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">424 items</text>
+<text x="475.9" y="188.0" font-size="10.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">$0.134 · 420 calls</text>
+<text x="198.0" y="237.0" font-size="11.5" fill="#111827" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">Nemori (upstream)</text>
+<text x="198.0" y="251.0" font-size="9.5" fill="#6b7280" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">--config nemori_upstream</text>
+<rect x="210.0" y="220" width="85.7" height="26" fill="#059669"/>
+<text x="252.9" y="232.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">semantic</text>
+<text x="252.9" y="244.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">142</text>
+<rect x="295.7" y="220" width="30.8" height="26" fill="#7c3aed"/>
+<text x="336.5" y="232.0" font-size="11" fill="#111827" text-anchor="start" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">193 items</text>
+<text x="336.5" y="246.0" font-size="10.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">$0.053 · 237 calls</text>
+<text x="198.0" y="295.0" font-size="11.5" fill="#111827" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">Nemori (merge 0.85)</text>
+<text x="198.0" y="309.0" font-size="9.5" fill="#6b7280" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">--config nemori_merge085</text>
+<rect x="210.0" y="278" width="90.5" height="26" fill="#059669"/>
+<text x="255.3" y="290.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">semantic</text>
+<text x="255.3" y="302.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">150</text>
+<rect x="300.5" y="278" width="32.0" height="26" fill="#7c3aed"/>
+<text x="342.5" y="290.0" font-size="11" fill="#111827" text-anchor="start" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">203 items</text>
+<text x="342.5" y="304.0" font-size="10.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">$0.042 · 185 calls</text>
+<text x="198.0" y="353.0" font-size="11.5" fill="#111827" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">Zep/Graphiti</text>
+<text x="198.0" y="367.0" font-size="9.5" fill="#6b7280" text-anchor="end" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">--config zep_cross_encoder</text>
+<rect x="210.0" y="336" width="452.7" height="26" fill="#dc2626"/>
+<text x="436.4" y="348.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">facts</text>
+<text x="436.4" y="360.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">750</text>
+<rect x="662.7" y="336" width="132.2" height="26" fill="#d97706"/>
+<text x="728.8" y="348.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">entities</text>
+<text x="728.8" y="360.0" font-size="10" fill="#ffffff" text-anchor="middle" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">219</text>
+<text x="804.9" y="348.0" font-size="11" fill="#111827" text-anchor="start" font-weight="600" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">969 items</text>
+<text x="804.9" y="362.0" font-size="10.5" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">$0.316 · 2,152 calls</text>
+<text x="40.0" y="394.0" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">Identical input, 5x apart in what was kept (193 to 969 items) and 7x apart in what it cost to decide ($0.042 to $0.316). The raw transcript (419 episodic turns)</text>
+<text x="40.0" y="409.0" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">is excluded — it is the input, not a decision. THIS IS AN ILLUSTRATION, NOT A MEASUREMENT: one conversation, one seed, no accuracy anywhere on this chart. More</text>
+<text x="40.0" y="424.0" font-size="11" fill="#6b7280" text-anchor="start" font-weight="normal" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif">stored is not better. Generated by scripts/repro/demo_methodology_switch.py, $0, no model call.</text>
+<rect x="0" y="374" width="1000" height="1" fill="#e5e7eb"/>
+</svg>
