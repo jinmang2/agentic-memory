@@ -53,6 +53,7 @@ LongMemEval arms would pay for, and its turn count is recorded per row.
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import importlib.util
 import json
@@ -198,6 +199,9 @@ def run_pool(
     *,
     build_mem,
     reading: str,
+    history_format: str,
+    retrieval_k: int | None,
+    budget_tokens: int,
     workers: int,
     sink,
     sink_lock: threading.Lock,
@@ -241,7 +245,13 @@ def run_pool(
                     # the instance arrives sorted, no session cap exists, `mem` is
                     # this question's own, and `max_history_tokens` is not passed.
                     max_sessions=None,
-                    full_context=True,
+                    # `retrieval_k` is what makes this a memory arm rather than a
+                    # reading arm: the haystack goes through the store and only
+                    # what comes back out reaches the prompt.
+                    full_context=retrieval_k is None,
+                    history_format=history_format,
+                    k=retrieval_k or 10,
+                    budget_tokens=budget_tokens,
                     judge=True,
                     enforce_pin=True,
                     capture_retrieval=True,
@@ -265,6 +275,18 @@ def run_pool(
             elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
             capture = row.pop("retrieval", None) or {}
             prompt = capture.get("prompt") or ""
+            if retrieval_k is not None:
+                # The retrieved chunk list is the arm's whole mechanism, so it is
+                # recorded per row: ids and scores only, because the text they
+                # rendered to is already in the prompt the trace holds verbatim.
+                row["retrieved"] = [
+                    {
+                        "id": c.get("id"),
+                        "memory_type": c.get("memory_type"),
+                        "score": c.get("score"),
+                    }
+                    for c in capture.get("retrieved", [])
+                ]
             usage = budget.summary()
             row.update(
                 {
@@ -307,6 +329,29 @@ def main() -> None:
         help="pinned by the official aggregator's assert; changing it makes the "
         "number incomparable with every published one",
     )
+    ap.add_argument(
+        "--history-format",
+        choices=["json", "nl"],
+        default="json",
+        help="upstream's flag: json is run_generation.sh's default; §5.5 reports the "
+        "two interact with the reading method by up to 10pp",
+    )
+    ap.add_argument(
+        "--retrieval",
+        type=int,
+        default=None,
+        metavar="K",
+        help="answer from the MEMORY's top-K instead of the full haystack. This turns a "
+        "reading arm into a memory arm: with the evidence-only oracle it measures what a "
+        "retrieval layer LOSES when the whole haystack already fits, which is a tax, not a "
+        "benefit. Needs a real embedder.",
+    )
+    ap.add_argument("--budget-tokens", type=int, default=6000, help="render budget for --retrieval")
+    ap.add_argument(
+        "--embedder",
+        default="text-embedding-3-small",
+        help="only used with --retrieval; the full-context path never queries a vector",
+    )
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--limit", type=int, default=None, help="first N questions (smoke runs)")
     ap.add_argument("--tag", default=None, help="artifact tag; defaults to <reader>_lme_<ds>_<rm>")
@@ -316,6 +361,12 @@ def main() -> None:
         default=None,
         help="hard ceiling for this measurement, counting what earlier processes "
         "of the same run already spent (recovered from the trace)",
+    )
+    ap.add_argument(
+        "--gzip-trace",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="gzip the full-I/O trace (default: on for --dataset s, off for oracle)",
     )
     ap.add_argument("--dry-run", action="store_true", help="fake client, no network, $0")
     ap.add_argument("--resume", action="store_true", help="keep rows already in the records file")
@@ -336,7 +387,9 @@ def main() -> None:
     helpers = _load_repro_helpers()
 
     data_path = args.data or DATASETS[args.dataset]
-    args.tag = args.tag or f"{args.reader}_lme_{args.dataset}_{args.reading}"
+    suffix = "" if args.retrieval is None else f"_k{args.retrieval}"
+    suffix += "" if args.history_format == "json" else f"_{args.history_format}"
+    args.tag = args.tag or f"{args.reader}_lme_{args.dataset}_{args.reading}{suffix}"
     # A dry run writes the same filenames with none of the meaning, so it writes
     # them somewhere else: `results/repro/*.records.jsonl` is what `run_status.py`
     # reads a run's state from, and a $0 quote sitting at a paid arm's tag would
@@ -345,7 +398,12 @@ def main() -> None:
     out_dir = OUT / "dryrun" if args.dry_run else OUT
     out_dir.mkdir(parents=True, exist_ok=True)
     records_path = out_dir / f"{args.tag}.records.jsonl"
-    trace_path = out_dir / f"{args.tag}.llm-trace.jsonl"
+    # `_s` sends 500 prompts of ~525 KB, so its trace is ~260 MB uncompressed and
+    # every tool that prices a running arm would have to stream all of it. The
+    # oracle arms stay uncompressed: 15 MB reads instantly and `zcat` is one more
+    # thing to remember.
+    gz = args.gzip_trace if args.gzip_trace is not None else args.dataset == "s"
+    trace_path = out_dir / f"{args.tag}.llm-trace.jsonl{'.gz' if gz else ''}"
 
     raw = lme.load_longmemeval(data_path)
     population = len(raw) if args.limit is None else min(args.limit, len(raw))
@@ -404,6 +462,15 @@ def main() -> None:
         client = LLMClient(roles, budget=budget, trace_path=trace_path)
     caps = detect()  # once: 500 memories, one capability probe
 
+    # A fake embedder is correct for the full-context path (nothing is ever
+    # queried) and WRONG for a retrieval arm, where the vector is the mechanism.
+    # Built once and shared: it is stateless, and 500 clients would be 500 pools.
+    embedder = (
+        FakeEmbedder(dim=64)
+        if args.retrieval is None or args.dry_run
+        else helpers.build_embedder(args.embedder)
+    )
+
     def build_mem(qid: str) -> AgenticMemory:
         # data_dir=None -> every store in memory, so 500 fresh stores cost no
         # disk and leave nothing to clean up. sync_write keeps the organizer
@@ -412,7 +479,7 @@ def main() -> None:
         mem = AgenticMemory(
             namespace=f"lme-{qid}",
             organizers=["passthrough"],
-            embedder=FakeEmbedder(dim=64),
+            embedder=embedder,
             config=AgmemConfig(profile="lite", data_dir=None, sync_write=True),
             caps=caps,
         )
@@ -427,8 +494,17 @@ def main() -> None:
             log.info("earlier processes of this run spent $%.4f (from the trace)", prior_spend)
 
         def over_budget() -> bool:
+            # Folds the embedder in too, so the ceiling binds the whole bill and
+            # not just the chat half of it — a retrieval arm pays for every turn
+            # it indexes, and the cap that ignores that is not the cap that was
+            # quoted.
+            live = fold_row_keys(budget.summary())
+            helpers.fold_embed_budget(live, embedder)
             spent = prior_spend + helpers.cost_usd(
-                fold_row_keys(budget.summary()), args.reader, judge_model=args.judge_model
+                live,
+                args.reader,
+                judge_model=args.judge_model,
+                embed_model=helpers.embed_model_name(embedder),
             )
             return spent >= args.max_spend_usd
 
@@ -455,6 +531,9 @@ def main() -> None:
             todo,
             build_mem=build_mem,
             reading=args.reading,
+            history_format=args.history_format,
+            retrieval_k=args.retrieval,
+            budget_tokens=args.budget_tokens,
             workers=args.workers,
             sink=sink,
             sink_lock=threading.Lock(),
@@ -491,6 +570,10 @@ def main() -> None:
 
     raw_budget = budget.summary()
     folded = fold_row_keys(raw_budget)
+    # A retrieval arm embeds every turn it ingests, and those calls are NOT in the
+    # chat budget. Left out, the arm would look cheaper than it is and could not
+    # explain its own total.
+    helpers.fold_embed_budget(folded, embedder)
     summary: dict[str, Any] = {
         "stamp": {
             "dataset": args.dataset,
@@ -507,12 +590,22 @@ def main() -> None:
             "complete": complete,
             "missing_question_ids": missing,
             "workers": args.workers,
-            "full_context": True,
+            "full_context": args.retrieval is None,
             "haystack_sorted_by_date": True,
             "max_sessions": None,
             "max_history_tokens": None,
             "organizers": ["passthrough"],
-            "embedder": "fake (retrieval is not exercised on the full-context path)",
+            "read_path": "full_context"
+            if args.retrieval is None
+            else f"retrieval_top{args.retrieval}",
+            "retrieval_k": args.retrieval,
+            "budget_tokens": None if args.retrieval is None else args.budget_tokens,
+            "history_format": args.history_format,
+            "embedder": (
+                "fake (retrieval is not exercised on the full-context path)"
+                if args.retrieval is None
+                else args.embedder
+            ),
             "gen_max_tokens": (
                 lme.GEN_MAX_TOKENS_CON if args.reading == "con" else lme.GEN_MAX_TOKENS_DIRECT
             ),
@@ -541,12 +634,17 @@ def main() -> None:
         "llm_budget_by_row": raw_budget,
         "timing": {"eval_s": elapsed},
         "records_file": f"{args.tag}.records.jsonl",
-        "trace_file": f"{args.tag}.llm-trace.jsonl",
+        "trace_file": trace_path.name,
     }
     if args.dry_run:
         summary["dry_run_quote"] = _quote(client, len(todo), args, reader_spec, judge_spec)
     else:
-        this_process = helpers.cost_usd(folded, args.reader, judge_model=args.judge_model)
+        this_process = helpers.cost_usd(
+            folded,
+            args.reader,
+            judge_model=args.judge_model,
+            embed_model=helpers.embed_model_name(embedder),
+        )
         summary["cost_usd"] = round(this_process + prior_spend, 6)
         summary["cost_usd_this_process"] = round(this_process, 6)
 
@@ -574,14 +672,19 @@ def _spend_from_trace(trace_path: Path, reader: str, judge: str, helpers) -> flo
     if not trace_path.exists():
         return 0.0
     per_model: dict[str, dict] = {}
-    for line in trace_path.open(encoding="utf-8"):
-        try:
-            call = json.loads(line)
-        except json.JSONDecodeError:
-            break
-        row = per_model.setdefault(str(call.get("model")), {"tokens_in": 0, "tokens_out": 0})
-        row["tokens_in"] += call.get("tokens_in") or 0
-        row["tokens_out"] += call.get("tokens_out") or 0
+    with (
+        gzip.open(trace_path, "rt", encoding="utf-8")
+        if trace_path.suffix == ".gz"
+        else trace_path.open(encoding="utf-8")
+    ) as fh:
+        for line in fh:
+            try:
+                call = json.loads(line)
+            except (json.JSONDecodeError, EOFError, OSError):
+                break
+            row = per_model.setdefault(str(call.get("model")), {"tokens_in": 0, "tokens_out": 0})
+            row["tokens_in"] += call.get("tokens_in") or 0
+            row["tokens_out"] += call.get("tokens_out") or 0
     total = 0.0
     for model, row in per_model.items():
         if model not in (reader, judge):

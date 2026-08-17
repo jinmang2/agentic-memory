@@ -482,6 +482,25 @@ def test_the_verbatim_recency_window_reaches_this_benchmark_too():
         mem.close()
 
 
+def test_nl_history_format_is_upstreams_other_branch():
+    """`history_format` is upstream's flag (run_generation.py:234-247) and §5.5
+    reports it interacts with the reading method by up to 10pp — JSON does not
+    consistently beat NL without chain-of-note and always beats it with. Both
+    branches are transcribed, including the asymmetry that `nl` strips each
+    turn's content and `json` does not."""
+    nl = render_sessions(INSTANCE, history_format="nl")
+    assert "\n\nuser: I am going to Paris in May" in nl
+    assert "\n\nassistant: Sounds great" in nl
+    assert '{"role"' not in nl  # not the json branch
+    assert "### Session 1:" in nl and "Session Date: 2023/05/01 (Mon) 09:00" in nl
+    assert "has_answer" not in nl  # the evidence label is stripped in BOTH formats
+
+
+def test_an_unknown_history_format_raises_rather_than_defaulting():
+    with pytest.raises(ValueError, match="history_format"):
+        render_sessions(INSTANCE, history_format="markdown")
+
+
 def test_full_context_history_bypasses_retrieval():
     mem = _mem()
     try:

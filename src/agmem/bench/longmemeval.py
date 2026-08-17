@@ -259,8 +259,25 @@ ANSWER_PROMPT_CON = """I will give you several history chats between you and a u
 ANSWER_PROMPT_DIRECT = """I will give you several history chats between you and a user. Please answer the question based on the relevant chat history.\n\n\nHistory Chats:\n\n{history}\n\nCurrent Date: {question_date}\nQuestion: {question}\nAnswer:"""
 
 
-def render_sessions(instance: dict[str, Any], max_sessions: int | None = None) -> str:
-    """Full-history context in upstream's ``history_format=json`` shape.
+def render_sessions(
+    instance: dict[str, Any], max_sessions: int | None = None, history_format: str = "json"
+) -> str:
+    """Full-history context in upstream's ``history_format`` shape.
+
+    ``history_format`` is upstream's flag of the same name (run_generation.py:234-247),
+    both branches transcribed from the clone rather than reconstructed:
+
+    - ``json`` — the session dumped as ``json.dumps([{role, content}, ...])``,
+      preceded by a newline (:238). The default here because it is
+      run_generation.sh's.
+    - ``nl`` — ``"\\n\\n{role}: {content.strip()}"`` per turn (:245). Note the
+      ``.strip()``, which ``json`` does not apply: the two formats therefore do
+      not carry byte-identical content, and that is upstream's behaviour, not a
+      simplification of it.
+
+    The choice is not cosmetic. §5.5 reports that JSON does not consistently beat
+    NL *without* chain-of-note and always beats it *with* — an interaction of up
+    to 10 pp between two flags that are usually reported as neither.
 
     Block layout is run_generation.py:252 and the per-session value is
     ``'\\n' + json.dumps(chunk_entry)`` (:238) where ``chunk_entry`` is the
@@ -277,6 +294,8 @@ def render_sessions(instance: dict[str, Any], max_sessions: int | None = None) -
     reproduce (the paper's GPT-4o 60.6% on ``_s``, the one configuration that
     needs no memory system at all). Upstream ``pop``s in place; we strip onto a
     copy so the instance keeps its turn-level recall gold for scoring."""
+    if history_format not in ("json", "nl"):
+        raise ValueError(f"unknown history_format {history_format!r} (upstream: json | nl)")
     sessions = instance.get("haystack_sessions", [])
     dates = instance.get("haystack_dates", [])
     out = []
@@ -288,9 +307,18 @@ def render_sessions(instance: dict[str, Any], max_sessions: int | None = None) -
             else turn
             for turn in session
         ]
+        if history_format == "json":
+            sess_string = "\n" + json.dumps(cleaned)
+        else:
+            sess_string = "".join(
+                "\n\n{}: {}".format(turn.get("role", ""), str(turn.get("content", "")).strip())
+                if isinstance(turn, dict)
+                else f"\n\n{turn}"
+                for turn in cleaned
+            )
         out.append(
             "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n".format(
-                i + 1, date, "\n" + json.dumps(cleaned)
+                i + 1, date, sess_string
             )
         )
     return "".join(out)
@@ -720,6 +748,7 @@ def run_instance(
     max_sessions: int | None = None,
     max_history_tokens: int | None = None,
     full_context: bool = False,
+    history_format: str = "json",
     judge: bool = True,
     enforce_pin: bool = True,
     capture_retrieval: bool = False,
@@ -732,7 +761,9 @@ def run_instance(
     official ``{question_id, hypothesis}`` hypothesis file.
 
     ``full_context=True`` skips retrieval and feeds the whole haystack via
-    ``render_sessions`` -- the paper's no-memory baseline. Ingest still runs, so
+    ``render_sessions`` in ``history_format`` (``json``|``nl``, upstream's flag;
+    it has no effect on the retrieval path, whose context comes from
+    ``MemoryBundle.render``) -- the paper's no-memory baseline. Ingest still runs, so
     write-path cost stays measurable and comparable against the retrieval runs;
     pass a ``passthrough`` memory to keep that cost at zero. That path is the
     one that needs ``max_history_tokens`` (see ``answer``): nothing else bounds
@@ -758,7 +789,9 @@ def run_instance(
         memory_types=memory_types,
         budget_tokens=budget_tokens,
         reading_method=reading_method,
-        history=render_sessions(instance, max_sessions) if full_context else None,
+        history=(
+            render_sessions(instance, max_sessions, history_format) if full_context else None
+        ),
         max_history_tokens=max_history_tokens,
         capture=capture,
         budget_key=f"generate|{budget_key}" if budget_key else None,

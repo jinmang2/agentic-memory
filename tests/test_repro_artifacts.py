@@ -6,6 +6,7 @@ fake embedder + fake LLM throughout, no API/server, no paid calls."""
 
 from __future__ import annotations
 
+import gzip
 import hashlib
 import importlib.util as _ilu
 import json
@@ -97,6 +98,24 @@ def test_trace_sink_writes_full_io_line(tmp_path):
     assert row["tokens_in"] == 11 and row["tokens_out"] == 7
     assert row["error"] is None
     assert "ts_iso" in row and isinstance(row["latency_ms"], (int, float))
+
+
+def test_a_gzipped_trace_stays_readable_line_by_line(tmp_path):
+    """A `_s` LongMemEval arm sends 500 prompts of ~525 KB, so its trace is ~260 MB
+    uncompressed and is written as `.jsonl.gz` instead. Appending one gzip member
+    per call is what keeps it streamable AFTER a kill — the property the whole
+    re-score-without-re-spending plan rests on, and the one a single-member
+    compressor would quietly take away."""
+    trace = tmp_path / "run.llm-trace.jsonl.gz"
+    client = _client_with_fake(trace, content="answer")
+    for i in range(3):
+        client.chat("generate", [{"role": "user", "content": f"prompt {i}"}])
+
+    with gzip.open(trace, "rt", encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in fh]
+    assert [r["messages"][0]["content"] for r in rows] == ["prompt 0", "prompt 1", "prompt 2"]
+    # and it really is compressed, not just named .gz
+    assert trace.read_bytes()[:2] == b"\x1f\x8b"
 
 
 def test_trace_sink_records_failure(tmp_path):

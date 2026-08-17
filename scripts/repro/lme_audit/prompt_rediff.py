@@ -10,13 +10,16 @@ the block layout (:252) and the template (:55) are copied as they stand.
 Ours is `render_sessions` + `ANSWER_PROMPT_CON`, i.e. exactly what
 `run_instance(full_context=True, reading_method="con")` sends.
 
-Four configurations are compared, because they are the ways this can be run and
+Five configurations are compared, because they are the ways this can be run and
 only two of them are faithful:
   A  topk >= n_sessions on _s        -> byte-identical
   B  topk = 50 (run_generation.sh's default) on _s
   C  oracle, rendered as it ships    -> NOT sorted, so 34/500 differ
   D  oracle, `sort_haystack_by_date` -> byte-identical, and this is what the
      driver must do (docs/research/longmemeval.md §8.5 guard 1)
+  E  the same, in upstream's OTHER history format (`nl`) -> byte-identical too,
+     which is what lets the json-vs-nl arms be attributed to the format rather
+     than to our rendering of it
 
 C and D are the same 500 instances and the same code path; the only difference
 is the one call the driver makes before rendering. That is the point of keeping
@@ -41,8 +44,12 @@ ORACLE = os.path.expanduser("~/.agmem/datasets/longmemeval_oracle.json")
 enc = tiktoken.get_encoding("o200k_base")
 
 
-def upstream_prompt(entry, topk_context, max_retrieval_length=126_200):
-    """run_generation.py:46-282, orig-session / json / useronly=false / cot=true."""
+def upstream_prompt(entry, topk_context, max_retrieval_length=126_200, history_format="json"):
+    """run_generation.py:46-282, orig-session / useronly=false / cot=true.
+
+    `history_format` covers both of upstream's branches (:234-247); the `nl` one
+    strips each turn's content and the `json` one does not, which is upstream's
+    asymmetry and is transcribed rather than tidied."""
     answer_prompt_template = "I will give you several history chats between you and a user. Please answer the question based on the relevant chat history. Answer the question step by step: first extract all the relevant information, and then reason over the information to get the answer.\n\n\nHistory Chats:\n\n{}\n\nCurrent Date: {}\nQuestion: {}\nAnswer (step by step):"
     question_date_string = entry["question_date"]
     question_string = entry["question"]
@@ -64,7 +71,12 @@ def upstream_prompt(entry, topk_context, max_retrieval_length=126_200):
 
     history_string = ""
     for i, (chunk_date, chunk_entry) in enumerate(retrieved_chunks):
-        sess_string = "\n" + json.dumps(chunk_entry)  # :238
+        if history_format == "json":
+            sess_string = "\n" + json.dumps(chunk_entry)  # :238
+        else:
+            sess_string = ""  # :240-247
+            for turn_entry in chunk_entry:
+                sess_string += "\n\n{}: {}".format(turn_entry["role"], turn_entry["content"].strip())
         history_string += f"\n### Session {i + 1}:\nSession Date: {chunk_date}\nSession Content:\n{sess_string}\n"  # :252
 
     tokens = enc.encode(history_string, allowed_special={"<|endoftext|>"})  # :266-271
@@ -73,25 +85,26 @@ def upstream_prompt(entry, topk_context, max_retrieval_length=126_200):
     return answer_prompt_template.format(history_string, question_date_string, question_string)
 
 
-def our_prompt(entry, max_sessions=None):
+def our_prompt(entry, max_sessions=None, history_format="json"):
     return ANSWER_PROMPT_CON.format(
-        history=render_sessions(entry, max_sessions),
+        history=render_sessions(entry, max_sessions, history_format),
         question_date=str(entry.get("question_date", "")),
         question=entry["question"],
     )
 
 
-def compare(name, path, n, topk, max_sessions, sort=False):
+def compare(name, path, n, topk, max_sessions, sort=False, history_format="json"):
     data = load_longmemeval(path)[:n]
     same = 0
     diffs = []
     for inst in data:
         # upstream pops in place; give each side its own copy so neither is
         # scored against an instance the other already mutated.
-        up = upstream_prompt(copy.deepcopy(inst), topk)
+        up = upstream_prompt(copy.deepcopy(inst), topk, history_format=history_format)
         ours = our_prompt(
             sort_haystack_by_date(copy.deepcopy(inst)) if sort else copy.deepcopy(inst),
             max_sessions,
+            history_format,
         )
         if up == ours:
             same += 1
@@ -109,3 +122,6 @@ compare("A  _s, topk=1000 (README's recommendation)", S, 60, 1000, None)
 compare("B  _s, topk=50 (run_generation.sh default)", S, 60, 50, 50)
 compare("C  oracle, topk=1000 (dates not sorted)", ORACLE, 500, 1000, None)
 compare("D  oracle, sort_haystack_by_date (the driver's path)", ORACLE, 500, 1000, None, sort=True)
+compare(
+    "E  oracle, sorted, history_format=nl", ORACLE, 500, 1000, None, sort=True, history_format="nl"
+)

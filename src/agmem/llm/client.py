@@ -7,6 +7,7 @@ an API model judges (docs/03 §6 model tiering).
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import threading
@@ -60,7 +61,14 @@ class LLMClient:
         never truncated) to that file — the re-spend insurance the benchmark
         harness relies on. `None` (the default) keeps behavior unchanged and
         writes nothing, so existing callers are unaffected. It may also be set
-        after construction (e.g. `client.trace_path = Path(...)`)."""
+        after construction (e.g. `client.trace_path = Path(...)`).
+
+        A path ending in `.gz` is written as gzip, line by line, and stays
+        readable with `gzip.open(...)` after a kill — each append flushes its own
+        member. That exists for the runs where the honest trace is the problem:
+        one LongMemEval `_s` arm sends 500 prompts of ~525 KB, so an uncompressed
+        trace is ~260 MB per arm and the tools that read traces to price a
+        running arm would have to stream all of it."""
         self.roles = roles
         self.budget = budget or BudgetTracker()
         self._clients: dict[str, Any] = {}
@@ -174,7 +182,14 @@ class LLMClient:
         }
         try:
             payload = json.dumps(line, ensure_ascii=False, default=str) + "\n"
-            with self._trace_lock, self.trace_path.open("a", encoding="utf-8") as f:
-                f.write(payload)
+            # Spelled out rather than routed through one opener callable: the
+            # lock has to be held across the open AND the write, and a lambda
+            # here hides that from both the reader and the linter.
+            if self.trace_path.suffix == ".gz":
+                with self._trace_lock, gzip.open(self.trace_path, "at", encoding="utf-8") as f:
+                    f.write(payload)
+            else:
+                with self._trace_lock, self.trace_path.open("a", encoding="utf-8") as f:
+                    f.write(payload)
         except Exception:  # durability best-effort: never break the LLM call
             logger.exception("failed to write LLM trace line (role=%s)", role)

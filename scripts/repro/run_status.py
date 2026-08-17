@@ -34,6 +34,7 @@ USAGE
 from __future__ import annotations
 
 import argparse
+import gzip
 import json
 import time
 from pathlib import Path
@@ -62,6 +63,23 @@ def count_lines(path: Path) -> int:
         return sum(1 for line in fh if line.strip())
 
 
+def open_trace(path: Path):
+    """The trace, gzipped or not. A `_s` arm writes ~260 MB of prompts, so its
+    trace is written as `.jsonl.gz`; everything that reads a trace has to accept
+    both or it will report a running arm as having spent nothing."""
+    return (
+        gzip.open(path, "rt", encoding="utf-8")
+        if path.suffix == ".gz"
+        else path.open(encoding="utf-8")
+    )
+
+
+def trace_path_for(tag: str) -> Path:
+    plain = RECORDS / f"{tag}.llm-trace.jsonl"
+    gz = RECORDS / f"{tag}.llm-trace.jsonl.gz"
+    return gz if gz.exists() and not plain.exists() else plain
+
+
 def spend_from_trace(path: Path, model: str = DEFAULT_MODEL) -> tuple[float, int]:
     """(usd, calls) across every process of this run. A truncated final line —
     the shape a kill leaves — ends the count rather than raising.
@@ -74,21 +92,22 @@ def spend_from_trace(path: Path, model: str = DEFAULT_MODEL) -> tuple[float, int
     fallback = RATES.get(model, RATES[DEFAULT_MODEL])
     usd = 0.0
     calls = 0
-    for line in path.open(encoding="utf-8"):
-        try:
-            call = json.loads(line)
-        except json.JSONDecodeError:
-            break
-        calls += 1
-        rate_in, rate_out = RATES.get(str(call.get("model")), fallback)
-        usd += (call.get("tokens_in") or 0) * rate_in + (call.get("tokens_out") or 0) * rate_out
+    with open_trace(path) as fh:
+        for line in fh:
+            try:
+                call = json.loads(line)
+            except (json.JSONDecodeError, EOFError, OSError):
+                break
+            calls += 1
+            rate_in, rate_out = RATES.get(str(call.get("model")), fallback)
+            usd += (call.get("tokens_in") or 0) * rate_in + (call.get("tokens_out") or 0) * rate_out
     return usd, calls
 
 
 def describe(tag: str) -> dict:
     records = RECORDS / f"{tag}.records.jsonl"
     summary_path = RECORDS / f"{tag}.json"
-    trace = RECORDS / f"{tag}.llm-trace.jsonl"
+    trace = trace_path_for(tag)
 
     rows = count_lines(records)
     usd, calls = spend_from_trace(trace)
@@ -159,7 +178,7 @@ def main(argv=None) -> None:
     if args.active:
         fresh = []
         for tag in tags:
-            trace = RECORDS / f"{tag}.llm-trace.jsonl"
+            trace = trace_path_for(tag)
             if trace.exists() and time.time() - trace.stat().st_mtime < 600:
                 fresh.append(tag)
         tags = fresh
