@@ -159,12 +159,20 @@ def fold_row_keys(budget: dict[str, dict]) -> dict[str, dict]:
 
 
 def resume_rows(path: Path, log) -> tuple[list[dict], set[str]]:
-    """Rows already paid for, and their question ids.
+    """Rows already paid for AND judged, and their question ids.
 
     The atomic unit here is the ROW, not a window: instances are independent (one
     fresh memory each), a row is written only after its judge verdict is in, and
     a truncated final line — the shape a kill leaves — is dropped. So a resumed
-    run re-buys at most one question."""
+    run re-buys at most one question.
+
+    A row whose `label` is null is NOT resumable, and this is the subtle half: an
+    API failure writes such a row so the failure cannot vanish (LME-A18), but
+    treating it as done would leave a permanent hole that a row COUNT cannot see
+    — 500 rows of which one is unjudged, aggregated over 499 while the stamp says
+    complete. Those rows are dropped here and re-answered, and the caller rewrites
+    the file from what this returns so the hole cannot survive as a duplicate id
+    either."""
     if not path.exists():
         return [], set()
     rows = []
@@ -177,7 +185,12 @@ def resume_rows(path: Path, log) -> tuple[list[dict], set[str]]:
         except json.JSONDecodeError:
             log.warning("records line %d is truncated — resuming from before it", lineno)
             break
-    return rows, {str(r.get("question_id")) for r in rows}
+    judged = [r for r in rows if r.get("label") is not None]
+    if len(judged) != len(rows):
+        log.info(
+            "%d earlier rows carry no verdict — they will be re-answered", len(rows) - len(judged)
+        )
+    return judged, {str(r.get("question_id")) for r in judged}
 
 
 def run_pool(
@@ -429,6 +442,13 @@ def main() -> None:
 
     utc_started = datetime.now(UTC).isoformat()
     t0 = time.perf_counter()
+    if kept:
+        # Rewrite from the judged rows before appending, so an unjudged row from
+        # an earlier attempt cannot survive alongside the answer that replaces it
+        # and give one question two rows in the file that gets aggregated.
+        with records_path.open("w", encoding="utf-8") as fh:
+            for row in kept:
+                fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
     sink = records_path.open("a" if kept else "w", encoding="utf-8")
     try:
         new_rows = run_pool(
@@ -450,15 +470,22 @@ def main() -> None:
     # LME-A18: the score is not computed on a partial run. Upstream has no such
     # check anywhere, which is how a run that lost instances to API errors scores
     # as if it had answered them.
-    complete = len(rows) == population
-    missing = sorted(
-        {str(i["question_id"]) for i in instances} - {str(r["question_id"]) for r in rows}
-    )
+    #
+    # The population is checked against JUDGED rows, not against row count. A
+    # failed question still writes a row (so the failure is on the record), and
+    # `aggregate` correctly excludes an unjudged row from every bucket — so a
+    # count-only check would call a run complete and then quietly score it over
+    # 499. The two ways of ending up short are the same defect and get the same
+    # answer: no score.
+    judged_ids = {str(r["question_id"]) for r in rows if r.get("label") is not None}
+    missing = sorted({str(i["question_id"]) for i in instances} - judged_ids)
+    complete = not missing
     if not complete:
         log.error(
-            "INCOMPLETE: %d/%d answered — no score is reported. Missing: %s",
-            len(rows),
+            "INCOMPLETE: %d/%d judged (%d rows written) — no score is reported. Missing: %s",
+            len(judged_ids),
             population,
+            len(rows),
             ", ".join(missing[:20]) + (" ..." if len(missing) > 20 else ""),
         )
 
@@ -476,6 +503,7 @@ def main() -> None:
             "judge_pinned": args.judge_model == lme.JUDGE_MODEL_PIN,
             "n_population": population,
             "n_answered": len(rows),
+            "n_judged": len(judged_ids),
             "complete": complete,
             "missing_question_ids": missing,
             "workers": args.workers,
