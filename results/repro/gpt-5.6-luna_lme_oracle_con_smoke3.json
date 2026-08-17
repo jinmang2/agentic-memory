@@ -1,0 +1,118 @@
+{
+  "stamp": {
+    "dataset": "oracle",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_oracle.json",
+    "data_sha256": "821a2034d219ab45846873dd14c14f12cfe7776e73527a483f9dac095d38620c",
+    "release": "as-shipped",
+    "reader": "gpt-5.6-luna",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 3,
+    "n_answered": 3,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 3,
+    "full_context": true,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "passthrough"
+    ],
+    "embedder": "fake (retrieval is not exercised on the full-context path)",
+    "gen_max_tokens": 800,
+    "gen_temperature": null,
+    "deviations": [
+      "D2_ingest_per_turn",
+      "D6_reader_is_fixed_sampling_temperature_omitted"
+    ],
+    "git_sha": "b4812d0304d08caa06d5c0832b93bc09110cb012",
+    "utc_started": "2026-08-17T10:16:02.900960+00:00",
+    "utc_finished": "2026-08-17T10:16:07.171368+00:00",
+    "dry_run": false,
+    "resumed_from_records": 0,
+    "max_spend_usd": 0.5,
+    "prior_spend_usd": 0.0
+  },
+  "aggregate": {
+    "by_type": {
+      "temporal-reasoning": {
+        "acc": 100.0,
+        "n": 3
+      }
+    },
+    "task_averaged": 100.0,
+    "overall": 100.0,
+    "abstention": null,
+    "n": 3
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "generate": {
+      "calls": 3,
+      "tokens_in": 22964,
+      "tokens_out": 368,
+      "latency_ms_avg": 2592.7,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 3,
+      "tokens_in": 809,
+      "tokens_out": 4,
+      "latency_ms_avg": 589.6,
+      "errors": 0
+    }
+  },
+  "llm_budget_by_row": {
+    "generate|gpt4_76048e76": {
+      "calls": 1,
+      "tokens_in": 5915,
+      "tokens_out": 109,
+      "latency_ms_avg": 2572.4,
+      "errors": 0
+    },
+    "generate|gpt4_2487a7cb": {
+      "calls": 1,
+      "tokens_in": 7605,
+      "tokens_out": 132,
+      "latency_ms_avg": 2556.0,
+      "errors": 0
+    },
+    "generate|gpt4_2655b836": {
+      "calls": 1,
+      "tokens_in": 9444,
+      "tokens_out": 127,
+      "latency_ms_avg": 2649.6,
+      "errors": 0
+    },
+    "judge|gpt4_76048e76": {
+      "calls": 1,
+      "tokens_in": 256,
+      "tokens_out": 1,
+      "latency_ms_avg": 518.7,
+      "errors": 0
+    },
+    "judge|gpt4_2655b836": {
+      "calls": 1,
+      "tokens_in": 273,
+      "tokens_out": 1,
+      "latency_ms_avg": 564.7,
+      "errors": 0
+    },
+    "judge|gpt4_2487a7cb": {
+      "calls": 1,
+      "tokens_in": 280,
+      "tokens_out": 2,
+      "latency_ms_avg": 685.3,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 4.3
+  },
+  "records_file": "gpt-5.6-luna_lme_oracle_con_smoke3.records.jsonl",
+  "trace_file": "gpt-5.6-luna_lme_oracle_con_smoke3.llm-trace.jsonl",
+  "cost_usd": 0.007097,
+  "cost_usd_this_process": 0.007097
+}
