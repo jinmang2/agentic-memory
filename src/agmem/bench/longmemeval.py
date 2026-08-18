@@ -62,11 +62,11 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator
 
-from agmem.core.types import MemoryBundle
 from agmem.memory import AgenticMemory
 from agmem.retrieval.planned import searcher_for
 
@@ -124,14 +124,98 @@ def _capped(items: list[Any], max_items: int | None) -> list[Any]:
     return items if max_items is None else items[:max_items]
 
 
+# Only these four characters can change the scanner's state, so `iter_longmemeval`
+# jumps between them instead of walking every one of 2.7 billion.
+_JSON_STRUCTURAL = re.compile(r'["{}\\]')
+
+
+def iter_longmemeval(path: str | Path, chunk_bytes: int = 1 << 22) -> Iterator[dict[str, Any]]:
+    """Instances from ``longmemeval_{s,m,oracle}.json``, one at a time.
+
+    The release files are a JSON array of instances, so this walks the array with
+    a string-aware brace counter and hands back each element as it completes,
+    holding at most one instance plus a read buffer. That is the difference
+    between running and not running: ``json.loads(path.read_text())`` peaks at
+    **2.42 GB on `_s`** (277 MB) because the decoded ``str`` alone is ~1.1 GB, and
+    the same path projects past **24 GB on `_m`** (2.74 GB) -- more than this
+    machine's RAM and swap combined. Streaming peaks at **124 MB on `_s`** and
+    **193 MB on `_m`-sized instances** (docs/research/longmemeval.md §10.2).
+
+    The scan position persists across reads. Restarting it at 0 after appending a
+    chunk -- the obvious way to write this -- replays every brace and quote in the
+    buffer, which silently corrupts the depth count and drops instances; it read
+    175 of oracle's 500 before that was fixed, which is why the tests assert the
+    published session and turn counts rather than just "we got a list".
+
+    Raises on a missing file or invalid JSON -- no fallback to an empty list."""
+    buf = ""
+    pos = 0  # how far into buf the scanner has already looked
+    depth = 0
+    start = -1
+    in_str = False
+    with open(path, encoding="utf-8") as fh:
+        while True:
+            chunk = fh.read(chunk_bytes)
+            if not chunk:
+                break
+            buf += chunk
+            while True:
+                match = _JSON_STRUCTURAL.search(buf, pos)
+                if match is None:
+                    pos = len(buf)
+                    break
+                i = match.start()
+                char = match.group()
+                if in_str:
+                    if char == "\\":
+                        # The escaped character cannot close the string, whatever
+                        # it is -- unless the pair straddles the chunk edge, in
+                        # which case we rewind and wait for the rest.
+                        if i + 2 > len(buf):
+                            pos = i
+                            break
+                        pos = i + 2
+                        continue
+                    if char == '"':
+                        in_str = False
+                    pos = i + 1
+                    continue
+                if char == '"':
+                    in_str = True
+                elif char == "{":
+                    if depth == 0:
+                        start = i
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield json.loads(buf[start : i + 1])
+                        buf = buf[i + 1 :]  # drop what has already been emitted
+                        pos = 0
+                        start = -1
+                        continue
+                pos = i + 1
+            if depth == 0:
+                # Between instances there is only `,` and whitespace to keep.
+                buf = ""
+                pos = 0
+    if depth != 0:
+        raise ValueError(f"{path}: unterminated JSON object (depth {depth} at EOF)")
+
+
 def load_longmemeval(path: str | Path) -> list[dict[str, Any]]:
-    """Raw instances from ``longmemeval_{s,m,oracle}.json``; raises on a missing
-    file or invalid JSON -- no fallback to an empty list.
+    """Every instance of ``longmemeval_{s,m,oracle}.json`` as a list.
+
+    Built through ``iter_longmemeval`` rather than ``json.loads``: identical
+    output, but the peak is the parsed list (**468 MB on `_s`**) instead of the
+    list plus a 1.1 GB decoded ``str`` (2.42 GB). `_m` does not fit either way --
+    its list is ~4.6 GB against ~4.5 GB free -- so a `_m` caller wants the
+    iterator, not this.
 
     Which file, and whether it is the 2025/09 ``longmemeval-cleaned`` release,
     must be recorded with any result: the cleaned version removed answer-
     interfering sessions, so the two score differently."""
-    return json.loads(Path(path).read_text())
+    return list(iter_longmemeval(path))
 
 
 def iter_turns(
@@ -324,6 +408,38 @@ def render_sessions(
     return "".join(out)
 
 
+# Measured on this corpus with o200k_base, not assumed: 4.610 chars/token over
+# `_s` (docs/research/longmemeval.md §3.1). ``MemoryBundle.CHARS_PER_TOKEN`` is
+# the framework-wide generic 4, and using it to convert a token cap into a
+# character cap truncated **13% early** -- defect D3. That stayed latent only
+# because the cap is opt-in and `_s`/oracle never pass one (their fidelity IS the
+# absence of a cap: 0/500 instances exceed upstream's 126,200). `_m` is the one
+# variant where the cap actually binds, so the estimate had to stop being wrong
+# before `_m` could be measured at all.
+CHARS_PER_TOKEN = 4.610
+
+
+def truncate_history(history: str, max_tokens: int, encoder: Any | None = None) -> str:
+    """``history`` cut to ``max_tokens``, the way upstream cuts it.
+
+    Upstream truncates the assembled history with the reader model's own
+    tokenizer (run_generation.py:266-279), having it to hand. Pass ``encoder`` --
+    anything with tiktoken's ``encode``/``decode`` -- to do exactly that. Without
+    one we fall back to ``CHARS_PER_TOKEN``, which is an estimate and is
+    disclosed as such: it is corpus-measured rather than generic, so it is off by
+    the ratio's spread across instances rather than by D3's flat 13%.
+
+    tiktoken is deliberately not a project dependency (it is pulled ephemerally
+    by the audit scripts), so the exact path is the caller's choice to supply."""
+    if encoder is not None:
+        tokens = encoder.encode(history)
+        if len(tokens) <= max_tokens:
+            return history
+        return encoder.decode(tokens[:max_tokens])
+    limit = int(max_tokens * CHARS_PER_TOKEN)
+    return history if len(history) <= limit else history[:limit]
+
+
 def upstream_max_history_tokens(model_max_length: int, reading_method: str = "con") -> int:
     """Upstream's context arithmetic: ``model_max_length - gen_length - 1000``
     (run_generation.py:343), where ``gen_length`` is 800 for ``con`` and 500 for
@@ -382,6 +498,7 @@ def answer(
     reading_method: str = "con",
     history: str | None = None,
     max_history_tokens: int | None = None,
+    history_encoder: Any | None = None,
     capture: dict[str, Any] | None = None,
     searcher: Any | None = None,
     budget_key: str | None = None,
@@ -403,12 +520,16 @@ def answer(
 
     ``max_history_tokens`` caps whichever history is used, mirroring upstream's
     truncation of the assembled history string (run_generation.py:266-279) --
-    which it does unconditionally, having the model's tokenizer to hand. We do
-    not, so the cap is opt-in and measured with ``MemoryBundle``'s chars-per-
-    token estimate; ``upstream_max_history_tokens`` computes the value upstream
-    would use. It matters on the full-context path: ``budget_tokens`` never
-    reaches an explicit ``history``, so an uncapped ``_m`` haystack (~1.5M
-    tokens) goes to the API whole.
+    which it does unconditionally, having the model's tokenizer to hand. The cap
+    stays opt-in here, because on `_s`/oracle NOT passing one is what makes us
+    byte-faithful (0/500 instances exceed upstream's 126,200), and it is applied
+    by ``truncate_history``: exact when a ``history_encoder`` is supplied,
+    otherwise the corpus-measured ``CHARS_PER_TOKEN``.
+    ``upstream_max_history_tokens`` computes the value upstream would use. This
+    matters on the full-context path and only there: ``budget_tokens`` never
+    reaches an explicit ``history``, so an uncapped ``_m`` haystack (~1.1M
+    tokens) goes to the API whole -- which is also why `_m` has no uncapped
+    full-context arm to run.
 
     ``memory_types=None`` defers to the memory's ``default_memory_types``, so a
     caller does not have to know what the configured organizers produce.
@@ -480,15 +601,16 @@ def answer(
                 for s in bundle.items
             ]
     if max_history_tokens is not None:
-        limit = max_history_tokens * MemoryBundle.CHARS_PER_TOKEN
-        if len(history) > limit:
+        capped = truncate_history(history, max_history_tokens, encoder=history_encoder)
+        if len(capped) != len(history):
             logger.warning(
-                "longmemeval: truncating history from %d to %d chars (~%d tokens)",
+                "longmemeval: truncating history from %d to %d chars (%d tokens, %s)",
                 len(history),
-                limit,
+                len(capped),
                 max_history_tokens,
+                "exact" if history_encoder is not None else f"~{CHARS_PER_TOKEN} chars/token",
             )
-            history = history[:limit]
+            history = capped
     if capture is not None:
         capture["history"] = history
     if mem.llm is None:
@@ -747,6 +869,7 @@ def run_instance(
     reading_method: str = "con",
     max_sessions: int | None = None,
     max_history_tokens: int | None = None,
+    history_encoder: Any | None = None,
     full_context: bool = False,
     history_format: str = "json",
     judge: bool = True,
@@ -791,6 +914,7 @@ def run_instance(
         reading_method=reading_method,
         history=(render_sessions(instance, max_sessions, history_format) if full_context else None),
         max_history_tokens=max_history_tokens,
+        history_encoder=history_encoder,
         capture=capture,
         budget_key=f"generate|{budget_key}" if budget_key else None,
     )

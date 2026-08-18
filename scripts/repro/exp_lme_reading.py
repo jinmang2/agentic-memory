@@ -62,6 +62,7 @@ import queue
 import sys
 import threading
 import time
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,10 @@ OUT = ROOT / "results" / "repro"
 DATASETS = {
     "oracle": Path.home() / ".agmem/datasets/longmemeval_oracle.json",
     "s": Path.home() / ".agmem/datasets/longmemeval_s_cleaned.json",
+    # `_m` has no full-context arm to offer: ~1.1M tokens per instance against a
+    # 128k window, so `--retrieval` is not one option here but the only one. That
+    # is exactly why it is the regime worth measuring — see §9.4 weakness 0.
+    "m": Path.home() / ".agmem/datasets/longmemeval_m_cleaned.json",
 }
 # §3.1, measured on this data with the tokenizer upstream actually uses
 # (o200k_base). Only the dry run needs it — a paid row reports the endpoint's own
@@ -194,8 +199,22 @@ def resume_rows(path: Path, log) -> tuple[list[dict], set[str]]:
     return judged, {str(r.get("question_id")) for r in judged}
 
 
+def _sha256_file(path: Path, chunk: int = 1 << 20) -> str:
+    """The stamped dataset fingerprint, read in chunks.
+
+    `path.read_bytes()` is 2.74 GB in one allocation on `_m` — the same class of
+    mistake as loading the instances all at once, in the one line that exists to
+    prove which bytes were measured."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def run_pool(
-    instances: list[dict],
+    instances: Iterable[dict],
+    total: int,
     *,
     build_mem,
     reading: str,
@@ -215,18 +234,51 @@ def run_pool(
     be able to STOP the run: with every future submitted up front the cap could
     only be observed, never enforced. Each worker checks it before taking the
     next question, so the overshoot is bounded by the questions already in
-    flight (`workers`), not by the split."""
-    work: queue.Queue = queue.Queue()
-    for inst in instances:
-        work.put(inst)
+    flight (`workers`), not by the split.
+
+    The queue is BOUNDED and fed by a producer thread, so `instances` can be a
+    generator reading the file as it goes. Draining it into the queue up front is
+    what the oracle/`_s` version did, and it is the thing that made `_m`
+    unrunnable: 500 `_m` instances resident at once is ~4.6 GB. `total` is passed
+    separately because a generator has no length.
+
+    Threads, not processes, and no deep copy of an instance anywhere — the two
+    other rules `_s`-scale data imposes (docs/research/longmemeval.md §10.2)."""
+    work: queue.Queue = queue.Queue(maxsize=max(workers * 2, 4))
     rows: list[dict] = []
     stop = threading.Event()
+    DONE = object()  # a bounded queue cannot say "empty means finished"
+
+    def producer() -> None:
+        try:
+            for inst in instances:
+                while not stop.is_set():
+                    try:
+                        work.put(inst, timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
+                if stop.is_set():
+                    return
+        finally:
+            # One sentinel per worker, whatever happened above — a producer that
+            # dies without these leaves every worker blocked on `get` forever.
+            for _ in range(workers):
+                while True:
+                    try:
+                        work.put(DONE, timeout=0.5)
+                        break
+                    except queue.Full:
+                        if stop.is_set():
+                            return
 
     def worker() -> None:
         while not stop.is_set():
             try:
-                inst = work.get_nowait()
+                inst = work.get(timeout=0.5)
             except queue.Empty:
+                continue
+            if inst is DONE:
                 return
             if over_budget is not None and over_budget():
                 if not stop.is_set():
@@ -307,13 +359,17 @@ def run_pool(
                 sink.flush()
                 done = len(rows)
             if done % 25 == 0:
-                log.info("%d/%d answered", done, len(instances))
+                log.info("%d/%d answered", done, total)
 
+    feeder = threading.Thread(target=producer, daemon=True)
+    feeder.start()
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
     for t in threads:
         t.start()
     for t in threads:
         t.join()
+    stop.set()  # releases the producer if the cap ended the run early
+    feeder.join(timeout=5)
     return rows
 
 
@@ -402,15 +458,25 @@ def main() -> None:
     # every tool that prices a running arm would have to stream all of it. The
     # oracle arms stay uncompressed: 15 MB reads instantly and `zcat` is one more
     # thing to remember.
-    gz = args.gzip_trace if args.gzip_trace is not None else args.dataset == "s"
+    gz = args.gzip_trace if args.gzip_trace is not None else args.dataset in ("s", "m")
     trace_path = out_dir / f"{args.tag}.llm-trace.jsonl{'.gz' if gz else ''}"
 
-    raw = lme.load_longmemeval(data_path)
-    population = len(raw) if args.limit is None else min(args.limit, len(raw))
-    # Sorted here, once, for every instance: the guard has to be unconditional
-    # (upstream's is) and it must happen before anything reads the haystack.
-    instances = [lme.sort_haystack_by_date(inst) for inst in raw[:population]]
-    data_sha = hashlib.sha256(data_path.read_bytes()).hexdigest()
+    # Pass 1 of 2, and the reason both exist: `_m` is 2.74 GB, its instance list
+    # is ~4.6 GB against ~4.5 GB free, and this driver used to hold all of it at
+    # once. Nothing but the question identity is kept here; the haystacks are
+    # streamed again in pass 2, one instance at a time, straight into the pool.
+    # On oracle/`_s` the second scan costs 1.4s/21s, which is not worth a second
+    # code path for.
+    # `--limit` stops the scan, not just the slice: a 3-question smoke on `_m`
+    # should not read 2.74 GB to find out there are 500 instances in it.
+    catalogue = []
+    for inst in lme.iter_longmemeval(data_path):
+        catalogue.append((str(inst["question_id"]), str(inst.get("question_type", ""))))
+        if args.limit is not None and len(catalogue) >= args.limit:
+            break
+    population = len(catalogue)
+    all_qids = {qid for qid, _ in catalogue}
+    data_sha = _sha256_file(data_path)
     log.info(
         "dataset=%s n=%d sha256=%s reader=%s reading=%s judge=%s",
         data_path.name,
@@ -434,7 +500,21 @@ def main() -> None:
             kept, done_ids = [], set()
         elif kept:
             log.info("resuming: %d/%d questions already answered", len(kept), population)
-    todo = [inst for inst in instances if str(inst["question_id"]) not in done_ids]
+    todo_ids = [qid for qid, _ in catalogue if qid not in done_ids]
+
+    def todo_instances():
+        """Pass 2: the haystacks, one at a time, sorted before anything reads them.
+
+        Sorting is unconditional here because upstream's is, and it has to happen
+        before the haystack reaches ingest or `render_sessions`. `limit` is applied
+        by position, matching pass 1's slice, so the two passes agree on which
+        instances the run covers."""
+        wanted = set(todo_ids)
+        for i, inst in enumerate(lme.iter_longmemeval(data_path)):
+            if i >= population:
+                return
+            if str(inst["question_id"]) in wanted:
+                yield lme.sort_haystack_by_date(inst)
 
     reader_spec = get_model(args.reader)
     judge_spec = get_model(args.judge_model)
@@ -530,7 +610,8 @@ def main() -> None:
     sink = records_path.open("a" if kept else "w", encoding="utf-8")
     try:
         new_rows = run_pool(
-            todo,
+            todo_instances(),
+            len(todo_ids),
             build_mem=build_mem,
             reading=args.reading,
             history_format=args.history_format,
@@ -559,7 +640,7 @@ def main() -> None:
     # 499. The two ways of ending up short are the same defect and get the same
     # answer: no score.
     judged_ids = {str(r["question_id"]) for r in rows if r.get("label") is not None}
-    missing = sorted({str(i["question_id"]) for i in instances} - judged_ids)
+    missing = sorted(all_qids - judged_ids)
     complete = not missing
     if not complete:
         log.error(
@@ -639,7 +720,7 @@ def main() -> None:
         "trace_file": trace_path.name,
     }
     if args.dry_run:
-        summary["dry_run_quote"] = _quote(client, len(todo), args, reader_spec, judge_spec)
+        summary["dry_run_quote"] = _quote(client, len(todo_ids), args, reader_spec, judge_spec)
     else:
         this_process = helpers.cost_usd(
             folded,

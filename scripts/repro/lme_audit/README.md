@@ -1,6 +1,6 @@
 # LongMemEval audit scripts — every measurement in `docs/research/longmemeval.md`
 
-All eight scripts spend **$0**: no model call, no network except where noted. They exist so the
+All eleven scripts spend **$0**: no model call, no network except where noted. They exist so the
 numbers in the research doc can be re-derived rather than trusted, which is the same standard
 `scripts/repro/defects/` holds upstream claims to.
 
@@ -8,6 +8,7 @@ Unlike `scripts/repro/defects/`, these are **not** run by CI, because they need 
 does not have:
 
 - `~/.agmem/datasets/longmemeval_s_cleaned.json` and `longmemeval_oracle.json`
+  (`m_stats.py` additionally needs `longmemeval_m_cleaned.json`, 2.55 GiB)
 - `~/.agmem/upstream/longmemeval` @ `9e0b455f4ef0e2ab8f2e582289761153549043fc`
 
 Run them from the repo root (`uv run python scripts/repro/lme_audit/<name>.py`).
@@ -24,6 +25,7 @@ Run them from the repo root (`uv run python scripts/repro/lme_audit/<name>.py`).
 | `abs_evidence.py` | whether abstention questions carry evidence sessions | dataset |
 | `dup_sessions.py` | independent check of upstream issue #54 — duplicate `haystack_session_id` | dataset |
 | `gold_issue_check.py` | independent check of upstream issues #41 and #22 — gold defects | dataset |
+| `m_stats.py` | `_m` scale, whether the streamed instances are the array's real elements, whether upstream's cap binds | `_m` + `_s` (+ `tiktoken` for `LME_EXACT_TOKENS=1`) |
 
 Three of them pull an ephemeral dependency rather than adding one to the project: run
 `lme_tokens.py`, `oracle_stats.py` and `prompt_rediff.py` with `uv run --with tiktoken python ...`,

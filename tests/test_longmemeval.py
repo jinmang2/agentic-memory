@@ -5,11 +5,14 @@ rather than to our own convenience — see src/agmem/bench/longmemeval.py for th
 file:line citations.
 """
 
+import json
+
 import pytest
 
 from agmem import AgenticMemory
 from agmem.bench.longmemeval import (
     ANSWER_PROMPT_CON,
+    CHARS_PER_TOKEN,
     JUDGE_MODEL_PIN,
     aggregate,
     answer,
@@ -17,12 +20,16 @@ from agmem.bench.longmemeval import (
     get_anscheck_prompt,
     ingest,
     is_abstention,
+    iter_longmemeval,
     iter_turns,
+    load_longmemeval,
     render_sessions,
     run_instance,
     sort_haystack_by_date,
+    truncate_history,
     upstream_max_history_tokens,
 )
+from agmem.core.types import MemoryBundle
 from agmem.embed.fake import FakeEmbedder
 from agmem.llm.client import RoleConfig
 from agmem.organizers.base import Organizer
@@ -538,7 +545,12 @@ def test_stripping_the_evidence_label_does_not_destroy_the_recall_gold():
 
 def test_history_can_be_capped_the_way_upstream_caps_it():
     """`budget_tokens` governs the retrieved bundle only, so an explicit
-    `history` reaches the API unbounded — on _m that is ~1.5M tokens."""
+    `history` reaches the API unbounded — on _m that is ~1.1M tokens.
+
+    This assertion used to read `100 tokens * 4 chars`, which pinned D3 in place:
+    4 is the framework's generic chars-per-token, and this corpus measures 4.610,
+    so the cap fired 13% early. The old number was harmless while nothing passed
+    a cap, and wrong the moment `_m` needed one."""
     assert upstream_max_history_tokens(128000, "con") == 126200  # 128000 - 800 - 1000
     assert upstream_max_history_tokens(128000, "direct") == 126500
     mem = _mem()
@@ -547,7 +559,7 @@ def test_history_can_be_capped_the_way_upstream_caps_it():
         long_history = "x" * 4000
         answer(mem, INSTANCE, history=long_history, max_history_tokens=100)
         sent = mem.llm.calls[-1]["prompt"]
-        assert "x" * 400 in sent and "x" * 401 not in sent  # 100 tokens * 4 chars
+        assert "x" * 461 in sent and "x" * 462 not in sent  # 100 tokens * 4.610 chars
     finally:
         mem.close()
 
@@ -620,5 +632,114 @@ def test_judging_is_skipped_without_a_judge_role():
         stub.has_role = lambda role: role == "generate"
         mem.llm = stub
         assert run_instance(mem, INSTANCE)["label"] is None
+    finally:
+        mem.close()
+
+
+# ---------------- streaming loader (`_m` does not fit any other way) ----------------
+
+
+def _write_array(tmp_path, objs, sep=", ", pretty=False):
+    text = (
+        "["
+        + sep.join(json.dumps(o, ensure_ascii=False, indent=2 if pretty else None) for o in objs)
+        + "]"
+    )
+    p = tmp_path / "arr.json"
+    p.write_text(text, encoding="utf-8")
+    return p
+
+
+# Content chosen to break a naive brace counter: unbalanced braces inside strings,
+# an escaped quote, a trailing backslash, a non-BMP character (which is what makes
+# the decoded `_s` string 4 bytes/char and its full load 2.42 GB), and a nested
+# object so depth has to be counted rather than assumed to be 1.
+NASTY = [
+    {"question_id": "a", "t": "brace } alone and { alone", "nested": {"deep": {"deeper": 1}}},
+    {"question_id": "b", "t": 'escaped quote \\" then }', "u": "café \U0001f600"},
+    {"question_id": "c", "t": "trailing backslash \\\\", "haystack_sessions": [[{"role": "user"}]]},
+]
+
+
+@pytest.mark.parametrize("chunk", [1, 2, 3, 7, 64, 1 << 22])
+def test_streaming_loader_matches_json_loads_at_every_chunk_size(tmp_path, chunk):
+    """The scan position has to persist across reads. Restarting it at 0 after
+    appending a chunk replays the braces already counted, and the corruption is
+    silent — it read 175 of oracle's 500 instances, not an error. Tiny chunk
+    sizes put a boundary inside strings, escape pairs and objects on purpose."""
+    p = _write_array(tmp_path, NASTY)
+    assert list(iter_longmemeval(p, chunk_bytes=chunk)) == json.loads(p.read_text())
+
+
+def test_streaming_loader_survives_whitespace_and_indentation(tmp_path):
+    p = _write_array(tmp_path, NASTY, sep=",\n\n  ", pretty=True)
+    assert [i["question_id"] for i in iter_longmemeval(p, chunk_bytes=5)] == ["a", "b", "c"]
+
+
+def test_an_empty_release_yields_nothing_rather_than_hanging(tmp_path):
+    p = tmp_path / "empty.json"
+    p.write_text("[]", encoding="utf-8")
+    assert list(iter_longmemeval(p)) == []
+
+
+def test_a_truncated_file_raises_rather_than_returning_what_it_got(tmp_path):
+    """A 2.7 GB download that stopped early must not read as a short dataset."""
+    p = tmp_path / "cut.json"
+    p.write_text('[{"question_id": "a"}, {"question_id": "b", "hays', encoding="utf-8")
+    with pytest.raises(ValueError, match="unterminated"):
+        list(iter_longmemeval(p))
+
+
+def test_load_longmemeval_still_returns_the_whole_list(tmp_path):
+    p = _write_array(tmp_path, NASTY)
+    assert load_longmemeval(p) == json.loads(p.read_text())
+
+
+# ---------------- D3: the chars-per-token estimate was 13% short ----------------
+
+
+class _Encoder:
+    """tiktoken's surface, minus tiktoken: one token per character."""
+
+    def encode(self, text):
+        return list(text)
+
+    def decode(self, tokens):
+        return "".join(tokens)
+
+
+def test_the_cap_uses_the_corpus_measured_ratio_not_the_generic_four():
+    """D3. `MemoryBundle.CHARS_PER_TOKEN` is 4; o200k_base over `_s` measures
+    4.610 (docs/research/longmemeval.md §3.1). Converting with 4 cut 13% early.
+    Latent on `_s`/oracle, where fidelity is passing no cap at all — `_m` is the
+    one variant where the cap binds."""
+    assert CHARS_PER_TOKEN == 4.610
+    history = "x" * 10_000
+    assert len(truncate_history(history, 1000)) == 4610
+    assert len(truncate_history(history, 1000)) > 1000 * MemoryBundle.CHARS_PER_TOKEN
+
+
+def test_a_supplied_encoder_makes_the_cap_exact_instead_of_estimated():
+    """Upstream truncates with the reader's own tokenizer (run_generation.py:266-279).
+    With one to hand we do the same thing rather than estimating."""
+    assert truncate_history("abcdefghij", 4, encoder=_Encoder()) == "abcd"
+
+
+def test_a_history_under_the_cap_is_returned_untouched():
+    for encoder in (None, _Encoder()):
+        assert truncate_history("short", 1000, encoder=encoder) == "short"
+
+
+def test_the_encoder_reaches_the_cap_through_answer():
+    """The full-context path is the only one the cap can bind on, so the encoder
+    has to survive the trip from the driver through `answer`."""
+    mem = _mem()
+    try:
+        mem.llm = _StubLLM({"generate": "ok"})
+        answer(
+            mem, INSTANCE, history="abcdefghij", max_history_tokens=4, history_encoder=_Encoder()
+        )
+        prompt = mem.llm.calls[0]["prompt"]
+        assert "abcd" in prompt and "abcde" not in prompt
     finally:
         mem.close()
