@@ -14,6 +14,12 @@ came back null and a null is only worth reading once the knobs that could have c
 turned: under our dedup and under upstream's default, with one reflection per sample and with
 upstream's reflect-and-re-answer rounds.
 
+**A fifth arm answers a question the other four cannot.** Four settings of one methodology cannot
+say whether a null belongs to ACE or to the task, so ReasoningBank — a different self-evolving
+memory, with a different read shape — was run over the same 441 questions. It lands on the same
+accuracy as learning nothing, to the second decimal place. That arm is **not** a reproduction of
+ReasoningBank's own claims, which are agentic and unreachable here; see its section below.
+
 ## Protocol
 
 | | |
@@ -35,6 +41,7 @@ upstream's reflect-and-re-answer rounds.
 | **online** — grown, our dedup at 0.90 | 46.71 | 15.42 | 1,323 | $1.461 | 140 bullets / 43.7 K chars |
 | **nodedup** — grown, dedup off (upstream's default) | **48.98** | **17.01** | 1,325 | **$8.633** | 2,165 bullets / 639 K chars |
 | **retry** — grown, dedup 0.90, upstream's reflect-and-re-answer rounds | 45.80 | 12.70 | 2,918 | $4.394 | 217 bullets / 63.6 K chars |
+| **rb** — ReasoningBank, top-1 read (a different methodology, not an ACE setting) | 48.24 | 16.33 | 882 | $0.367 | 441 experiences + 1,323 strategies / **read stays under 1 K chars** |
 
 Paired over the same questions in the same order (bootstrap imported from `scripts/ext/x1_power.py`,
 10,000 resamples, seed 0):
@@ -48,12 +55,16 @@ sample_accuracy   retry   - online   Δ = -2.72 pp   95% CI [-5.67, +0.00]   p =
 tag_accuracy      online  - base     Δ = -1.53 pp   (point estimates — see "one interval is missing")
 tag_accuracy      nodedup - base     Δ = +0.74 pp
 tag_accuracy      retry   - base     Δ = -2.44 pp
-per-window sign   online ahead in 10 of 30; nodedup 14; retry 12
+sample_accuracy   rb      - base     Δ = +0.23 pp   95% CI [-2.04, +2.72]   p = 0.934   NOT separated
+tag_accuracy      rb      - base     Δ = +0.00 pp   (48.24 -> 48.24)
+per-window sign   online ahead in 10 of 30; nodedup 14; retry 12; rb 12
 ```
 
-\* **and that asterisk is load-bearing.** Four arms means four comparisons against
-the same base, and a 0.05 threshold applied four times is not a 0.05 threshold: a
-Bonferroni correction puts the bar at 0.0125, which p = 0.021 does not clear. The
+\* **and that asterisk is load-bearing.** Five arms means five comparisons against
+the same base, and a 0.05 threshold applied five times is not a 0.05 threshold: a
+Bonferroni correction puts the bar at 0.01, which p = 0.021 does not clear.
+(It did not clear the 0.0125 the four-arm version of this table required either;
+adding the `rb` arm tightened the bar and changed no conclusion.) The
 comparison that isolates the retry loop with everything else held fixed — retry
 against online, same dedup, same prompts, same model — has an interval that
 touches zero. **So the defensible claim is that upstream's extra calls bought no
@@ -61,9 +72,9 @@ measurable improvement, with every point estimate on the negative side. It is no
 that retries are proven harmful.**
 
 **Growing a playbook over 441 samples produced no measurable improvement — under our dedup at 7.6×
-the cost, under upstream's default at 45×, and with upstream's retry rounds at 23×.** Three of the
-four intervals cover zero; the fourth (retry against base) sits below it but does not survive a
-correction for having asked four times. So the claim this supports is *no measurable effect*, **not**
+the cost, under upstream's default at 45×, and with upstream's retry rounds at 23×.** Four of the
+five intervals cover zero; the fifth (retry against base) sits below it but does not survive a
+correction for having asked five times. So the claim this supports is *no measurable effect*, **not**
 that the playbook helps, and not that it demonstrably hurts.
 
 The third arm exists because the second one could not answer for itself. A null under our
@@ -267,6 +278,71 @@ all showed accuracy falling from window 0 to window 1 (61.7→35.0, 61.7→36.7,
 as "the playbook immediately hurts" — until the base arm scores **35.0** on the same window 1 with no
 playbook in existence. It was the questions.
 
+## The null is not ACE's — a second methodology lands on the same number
+
+Everything above is one methodology. A null under four settings of ACE says the playbook did not
+convert *here*, and leaves open whether that belongs to ACE or to FiNER: a task where 441 questions
+draw on the same handful of GAAP distinctions might simply not reward distilled advice, whoever
+distils it.
+
+Separating those needs a second self-evolving memory on the identical questions.
+**ReasoningBank**, run over the same 441 samples in the same order at the same model and embedder,
+differing in what was grown alongside and — the sharper difference — in how much of it is read
+back:
+
+```
+rb - base  [n=441]
+  sample_accuracy  d= +0.23pp  95% CI [-2.04, +2.72]  p=0.9338  disagree= 29/441  NOT separated
+  tag_accuracy     d= +0.00pp  (48.24 -> 48.24, point estimate)                   moved=117/441
+  per-window sign: ahead in 12, behind in 14, tied in 4 of 30
+```
+
+**48.24 → 48.24.** The tag accuracy does not move at the second decimal place, on a metric with
+1,764 tagging decisions under it. And the arm is the *least* disruptive of the four: 117 questions
+changed answer against base, where ACE's arms moved 181, 195 and 191.
+
+**So the null generalises past ACE.** Two mechanisms, built on different premises — grow one
+document and inject all of it, versus distil discrete items and retrieve the single best — arrive at
+the same accuracy as growing nothing. That is a stronger statement than either arm alone, and it
+moves the open question from "is ACE's playbook worth its cost" to "does this task reward
+self-evolving memory at all".
+
+**What this arm is NOT.** ReasoningBank's published claims are *agentic* — WebArena and SWE-Bench —
+and neither is reachable here: WebArena needs a five-site Docker environment, SWE-Bench needs 500
+containerised agent rollouts, a hosted grader, and a model far stronger than `gpt-4o-mini`, which
+sits near floor on it and would leave no room above the baseline to measure. Mind2Web, which the
+paper also reports, is absent from the release entirely. **This is not a reproduction of
+ReasoningBank and must not be cited as one**; the artifact's own stamp carries
+`RB_D1_not_the_published_benchmark_finer_not_webarena_or_swebench` so a reader of the JSON cannot
+miss it. What is measured is the mechanism on a single-turn task, against a control that was already
+bought.
+
+Two conditions travel with the number. The **generator prompt is ACE's, unchanged** — RB's items
+land in the same slot the playbook does, under the same instructions — because the question only
+reads if the generator is held fixed and memory content is the single variable; a prompt tuned for
+RB would answer a different question and could not be compared with `base`. And the **retrieval
+geometry is not upstream's**: we pin RB's memory types and k (`RB_READ_RECIPE`, `experiences_topk`
+= 1) but not its embedding-side instruction prefix, disclosed at `configs.rb_upstream`.
+
+**The cost side is the mirror of the nodedup finding.** RB spends **882 calls for $0.367** where the
+online arm spent 1,323 for $1.461 and nodedup 1,325 for $8.633 — one distillation per sample instead
+of two, and, decisively, a read that serves **one item**. Its store grew to 441 experiences plus
+1,323 strategies and the injected text stayed between 774 and 965 characters from window 1 to window
+29, where ACE's reached 639,054. Same task, same null, **23× less money**, because the read is
+bounded. If a later result does show a self-evolving memory paying off on FiNER, this arm is the
+evidence that the payment does not have to scale with the store.
+
+One upstream observation the run surfaced: RB writes both `experiences` (one per task) and
+`strategies` (three per task), while its own pinned recipe serves `strategies_topk` = **0**. Three
+quarters of what its extractor produces is never read back at the operating point the release ships.
+
+One process note, because it nearly became a false claim in an artifact. `configs.rb_upstream`
+carries `run_ready=False`, and having run this arm looked like grounds to flip it. It is not: that
+flag gates the **LoCoMo** runner's ingest, and this arm never touches that registry — it selects its
+organizer through the FiNER runner's own switch. A methodology having been run *somewhere* is not
+that entry having been piloted. A pinning test refused the flip, which is the flag doing exactly the
+job it exists for.
+
 ## Is 48.24 a real number?
 
 It sits 21 points under the paper's 69.1 baseline, which is exactly the situation where a harness
@@ -379,6 +455,8 @@ because the scorer lowercases both sides, but it is noise in the labels rather t
 | online | `results/repro/gpt-4o-mini_ace_finer_online.json` |
 | nodedup | `results/repro/gpt-4o-mini_ace_finer_nodedup.json` |
 | retry | `results/repro/gpt-4o-mini_ace_finer_retry.json` — records carry `retry_attempts` and `corrected_in_training` per sample |
+| rb | `results/repro/gpt-4o-mini_rb_finer_online.json` — ReasoningBank, `--organizer rb`; its stamp carries `RB_D1_not_the_published_benchmark_...`, `read_path: experiences`, and no ACE knobs |
+| rb quote | `..._rb_finer_smoke30.json` ($0.0240, 30 samples) and the $0 dry runs `DRYRUN_finer_rb_441_{none,max}.json` + `DRYRUN_finer_base_full441.json`, which together priced the arm at $0.29–0.38 before it was bought (it cost $0.367) |
 | paired analysis | `results/repro/finer_paired.json` (`scripts/repro/finer_paired.py`, `--reference` selects which arm the others are paired against) |
 | error structure | `results/repro/finer_error_structure.json` (`scripts/repro/finer_error_structure.py`) |
 | pre-flight smokes | `..._ace_finer_smoke30{,b,c}.json` — the runs that caught the prompt defect below |

@@ -409,6 +409,17 @@ CONFIGS: dict[str, RunnerConfig] = {
             "rb_upstream",
             lambda: [ReasoningBankOrganizer()],
             ("experiences",),
+            # STAYS False, and track 4 is the reason it nearly did not. That
+            # track ran ReasoningBank for real — a 30-sample smoke then the full
+            # 441 FiNER samples, $0.367, 882 calls, 0 errors — and the obvious
+            # next move looked like flipping this flag. It would have been a
+            # false claim: `run_ready` gates the LOCOMO runner's ingest, and the
+            # FiNER arm never touches this registry (it selects its organizer
+            # through the benchmark runner's own `--organizer`). A methodology
+            # having been run somewhere is not this entry having been piloted.
+            # `tests/test_repro_artifacts.py` caught the flip; the flag's meaning
+            # is narrower than "the organizer works", and that narrowness is the
+            # only thing that makes it worth reading.
             run_ready=False,
             per_type_k={"experiences": RB_READ_RECIPE["experiences_topk"]},
         ),

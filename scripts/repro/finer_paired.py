@@ -68,6 +68,17 @@ ARMS = {
     "online": "gpt-4o-mini_ace_finer_online",
     "nodedup": "gpt-4o-mini_ace_finer_nodedup",
     "retry": "gpt-4o-mini_ace_finer_retry",
+    # Track 4. A SECOND methodology, not a fifth ACE setting: ReasoningBank over
+    # the same 441 questions in the same order at the same model and embedder,
+    # differing in what was grown alongside and how much of it is read back
+    # (whole playbook vs top-1). It is here because "is the null ACE's or the
+    # task's?" is the same paired test against `base` that every row above is.
+    #
+    # NOT a reproduction of ReasoningBank. Its published claims are agentic —
+    # WebArena and SWE-Bench, both unreachable on this machine — so this arm
+    # measures the mechanism on a single-turn task and its artifact carries
+    # `RB_D1_not_the_published_benchmark_...` saying so.
+    "rb": "gpt-4o-mini_rb_finer_online",
 }
 
 
