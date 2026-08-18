@@ -54,6 +54,25 @@ MAX_INPUT_TOKENS = {
 # oversized turn costs a little of its tail, while under-truncating costs the
 # whole request.
 CHARS_PER_TOKEN_FLOOR = 3.0
+# The floor above is an assumption about the text, and LongMemEval `_m` breaks it:
+# 2 of the first 50 instances died on a 400 because a turn that fits 24,576 chars
+# did not fit 8192 tokens. Lowering the floor globally is the wrong fix — it would
+# re-truncate ordinary prose and silently change what every other run indexes — so
+# the ceiling is discovered per request instead, by halving only the input the API
+# actually rejected. `_s`'s 5 truncations are unaffected: they succeeded on the
+# first attempt and still do.
+MIN_INPUT_CHARS = 1024
+
+
+def _is_input_too_long(exc: Exception) -> bool:
+    """Whether `exc` is the ceiling 400 rather than a transport blip.
+
+    Matched on the message because the SDK raises one `BadRequestError` for every
+    request-shaped problem; an over-broad match would turn a genuine 400 into an
+    endless halving loop, so both halves of OpenAI\'s wording are required.
+    """
+    text = str(exc).lower()
+    return "maximum input length" in text or ("8192" in text and "token" in text)
 
 
 class APIEmbedder:
@@ -133,6 +152,24 @@ class APIEmbedder:
         self.truncations = 0
         self.max_input_chars = int(MAX_INPUT_TOKENS[model_name] * CHARS_PER_TOKEN_FLOOR)
 
+    def _cap(self, texts: list[str], max_chars: int) -> list[str]:
+        """`texts` with any oversized entry cut to `max_chars`, counting each cut."""
+        out = []
+        for text in texts:
+            if len(text) > max_chars:
+                self.truncations += 1
+                logger.warning(
+                    "embedding input of %d chars exceeds %s's ceiling — indexing the "
+                    "first %d chars (%d truncated so far)",
+                    len(text),
+                    self.name,
+                    max_chars,
+                    self.truncations,
+                )
+                text = text[:max_chars]
+            out.append(text)
+        return out
+
     def embed(self, texts: list[str], kind: EmbedKind = "passage") -> list[list[float]]:
         """L2-normalized vectors, one per input, in input order.
 
@@ -152,20 +189,8 @@ class APIEmbedder:
         # each one a >24K-character turn in an otherwise ordinary haystack.
         # The stored CONTENT is untouched; only the vector is computed from the
         # prefix, so a retrieved item still renders whole.
-        capped = []
-        for text in texts:
-            if len(text) > self.max_input_chars:
-                self.truncations += 1
-                logger.warning(
-                    "embedding input of %d chars exceeds %s's ceiling — indexing the "
-                    "first %d chars (%d truncated so far)",
-                    len(text),
-                    self.name,
-                    self.max_input_chars,
-                    self.truncations,
-                )
-                text = text[: self.max_input_chars]
-            capped.append(text)
+        budget = self.max_input_chars
+        capped = self._cap(texts, budget)
         kwargs: dict[str, Any] = {"model": self.name, "input": capped}
         if self.dim != self.native_dim:
             # Older models reject the parameter outright, so send it only when
@@ -192,6 +217,23 @@ class APIEmbedder:
                 # recovered blip still shows up in `errors`.
                 self.errors += 1
                 self.latency_ms_total += (time.perf_counter() - start) * 1000
+                if _is_input_too_long(exc) and budget > MIN_INPUT_CHARS:
+                    # Not a blip: the same bytes will 400 forever, and the class
+                    # docstring has always said so. Retrying them costs three
+                    # attempts and then loses the WHOLE instance — on `_m` that
+                    # was a 4% row-failure rate, enough for the completeness
+                    # check to refuse the run a score. Halve and send again; this
+                    # does not consume a transport retry, because nothing about
+                    # the transport failed.
+                    budget //= 2
+                    logger.warning(
+                        "%s rejected an input as over 8192 tokens — halving the "
+                        "character budget to %d and retrying",
+                        self.name,
+                        budget,
+                    )
+                    kwargs["input"] = self._cap(texts, budget)
+                    continue
                 if transport_left <= 0:
                     # A link that is down, rather than blipping, must surface.
                     # Returning a zero vector here would poison the store with

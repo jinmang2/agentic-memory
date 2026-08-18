@@ -452,3 +452,83 @@ def test_nothing_is_truncated_when_nothing_is_oversized():
     emb.embed(["a", "b"])
     assert emb.truncations == 0
     assert "input_truncations" not in emb.budget_row()
+
+
+class CeilingAPI(FakeEmbeddingsAPI):
+    """Rejects any input longer than `limit` chars, the way the real endpoint
+    rejects anything over 8192 TOKENS — a ceiling our character budget only
+    estimates."""
+
+    def __init__(self, limit, **kw):
+        super().__init__(**kw)
+        self.limit = limit
+        self.attempts: list[int] = []
+
+    def create(self, **kwargs):
+        longest = max(len(t) for t in kwargs["input"])
+        self.attempts.append(longest)
+        if longest > self.limit:
+            raise RuntimeError(
+                "Error code: 400 - {'error': {'message': \"Invalid 'input[0]': "
+                'maximum input length is 8192 tokens."}}'
+            )
+        return super().create(**kwargs)
+
+
+def _ceiling_emb(limit, **kw):
+    api = CeilingAPI(limit, dim=4)
+    e = APIEmbedder(
+        model_name="text-embedding-3-small", dim=4, client=SimpleNamespace(embeddings=api)
+    )
+    return e, api
+
+
+def test_a_length_400_shrinks_the_input_instead_of_losing_the_instance(monkeypatch):
+    """The 3.0 chars-per-token FLOOR is an assumption about the text, and
+    LongMemEval `_m` breaks it: a turn that fits 24,576 chars need not fit 8192
+    tokens. Before this, the three transport retries re-sent identical bytes to a
+    deterministic 400 and the whole instance died — 2 of the first 50 `_m` rows."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    e, api = _ceiling_emb(limit=5000)
+    out = e.embed(["x" * 24_000])
+    assert len(out) == 1 and len(out[0]) == 4
+    # 24000 -> capped to 24576 (no-op) -> 12288 -> 6144 -> 3072, first fit
+    assert api.attempts == [24_000, 12_288, 6_144, 3_072]
+
+
+def test_shrinking_does_not_spend_the_transport_retries(monkeypatch):
+    """Nothing about the transport failed, so a link that blips AFTER a shrink
+    must still get its full retry budget."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    e, _api = _ceiling_emb(limit=5000)
+    e.embed(["x" * 24_000])
+    assert e.transport_retries == 2  # untouched
+    assert e.errors == 3  # the three rejections are still on the record
+
+
+def test_a_plain_400_is_not_mistaken_for_the_ceiling(monkeypatch):
+    """An over-broad match would halve forever against an unrelated 400."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+
+    class Always400(FakeEmbeddingsAPI):
+        def create(self, **kwargs):
+            self.requests.append(kwargs)
+            raise RuntimeError("Error code: 400 - unknown parameter 'dimensions'")
+
+    api = Always400()
+    e = APIEmbedder(
+        model_name="text-embedding-3-small", dim=4, client=SimpleNamespace(embeddings=api)
+    )
+    with pytest.raises(RuntimeError, match="unknown parameter"):
+        e.embed(["hello"])
+    assert len(api.requests) == 3  # one attempt plus the two transport retries, no halving
+
+
+def test_an_input_that_fits_is_sent_byte_identically(monkeypatch):
+    """`_s`'s 5 truncations succeeded on the first attempt and must still do so:
+    this path may not change what an already-working run puts on the wire."""
+    e, api = _ceiling_emb(limit=1_000_000)
+    e.embed(["ordinary prose", "x" * 30_000])
+    assert api.attempts == [24_576]  # capped once, sent once, never re-sent
+    assert api.requests[0]["input"] == ["ordinary prose", "x" * 24_576]
+    assert e.truncations == 1
