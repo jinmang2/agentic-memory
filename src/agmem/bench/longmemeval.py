@@ -316,10 +316,10 @@ def render_sessions(
                 else f"\n\n{turn}"
                 for turn in cleaned
             )
+        # run_generation.py:252, transcribed. Session numbering is 1-based and
+        # applied AFTER any sort, which is why an oracle caller must sort first.
         out.append(
-            "\n### Session {}:\nSession Date: {}\nSession Content:\n{}\n".format(
-                i + 1, date, sess_string
-            )
+            f"\n### Session {i + 1}:\nSession Date: {date}\nSession Content:\n{sess_string}\n"
         )
     return "".join(out)
 
