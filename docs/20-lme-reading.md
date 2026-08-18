@@ -524,3 +524,81 @@ prompt sha256, usage, timing, and the retrieved ids on a retrieval arm) and `<ta
 judge swap cost two cents instead of another four arms. Paired statistics:
 `lme_c4_paired.json`, `lme_replicate_paired.json`, `lme_format_retrieval_paired.json`,
 `lme_rejudge_gpt-4o-mini.json`.
+
+---
+
+## Pre-registration II — `_m` (written 2026-08-18, with 12 of 500 rows on disk)
+
+**Disclosure of timing, first.** This plan was written after the arm had started, with 12 rows
+answered. All twelve are `single-session-assistant`, the type that saturates at 97–100 in every arm
+we have ever run (§9.3) — the release ships in type order, so the first block carries no information
+about the contrast below. Nothing else had been looked at. The honest statement is that this is a
+pre-registration against the *result*, not against the first byte of data, and that distinction is
+recorded here rather than smoothed over.
+
+**The question.** `_s` measured that retrieval top-50 beats reading the whole haystack by +21.20 pp
+(C6). `_m` carries the **same 500 questions** against a haystack 9.9x longer (4,894 turns per
+instance, 476 sessions, 1.11M tokens — §3.1). There is no full-context arm to compare against here:
+the median instance is 8.8x a 128k window. So the contrast is
+
+> **`gpt-4o-mini_lme_s_con_k50` vs `gpt-4o-mini_lme_m_con_k50`** — same reader, same CoN prompt, same
+> pinned judge, same `k=50`, same `budget_tokens=20000`, same passthrough memory, same 500 question
+> ids. **The only thing that differs is how many distractors the retriever had to reject**: top-50
+> out of ~494 turns, against top-50 out of ~4,894.
+
+**Primary measure.** The paired difference `_s` − `_m`, reported for **both** official accuracies
+separately (LME-A13), with the paired bootstrap 95% CI and McNemar that
+`scripts/repro/lme_c4_analysis.py` already computes — the arms align by `question_id`, so that
+script executes this rule unmodified.
+
+| paired Δ (`_s` − `_m`) | verdict |
+|---|---|
+| **< 2 pp** (CI includes 0) | **Retrieval is invariant to haystack length over a 10x range.** This is the strongest available form of C6: the read path buys its points at O(1) in corpus size, and the ~$500–700 write arms are being asked to beat a baseline that does not decay. |
+| 2–5 pp | Mild decay. C6 survives with a stated length dependence. |
+| **≥ 5 pp** | **Real decay, and C6 acquires a boundary.** The +21.20 pp is then partly a property of a haystack that fits, not of retrieval as such, and every sentence quoting it must carry the length it was measured at. |
+
+A Δ under 2 pp is not "no difference" but "not separable from this benchmark's noise floor", which
+§9.4.1 measured on this exact harness: same-arm rerun +0.40 pp [−1.40, +2.20], judge swap −1.2 to
+−2.0 pp. Any verdict at 2 pp or below is reported in those words.
+
+**Secondary, pre-registered as secondary.**
+
+1. **Per-type decomposition**, 7 rows (six types + the abstention cross-cut, LME-A14). Movement in
+   `single-session-user`/`-assistant` is **not** read as signal: both saturate at 97–100 in every arm
+   to date, and a saturated type can only move down. The types that carried C4's spread were
+   multi-session, temporal-reasoning and preference, and those are where a dilution effect should
+   land if there is one.
+2. **`single-session-preference`.** It went 63.33 → 3.33 when `_s` was read in full, and returned to
+   oracle levels under retrieval (§9.3a). If it collapses again on `_m`, the collapse is about
+   context length reaching the reader, not about the haystack — a distinction worth one line.
+
+**What this arm cannot answer, stated in advance.**
+
+- **Retrieval recall is not computable from this artifact.** Rows record retrieved *episode* ids and
+  scores, not the session ids they came from, so "did the evidence session make top-50" cannot be
+  recovered without re-running. A drop in accuracy therefore cannot be attributed to retrieval
+  failure versus reader failure from these files alone. Fixing that is a capture change, not an
+  analysis one.
+- **This is one arm, one seed, one reader.** §9.4.1 applies unchanged.
+- **It measures retrieval, not memory systems** (§9.4.5), and on `_m` that gap is wider, not
+  narrower: an organizer arm here is $500–700 against this arm's $12.47, so the regime that most
+  needs a write path is the one where we can least afford to measure it.
+
+**What would falsify the setup rather than the claim.** If `_m` lands near `_s`'s *full-context*
+score (60.40) rather than near its retrieval score (81.60), check the retriever before believing the
+result: at k=50 out of 4,894 turns the arm indexes 1% of the haystack, and a silent indexing failure
+would look exactly like graceful degradation. The stamp and the 3 recorded embedding truncations
+(inputs over 24,576 chars) are the first place to look.
+
+**Reproduce.**
+
+```bash
+uv run python scripts/repro/exp_lme_reading.py --dataset m --reading con --retrieval 50 \
+    --budget-tokens 20000 --workers 12 --tag gpt-4o-mini_lme_m_con_k50 --max-spend-usd 14
+# workers is capped near 15 by kuzu's 8 TiB virtual-address reservation per in-memory
+# database, not by RAM (the arm never writes to the graph store) — see 68d4ec8.
+
+uv run --with scipy python scripts/repro/lme_c4_analysis.py \
+    --arms gpt-4o-mini_lme_s_con_k50 gpt-4o-mini_lme_m_con_k50 \
+    --out results/repro/lme_m_paired.json
+```
