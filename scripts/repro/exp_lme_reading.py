@@ -273,6 +273,17 @@ def run_pool(
                             return
 
     def worker() -> None:
+        try:
+            _worker_loop()
+        except BaseException:
+            # A worker that dies takes its question with it and leaves a run that
+            # looks merely short. `threading` would print this to stderr and
+            # nothing else would ever mention it, so it goes through the run's own
+            # logger — the one whose output the log file captures.
+            log.exception("worker thread died; its question will show up as missing")
+            raise
+
+    def _worker_loop() -> None:
         while not stop.is_set():
             try:
                 inst = work.get(timeout=0.5)
@@ -286,9 +297,20 @@ def run_pool(
                 stop.set()
                 return
             qid = str(inst["question_id"])
-            mem = build_mem(qid)
             t0 = time.perf_counter()
+            mem = None
             try:
+                # INSIDE the try, and this is not a stylistic choice. It used to
+                # sit outside: a `build_mem` that raised killed the worker thread
+                # while it still held a question taken off the queue, so the
+                # question vanished with no row and no log line — the completeness
+                # check would report it 14 hours later as `missing`. On `_m` this
+                # was not hypothetical: `kuzu.Database(":memory:")` reserves 8 TiB
+                # of virtual address space per instance, so at workers=20 five of
+                # the twenty threads died at startup with "Mmap for size
+                # 8796093022208 failed" and took five questions with them. The VA
+                # ceiling caps this arm near 15 workers regardless of RAM.
+                mem = build_mem(qid)
                 row = lme.run_instance(
                     mem,
                     inst,
@@ -323,7 +345,11 @@ def run_pool(
                     "error": f"{type(exc).__name__}: {exc}",
                 }
             finally:
-                mem.close()
+                # `mem` is None when build_mem itself raised — closing it would
+                # replace the recorded failure with an AttributeError and lose the
+                # row all over again.
+                if mem is not None:
+                    mem.close()
             elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
             capture = row.pop("retrieval", None) or {}
             prompt = capture.get("prompt") or ""
