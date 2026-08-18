@@ -153,5 +153,11 @@
     "gpt-4o-mini_conv7_ingest_e3s_c7.json",
     "gpt-4o-mini_conv8_ingest_e3s_c8.json",
     "gpt-4o-mini_conv9_ingest_e3s_c9.json"
-  ]
+  ],
+  "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:notes": 5882,
+    "LINK:notes": 5866,
+    "UPDATE:notes": 16342
+  }
 }

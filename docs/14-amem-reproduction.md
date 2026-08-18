@@ -371,6 +371,39 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
 
 ---
 
+## 9b. 아티팩트 실태 — 이 캠페인에서 복구 불가능한 두 가지 (2026-08-18 감사)
+
+`scripts/repro/audit_artifact_pointers.py`(무지출)가 커밋된 요약 445개의 아티팩트 포인터를 전수
+검사하면서 드러난 것. **어느 발표 수치도 여기에 의존하지 않는다** — 점수는 records에서, 용량은
+요약의 `memory_capacity`에서 나온다. 그럼에도 적는 이유는 이 리포의 never-delete 규칙이
+"아티팩트는 디스크에 영속한다"고 말하기 때문이고, 두 항목 모두 그 약속과 어긋난다.
+
+**(1) 3-seed 캠페인의 per-conv 메모리 스냅샷 33건이 없다.** seed1/2/3 × conv0–9의
+`*.memory.jsonl`이 디스크에 없는데, **각 요약이 그 파일의 바이트 수를 기록하고 있다**
+(755 KB ~ 1.19 MB). 기록이 있다는 건 파일이 존재했다는 뜻이다. 언제 어떻게 사라졌는지는
+남은 기록으로 특정할 수 없고, 재생성은 유료 ingest 재실행을 뜻하므로 **하지 않는다.**
+같은 캠페인의 `.records.jsonl`과 요약은 전부 온전하다.
+
+**(2) 3-seed 캠페인 합본 요약의 `op_counts`는 영구히 빈칸이다.** `merge_ingest_summaries`가
+이 블록을 통째로 누락하던 결함(Track 2에서 수정)의 잔재로, 수정 이전에 쓰인 합본 6개가
+"write 경로가 아무것도 안 했다"고 기록하고 있었다. 그중 **3개는 2026-08-18에 복원했다** —
+per-conv 요약이 온전해서, 하네스 자신의 병합 함수를 그 위에 다시 돌렸다(합산을 새로 구현하지
+않았다; 두 번째 합산은 한 리포의 두 파일이 같은 런을 두고 다투게 되는 방식이다):
+
+| 합본 | 복원된 `op_counts` |
+|---|---|
+| `gpt-4o-mini_all_ingest_e3s` | ADD:episodic 5,882 / ADD:notes 5,882 / LINK:notes 5,866 / UPDATE:notes 16,342 |
+| `..._nemori_upstream_all_ingest_e3sA` | ADD:episodic 5,882 / ADD:episodes 555 / ADD:semantic 1,926 / MERGE·INVALIDATE:episodes 223 |
+| `..._nemori_merge085_all_ingest_e3sB` | ADD:episodic 5,882 / ADD:episodes 763 / ADD:semantic 1,745 / MERGE·INVALIDATE:episodes 22 |
+
+교차검증: `ADD:episodic` 5,882 = 캠페인 총 턴수, armA `semantic` 1,926 = 임베더 진단이 기록한
+값, 그리고 **armA 223 병합 vs armB 22** 는 B-3의 결론(필터가 죽은 arm이 후보를 자유롭게 병합)이
+예측하는 방향 그대로다.
+
+나머지 **3개(seed1/2/3)는 복원할 수 없다.** 계획 메모는 "A-Mem·Nemori 두 arm은 per-conv에
+op_counts가 있다"고 적어두었으나 seed 캠페인에는 **per-conv에도 없다** — 그 런들은 op-log
+아티팩트가 도입되기 전에 돌았기 때문이다. 원천이 없으므로 합산할 것이 없고, 빈칸이 정확한 상태다.
+
 ## 10. 더 읽기
 - docs/13 — A-Mem 스터디(논문 formalization·3벌 코드·우리 구현 워크스루)
 - docs/08 / docs/10 — 발표용 리뷰 · 충실도 등급표
