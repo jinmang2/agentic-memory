@@ -32,6 +32,11 @@ nohup.out
 # artifact every published number is read from — IS committed and is not matched
 # here.
 results/repro/*.llm-trace.jsonl
+# `_s` arms gzip the same file (500 prompts of ~525 KB each).
+results/repro/*.llm-trace.jsonl.gz
+# Per-row verdicts from re-scoring an answered arm under another judge:
+# regenerable from the records for about a cent, and one file per arm.
+results/repro/*.rejudge-*.jsonl
 results/repro/*.memory.jsonl
 results/repro/stores/
 
