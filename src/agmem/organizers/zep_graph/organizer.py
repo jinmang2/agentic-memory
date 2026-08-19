@@ -839,6 +839,12 @@ class ZepGraphOrganizer(Organizer):
 
     # -- hook -----------------------------------------------------------------
 
+    # This hook resolves each new episode against entities and facts ALREADY in
+    # the stores (it searches them, and embeds to do it), so it sees a different
+    # world if the corpus is indexed before hooks run. That is exactly what
+    # ``bulk_ingest`` does, and this flag is what keeps it off that path.
+    observes_store_on_message = True
+
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         """Returns `[]` without calling the LLM if `ctx.llm` is unset (logged warning,
         explicit skip) or if entity extraction finds nothing. Entities are resolved

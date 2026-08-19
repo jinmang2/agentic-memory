@@ -314,21 +314,39 @@ def evidence_session_ids(instance: dict[str, Any]) -> set[str]:
 # ---------------- ingest (D2) ----------------
 
 
-def ingest(mem: AgenticMemory, instance: dict[str, Any], max_sessions: int | None = None) -> int:
-    """Feed every haystack turn into ``mem.add_message`` in order, then flush;
-    returns the turn count. Mutates ``mem`` -- not idempotent across calls.
+def ingest(
+    mem: AgenticMemory,
+    instance: dict[str, Any],
+    max_sessions: int | None = None,
+    embed_batch: int | None = None,
+) -> int:
+    """Feed every haystack turn into ``mem`` in order, then flush; returns the turn
+    count. Mutates ``mem`` -- not idempotent across calls.
 
     One instance is one haystack, so ``mem`` must be scoped to this question (a
     fresh namespace or a fresh memory). Reusing one memory across instances
-    silently merges unrelated haystacks and inflates every score."""
-    n = 0
-    for session_id, date, role, content, _has_answer in iter_turns(instance, max_sessions):
-        mem.add_message(
-            f"({date}) {role}: {content}",
-            role=role,
-            meta={"session_id": session_id, "date": date},
-        )
-        n += 1
+    silently merges unrelated haystacks and inflates every score.
+
+    ``embed_batch=None`` is one ``add_message`` per turn, which is what every arm
+    through 2026-08-18 ran. An integer routes the same turns through
+    ``bulk_add_messages``, batching the embedding round trips -- 25x faster on
+    `_m`, where per-turn ingest is 24 of a row's 26 minutes.
+
+    **The two are not interchangeable within one measurement.** Batched embeddings
+    are not bit-identical (cosine 0.999999546), which reorders near-ties: the
+    retrieved content still agrees 99.3% and the evidence session survived in 5/5
+    sampled instances, but the rendered context differs. An arm must pick one and
+    say which in its stamp."""
+    turns = [
+        (f"({date}) {role}: {content}", role, {"session_id": session_id, "date": date})
+        for session_id, date, role, content, _has_answer in iter_turns(instance, max_sessions)
+    ]
+    if embed_batch:
+        n = mem.bulk_add_messages(turns, batch_size=embed_batch)
+    else:
+        for content, role, meta in turns:
+            mem.add_message(content, role=role, meta=meta)
+        n = len(turns)
     mem.flush()
     return n
 
@@ -870,6 +888,7 @@ def run_instance(
     max_sessions: int | None = None,
     max_history_tokens: int | None = None,
     history_encoder: Any | None = None,
+    embed_batch: int | None = None,
     full_context: bool = False,
     history_format: str = "json",
     judge: bool = True,
@@ -903,7 +922,7 @@ def run_instance(
     variant (``sort_haystack_by_date`` is a no-op on ``_s``, load-bearing on
     ``longmemeval_oracle.json``), and doing it silently would hide from the
     record which prompt was actually sent."""
-    turns = ingest(mem, instance, max_sessions)
+    turns = ingest(mem, instance, max_sessions, embed_batch=embed_batch)
     capture: dict[str, Any] | None = {} if capture_retrieval else None
     hypothesis = answer(
         mem,

@@ -83,6 +83,20 @@ class Organizer:
     # must be listed first (see ZepGraphOrganizer: facts before entities).
     produces: tuple[str, ...] = ()
 
+    # Whether this organizer's ``on_message`` READS the stores rather than only
+    # inspecting the episode it was handed. Declared here, on the protocol, rather
+    # than sniffed at the call site: a `getattr` guard would be one copy of a rule
+    # every organizer has to obey, and this repo has already been bitten by a
+    # method that only one copy of a protocol declared.
+    #
+    # It is load-bearing for ``AgenticMemory.bulk_ingest``, which indexes a whole
+    # corpus with batched embedding calls and only then dispatches hooks. That
+    # reordering is invisible to a hook that looks at its own episode, and visible
+    # to one that queries the store — the latter would see the full corpus where
+    # per-message ingest showed it a prefix. Organizers that set this True are
+    # routed to the per-message path instead.
+    observes_store_on_message: bool = False
+
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         """Called once per stored episode; the raw episode is already durable/searchable
         by this point (write-then-organize order, docs/04 §2)."""

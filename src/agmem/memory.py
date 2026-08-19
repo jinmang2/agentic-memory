@@ -370,16 +370,89 @@ class AgenticMemory:
         ``on_message`` hooks then run either inline (``config.sync_write=True``, exceptions
         propagate to the caller) or on the background worker (exceptions are only logged,
         see ``_drain``)."""
-        episode = Episode(
+        episode = self._make_episode(content, role, timestamp, meta)
+        self._ingest_episode(episode, {"role": role})
+        self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
+        return episode
+
+    def _make_episode(
+        self, content: str, role: str, timestamp: Any = None, meta: dict | None = None
+    ) -> Episode:
+        """The one place a raw episode is built, so a bulk caller cannot drift from
+        ``add_message`` on namespace, timestamp defaulting or meta."""
+        return Episode(
             content=content,
             role=role,
             namespace=self.namespace,
             timestamp=timestamp or utcnow(),
             meta=meta or {},
         )
-        self._ingest_episode(episode, {"role": role})
-        self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
-        return episode
+
+    def bulk_add_messages(
+        self, messages: list[tuple[str, str, dict | None]], batch_size: int = 128
+    ) -> int:
+        """``add_message`` over a whole corpus, with the embedding calls batched.
+
+        Each entry is ``(content, role, meta)``. Episodes are built by the same
+        helper ``add_message`` uses, then handed to ``bulk_ingest`` — see there for
+        what does and does not stay identical, and for why a batched arm may not be
+        compared against a per-turn one."""
+        episodes = [self._make_episode(c, r, None, m) for c, r, m in messages]
+        return self.bulk_ingest(episodes, batch_size=batch_size)
+
+    def bulk_ingest(self, episodes: list[Episode], batch_size: int = 128) -> int:
+        """Index a whole corpus, embedding in batches, then dispatch ``on_message``.
+
+        Same episodes, same ids, same store writes, same op log and same hook order
+        as ``add_message`` in a loop. One thing moves: the embedding calls are
+        batched, and hooks run after the corpus is indexed rather than interleaved
+        with it. An ``on_message`` that only looks at the episode it was handed
+        cannot tell; one that QUERIES the stores can, and those organizers declare
+        ``observes_store_on_message`` and are routed to the per-message path here.
+
+        This exists because per-turn embedding is what a long benchmark actually
+        costs in wall clock: a LongMemEval `_m` instance is 4,894 turns, which is
+        4,894 sequential round trips at ~292 ms — 24 minutes of a 26-minute row.
+        Batched at 128 it is ~6 seconds, measured at **25x** end to end.
+
+        **The vectors are NOT bit-identical across batch sizes.** Measured on this
+        endpoint: cosine 0.999999546 between a text embedded alone and in a batch,
+        components differing by up to 1.4e-4. That is enough to reorder near-ties,
+        so a run must not mix the two regimes: with k=50 over ~500 candidates the
+        retrieved CONTENT still agrees 99.3% of the time and the evidence session
+        reached the reader in 5/5 sampled instances both ways, but the order
+        differs more often than not. Batched and per-turn arms are comparable only
+        to their own kind, which is why the batched arms carry their own tags.
+        """
+        if not episodes:
+            return 0
+        observers = [o for o in self.organizers if o.observes_store_on_message]
+        if observers:
+            # Not a degradation to log and move past: for these organizers the
+            # interleaving IS the semantics, so the fast path is simply wrong.
+            logger.info(
+                "bulk_ingest: %s read the stores in on_message — ingesting per message",
+                ", ".join(type(o).__name__ for o in observers),
+            )
+            for episode in episodes:
+                self.add_message(
+                    episode.content,
+                    role=episode.role,
+                    timestamp=episode.timestamp,
+                    meta=episode.meta,
+                )
+            return len(episodes)
+
+        for start in range(0, len(episodes), batch_size):
+            chunk = episodes[start : start + batch_size]
+            vectors = self.embedder.embed([e.embedding_text() for e in chunk])
+            for episode, vector in zip(chunk, vectors, strict=True):
+                self._ingest_episode(episode, {"role": episode.role}, vector=vector)
+        for episode in episodes:
+            self._dispatch(
+                lambda ep=episode: self._apply_from_all(lambda org: org.on_message(ep, self._ctx))
+            )
+        return len(episodes)
 
     def add_task_result(
         self, trajectory: list[dict], outcome: str, task: str, agent_id: str = "agent"
@@ -458,7 +531,9 @@ class AgenticMemory:
             self._ingest_episode(episode, {"role": episode.role, "warm_start": True})
         self._apply_from_all(lambda org: org.warm_start(corpus, self._ctx))
 
-    def _ingest_episode(self, episode: Episode, log_payload: dict) -> None:
+    def _ingest_episode(
+        self, episode: Episode, log_payload: dict, vector: list[float] | None = None
+    ) -> None:
         """Store + index one raw episode synchronously, so it is searchable the
         moment the caller returns (write-then-organize, docs/04 §2).
 
@@ -469,7 +544,7 @@ class AgenticMemory:
         self.doc_store.add_episode(episode)
         self.vector_store.add(
             episode.id,
-            self.embedder.embed([episode.embedding_text()])[0],
+            self.embedder.embed([episode.embedding_text()])[0] if vector is None else vector,
             memory_type="episodic",
             namespace=self.namespace,
         )

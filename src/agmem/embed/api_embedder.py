@@ -217,6 +217,22 @@ class APIEmbedder:
                 # recovered blip still shows up in `errors`.
                 self.errors += 1
                 self.latency_ms_total += (time.perf_counter() - start) * 1000
+                if _is_input_too_long(exc) and len(texts) > 1:
+                    # A BATCH cannot say which of its inputs was too long, and
+                    # halving the budget for all of them would truncate innocent
+                    # texts that were about to succeed — silently changing their
+                    # vectors. Split instead: the offender ends up alone and takes
+                    # the shrink below, everything else is sent unchanged. At most
+                    # log2(batch) extra requests, on a batch that was going to fail
+                    # outright before this existed.
+                    mid = len(texts) // 2
+                    logger.warning(
+                        "%s rejected a batch of %d as over 8192 tokens — splitting "
+                        "rather than truncating the whole batch",
+                        self.name,
+                        len(texts),
+                    )
+                    return self.embed(texts[:mid], kind) + self.embed(texts[mid:], kind)
                 if _is_input_too_long(exc) and budget > MIN_INPUT_CHARS:
                     # Not a blip: the same bytes will 400 forever, and the class
                     # docstring has always said so. Retrying them costs three

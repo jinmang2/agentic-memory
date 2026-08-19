@@ -424,3 +424,140 @@ def test_noop_leaves_the_item_servable(mem):
         actor="t",
     )
     assert "user likes pizza" in mem.search("pizza", memory_types=["semantic"]).render()
+
+
+# ---------------- bulk_ingest: the fast path, and where it must refuse ----------------
+
+
+class _CountingEmbedder(FakeEmbedder):
+    """FakeEmbedder that records how many REQUESTS it served, not just how many
+    texts — the whole point of batching is the request count."""
+
+    def __init__(self, dim=128):
+        super().__init__(dim=dim)
+        self.requests = 0
+        self.batch_sizes: list[int] = []
+
+    def embed(self, texts, kind="passage"):
+        self.requests += 1
+        self.batch_sizes.append(len(texts))
+        return super().embed(texts, kind)
+
+
+def _msgs(n):
+    return [(f"turn {i} about Paris", "user" if i % 2 else "assistant", {"i": i}) for i in range(n)]
+
+
+def test_bulk_ingest_stores_the_same_episodes_as_add_message_one_by_one():
+    """The fast path may change how many requests it makes; it may not change what
+    ends up in the stores."""
+    out = {}
+    for tag, bulk in (("bulk", True), ("loop", False)):
+        emb = _CountingEmbedder()
+        m = AgenticMemory(namespace=f"eq-{tag}", organizers=["passthrough"], embedder=emb)
+        try:
+            if bulk:
+                m.bulk_add_messages(_msgs(10), batch_size=4)
+            else:
+                for c, r, meta in _msgs(10):
+                    m.add_message(c, role=r, meta=meta)
+            m.flush()
+            eps = m.doc_store.list_episodes(namespace=m.namespace)
+            out[tag] = (
+                [(e.content, e.role, e.meta) for e in eps],  # namespace differs by construction
+                len(m.doc_store.read_log()) if hasattr(m.doc_store, "read_log") else None,
+                emb.requests,
+            )
+        finally:
+            m.close()
+    assert out["bulk"][0] == out["loop"][0]  # same episodes, same order, same meta
+    assert out["bulk"][1] == out["loop"][1]  # same number of ops logged
+    assert out["bulk"][2] < out["loop"][2]  # and it took fewer requests
+
+
+def test_bulk_ingest_batches_the_embedding_requests():
+    emb = _CountingEmbedder()
+    m = AgenticMemory(namespace="batched", organizers=["passthrough"], embedder=emb)
+    try:
+        assert m.bulk_add_messages(_msgs(10), batch_size=4) == 10
+        assert emb.batch_sizes == [4, 4, 2]  # 10 turns, 3 requests, not 10
+    finally:
+        m.close()
+
+
+def test_bulk_ingest_still_runs_on_message_once_per_episode():
+    seen = []
+
+    class Watcher(Organizer):
+        name = "watcher"
+
+        def on_message(self, episode, ctx):
+            seen.append(episode.content)
+            return []
+
+    m = AgenticMemory(
+        namespace="hooks",
+        organizers=[Watcher()],
+        embedder=_CountingEmbedder(),
+        config=AgmemConfig(sync_write=True),
+    )
+    try:
+        m.bulk_add_messages(_msgs(5), batch_size=2)
+        m.flush()
+        assert seen == [c for c, _, _ in _msgs(5)]  # once each, in order
+    finally:
+        m.close()
+
+
+def test_an_organizer_that_reads_the_stores_is_kept_off_the_batched_path():
+    """`on_message` that queries the stores sees a different world when the corpus
+    is indexed first. Such organizers declare `observes_store_on_message`, and
+    bulk_ingest must route them to the per-message path rather than quietly hand
+    them the whole corpus."""
+    sizes = []
+
+    class Nosy(Organizer):
+        name = "nosy"
+        observes_store_on_message = True
+
+        def on_message(self, episode, ctx):
+            sizes.append(len(ctx.doc_store.list_episodes(namespace=episode.namespace)))
+            return []
+
+    emb = _CountingEmbedder()
+    m = AgenticMemory(
+        namespace="nosy",
+        organizers=[Nosy()],
+        embedder=emb,
+        config=AgmemConfig(sync_write=True),
+    )
+    try:
+        m.bulk_add_messages(_msgs(5), batch_size=5)
+        m.flush()
+        # each hook saw only the prefix, exactly as per-message ingest gives it
+        assert sizes == [1, 2, 3, 4, 5]
+        assert emb.batch_sizes == [1, 1, 1, 1, 1]  # never batched
+    finally:
+        m.close()
+
+
+def test_the_zep_organizer_is_the_one_that_declares_it():
+    """It searches the vector store and reads the doc store inside `on_message`;
+    if that ever stops being true the flag should go, and if another organizer
+    starts doing it the flag has to arrive with it."""
+    from agmem.organizers.base import Organizer as Base
+
+    assert Base.observes_store_on_message is False
+    from agmem.organizers.zep_graph.organizer import ZepGraphOrganizer
+
+    assert ZepGraphOrganizer.observes_store_on_message is True
+
+
+def test_bulk_ingest_of_nothing_makes_no_request():
+    emb = _CountingEmbedder()
+    m = AgenticMemory(namespace="empty", organizers=["passthrough"], embedder=emb)
+    try:
+        assert m.bulk_add_messages([]) == 0
+        assert emb.requests == 0
+    finally:
+        m.close()

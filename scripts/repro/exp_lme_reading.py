@@ -221,6 +221,7 @@ def run_pool(
     history_format: str,
     retrieval_k: int | None,
     budget_tokens: int,
+    embed_batch: int | None,
     workers: int,
     sink,
     sink_lock: threading.Lock,
@@ -319,6 +320,7 @@ def run_pool(
                     # the instance arrives sorted, no session cap exists, `mem` is
                     # this question's own, and `max_history_tokens` is not passed.
                     max_sessions=None,
+                    embed_batch=embed_batch,
                     # `retrieval_k` is what makes this a memory arm rather than a
                     # reading arm: the haystack goes through the store and only
                     # what comes back out reaches the prompt.
@@ -435,6 +437,14 @@ def main() -> None:
         help="only used with --retrieval; the full-context path never queries a vector",
     )
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument(
+        "--embed-batch",
+        type=int,
+        default=None,
+        help="batch the ingest embedding calls N at a time (25x faster on _m). NOT "
+        "comparable with a per-turn arm: batched vectors are not bit-identical "
+        "(cosine 0.999999546), which reorders near-ties. Recorded in the stamp.",
+    )
     ap.add_argument("--limit", type=int, default=None, help="first N questions (smoke runs)")
     ap.add_argument("--tag", default=None, help="artifact tag; defaults to <reader>_lme_<ds>_<rm>")
     ap.add_argument(
@@ -643,6 +653,7 @@ def main() -> None:
             history_format=args.history_format,
             retrieval_k=args.retrieval,
             budget_tokens=args.budget_tokens,
+            embed_batch=args.embed_batch,
             workers=args.workers,
             sink=sink,
             sink_lock=threading.Lock(),
@@ -709,6 +720,10 @@ def main() -> None:
             else f"retrieval_top{args.retrieval}",
             "retrieval_k": args.retrieval,
             "budget_tokens": None if args.retrieval is None else args.budget_tokens,
+            # Which embedding regime produced the index. Batched and per-turn arms
+            # are not comparable to each other (see `lme.ingest`), so this is not a
+            # tuning knob but a fact the paired analysis has to check.
+            "embed_batch": args.embed_batch,
             "history_format": args.history_format,
             "embedder": (
                 "fake (retrieval is not exercised on the full-context path)"

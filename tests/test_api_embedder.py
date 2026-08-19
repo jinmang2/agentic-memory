@@ -532,3 +532,35 @@ def test_an_input_that_fits_is_sent_byte_identically(monkeypatch):
     assert api.attempts == [24_576]  # capped once, sent once, never re-sent
     assert api.requests[0]["input"] == ["ordinary prose", "x" * 24_576]
     assert e.truncations == 1
+
+
+def test_an_oversized_batch_is_split_not_truncated_wholesale(monkeypatch):
+    """A batch cannot say WHICH input the API rejected. Halving the character
+    budget for all of them would shorten innocent texts that were about to
+    succeed, changing their vectors for no reason — so the batch splits until the
+    offender is alone and only it pays."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    api = CeilingAPI(limit=5000, dim=4)
+    e = APIEmbedder(
+        model_name="text-embedding-3-small", dim=4, client=SimpleNamespace(embeddings=api)
+    )
+    innocent, offender = "a" * 4_000, "b" * 20_000
+    out = e.embed([innocent, innocent, offender, innocent])
+    assert len(out) == 4
+    # every request that succeeded carried the innocents at full length
+    sent = [r["input"] for r in api.requests if max(len(t) for t in r["input"]) <= 5000]
+    assert all(t == innocent for req in sent for t in req if t.startswith("a"))
+    # and the offender was cut alone, not alongside them
+    cut = [
+        r["input"] for r in api.requests if len(r["input"]) == 1 and r["input"][0].startswith("b")
+    ]
+    assert cut and len(cut[-1][0]) < 20_000
+
+
+def test_a_single_oversized_text_still_halves_rather_than_splitting(monkeypatch):
+    """Splitting a one-item batch would recurse forever; the char budget is the
+    only lever left."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    e, api = _ceiling_emb(limit=5000)
+    e.embed(["x" * 24_000])
+    assert api.attempts == [24_000, 12_288, 6_144, 3_072]
