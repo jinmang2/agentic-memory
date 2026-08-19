@@ -7,8 +7,9 @@
 # accessed" read behavior). Numbers here are NOT a paper reproduction; they are
 # our organizer at full strength.
 #
-# WRITE-ONCE / READ-SWEEP: reuses the SAME shared store as phase1b.sh
-# (results/repro/stores/full_all) — the notes/links are identical regardless of
+# WRITE-ONCE / READ-SWEEP: reuses the SAME shared seed store as phase1b.sh
+# (results/repro/stores/full_all_seed${SEED}, default seed1 — the stores the
+# headline campaign ingested) — the notes/links are identical regardless of
 # eval-mode, expand-links, or k (all are retrieval-/scoring-time), so the write
 # path is never re-paid. Ingest is guarded (skipped if the store exists); run
 # phase1b.sh first, or this script ingests it once. --expand-links on and the
@@ -28,16 +29,26 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
-STORE="results/repro/stores/full_all"
+# The campaign's stores are the SEEDED ones phase1b_headline.sh ingested
+# (results/repro/stores/full_all_seed{1,2,3}); the unseeded full_all this
+# script once pointed at no longer exists, so keeping that path meant every
+# invocation silently re-paid the ~$0.9 ingest instead of reusing a store.
+# SEED picks which existing draw to score (default: seed1).
+SEED="${SEED:-1}"
+STORE="results/repro/stores/full_all_seed${SEED}"
 WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
+INGEST_WORKERS="${INGEST_WORKERS:-4}"  # only used if the seed store is missing
 
-# 1) Ingest ONCE (shared with phase1b.sh) — skip only if a COMPLETE ingest is
-# proven by the sentinel; a partial/crashed store dir is wiped and re-ingested.
+# 1) Ingest ONCE (shared with phase1b.sh and the headline scripts) — skip if
+# the seed store's combined sentinel proves a COMPLETE ingest. The fallback is
+# the same conversation-parallel, resumable orchestrator the headline campaign
+# actually ran (it wipes only partial per-conv stores and writes ONE combined
+# sentinel), so a wiped store re-ingests the way the seed stores were built.
 if [ ! -f "$STORE/.ingest_complete.json" ]; then
-    rm -rf "$STORE"
-    uv run python scripts/exp_amem_repro.py \
-        --conv all --eval-mode wujiang \
-        --data-dir "$STORE" --ingest-only
+    uv run python scripts/repro/ingest_parallel.py \
+        --convs all --workers "$INGEST_WORKERS" \
+        --tag-suffix "_seed${SEED}" \
+        --data-dir "$STORE"
 fi
 
 # 2) Score the persisted store — our-production metric + J-judge + link expansion.

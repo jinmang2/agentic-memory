@@ -2126,3 +2126,105 @@ def test_finer_resume_keeps_only_whole_windows_and_refuses_a_foreign_records_fil
         mod.resume_state(other, samples, 15, log)
 
     assert mod.resume_state(tmp_path / "absent.jsonl", samples, 15, log) == []
+
+
+# ---------------- run_status: what the artifacts say a run is doing ----------------
+
+
+_RUN_STATUS_PATH = _SCRIPTS / "repro" / "run_status.py"
+
+
+def _load_run_status(records_dir):
+    spec = _ilu.spec_from_file_location("run_status_mod", _RUN_STATUS_PATH)
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.RECORDS = records_dir  # point the artifact root at the fixture
+    return mod
+
+
+def _jsonl(path, rows):
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_run_status_prices_the_embedding_sidecar_with_the_chat_trace(tmp_path):
+    """The llm-trace holds only chat calls, so pricing from it alone showed the
+    `_s` top-50 batched arm at ~$1.51 against its summary's $4.61 — the gap
+    being exactly the embedding spend. The status line must sum both traces,
+    and count a sidecar line's `calls` field (a delta record can cover several
+    concurrent calls), not the line."""
+    rs = _load_run_status(tmp_path)
+    tag = "arm"
+    _jsonl(tmp_path / f"{tag}.records.jsonl", [{"question_id": "q1"}, {"question_id": "q2"}])
+    _jsonl(
+        tmp_path / f"{tag}.llm-trace.jsonl",
+        [
+            {"model": "gpt-4o-mini", "tokens_in": 1_000_000, "tokens_out": 0},
+            {"model": "gpt-4o-2024-08-06", "tokens_in": 0, "tokens_out": 100_000},
+        ],
+    )
+    _jsonl(
+        tmp_path / f"{tag}.embed-trace.jsonl",
+        [
+            {
+                "kind": "embedding",
+                "model": "text-embedding-3-small",
+                "calls": 128,
+                "tokens_in": 50_000_000,
+                "tokens_out": 0,
+            }
+        ],
+    )
+    row = rs.describe(tag)
+    # $0.15 reader + $1.00 judge output + $1.00 embedding
+    assert round(row["usd"], 4) == round(0.15 + 1.00 + 1.00, 4)
+    assert row["calls"] == 2 + 128
+    assert row["idle_s"] is not None  # freshness reads the sidecar's mtime too
+
+
+def test_run_status_accepts_a_reconstructed_summary_as_finished(tmp_path):
+    """The zep MMR arm's summary of record is the git-tracked
+    `<tag>.reconstructed.json` (rebuilt from the trace); with only `<tag>.json`
+    accepted, run_status reported that finished measurement as STALE forever."""
+    rs = _load_run_status(tmp_path)
+    tag = "zep_mmr_arm"
+    _jsonl(tmp_path / f"{tag}.records.jsonl", [{"question_id": "q1"}])
+
+    row = rs.describe(tag)
+    assert not rs.is_finished(row)  # no summary of any kind yet
+
+    (tmp_path / f"{tag}.reconstructed.json").write_text(
+        json.dumps(
+            {
+                "reconstructed_from_trace": True,
+                "overall": {"f1": 27.08, "n": 1986, "j_score": 40.78},
+                "n_records": 1986,
+            }
+        )
+    )
+    row = rs.describe(tag)
+    assert row["has_summary"] and rs.is_finished(row)
+    # A live `<tag>.json` still wins when both exist — the reconstruction is a
+    # fallback for a lost summary, never an override of a real one.
+    (tmp_path / f"{tag}.json").write_text(
+        json.dumps({"stamp": {"complete": True, "n_samples": 1}, "overall": {}})
+    )
+    row = rs.describe(tag)
+    assert row["complete"] is True and rs.is_finished(row)
+
+
+def test_run_status_shows_a_finished_arms_summary_total_when_the_trace_is_embed_blind(tmp_path):
+    """Arms measured before the embed sidecar existed cannot be re-priced from
+    their traces — the embedding share was never recorded anywhere but the
+    summary (`cost_usd` folds the embedder and prior processes). A finished
+    run therefore shows max(trace, summary), never the blind trace alone."""
+    rs = _load_run_status(tmp_path)
+    tag = "old_arm"
+    _jsonl(tmp_path / f"{tag}.records.jsonl", [{"question_id": "q1"}])
+    _jsonl(
+        tmp_path / f"{tag}.llm-trace.jsonl",
+        [{"model": "gpt-4o-mini", "tokens_in": 10_000_000, "tokens_out": 0}],  # $1.50
+    )
+    (tmp_path / f"{tag}.json").write_text(
+        json.dumps({"stamp": {"complete": True, "n_samples": 1}, "cost_usd": 4.61})
+    )
+    assert rs.describe(tag)["usd"] == 4.61

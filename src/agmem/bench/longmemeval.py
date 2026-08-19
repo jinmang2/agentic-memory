@@ -543,10 +543,29 @@ def retrieval_provenance(item: Any) -> dict[str, Any]:
     return {"session_ids": list(seen), "date": str(meta.get("date") or "") or None}
 
 
+def cap_total_candidates(items: list[Any], k_total: int) -> list[Any]:
+    """The read-budget alignment docs/research/longmemeval.md §10.3 names as the
+    organizer arm's precondition ("재개하려면 읽기 예산 정렬이 선행 조건이다").
+
+    ``k`` is applied PER memory type by the retrieval pipeline, so an organizer
+    declaring three produced types brings ``3k`` candidates to a shared render
+    budget the single-type passthrough arm cannot fill — measured at 1.14-1.54x
+    more context reaching the reader (docs/20, "organizer × `_s`" reason ①), on
+    a campaign that has already measured context volume moving the score hard
+    (C6). Neither doc prescribes one alignment rule (both frame it as the open
+    precondition), so this is the global-budget rule: keep the top ``k_total``
+    candidates across ALL memory types by retrieval score — the same total a
+    single-type arm gets from ``k`` — with ties broken by bundle order (the sort
+    is stable). Selection only: section grouping and the char budget remain
+    ``MemoryBundle.render``'s."""
+    return sorted(items, key=lambda s: s.score, reverse=True)[:k_total]
+
+
 def answer(
     mem: AgenticMemory,
     instance: dict[str, Any],
     k: int | dict = 10,
+    k_total: int | None = None,
     memory_types: tuple[str, ...] | None = None,
     budget_tokens: int = 6000,
     reading_method: str = "con",
@@ -588,6 +607,15 @@ def answer(
     ``memory_types=None`` defers to the memory's ``default_memory_types``, so a
     caller does not have to know what the configured organizers produce.
 
+    ``k_total`` is the read-budget alignment (``cap_total_candidates``): the
+    bundle is cut to the top ``k_total`` candidates across all memory types
+    before rendering, so a multi-type organizer arm competes for the same total
+    the passthrough arm gets. ``None`` keeps the pipeline's per-type ``k`` —
+    the wiring every arm through 2026-08-19 ran, which is a no-op for
+    single-type arms and the measured 1.14-1.54x context advantage for
+    organizer arms (docs/20). The cap runs AFTER ``search`` returns, so the
+    organizers' ``on_retrieval`` hooks still see the per-type serving.
+
     ``budget_key`` labels this call's row in the client's ``BudgetTracker`` and
     in its I/O trace (``LLMClient.chat``'s own parameter, which never reaches
     the API payload). A LongMemEval run is one question per instance answered by
@@ -617,8 +645,11 @@ def answer(
         bundle = (searcher if searcher is not None else searcher_for(mem)).search(
             question, memory_types=memory_types, k=k, metrics=agent_metrics
         )
+        if k_total is not None and len(bundle.items) > k_total:
+            bundle.items = cap_total_candidates(bundle.items, k_total)
         if capture is not None:
             capture["agent"] = agent_metrics
+            capture["k_total"] = k_total
         history = bundle.render(budget_tokens=budget_tokens) or "(no memories found)"
         # The verbatim recency window a methodology keeps OUTSIDE retrieval and
         # injects on every question (``Organizer.recent_context()`` — MemoryOS's
@@ -683,6 +714,19 @@ def answer(
         # fingerprint identically. Recorded here rather than rebuilt by the
         # caller so the hash can never describe a prompt we did not send.
         capture["prompt"] = prompt
+        # Which retrieved items actually reached the reader. The bundle capture
+        # above is built BEFORE ``MemoryBundle.render`` spends its budget, so a
+        # recall scored on it reads 1.0 for an evidence session the budget cut —
+        # the capture defect docs/20 records ("Known capture defect"), right for
+        # a passthrough bundle that fits and wrong exactly for the organizer arm
+        # that overflows. Membership is tested against the exact prompt bytes
+        # sent: a survivor's ``text`` is what ``render`` embedded verbatim (the
+        # same render expression built both), and this runs after
+        # ``truncate_history`` so an opt-in cap is honoured too. A text that is
+        # a substring of another survivor's counts as present — those bytes did
+        # reach the reader, which is the question this flag answers.
+        for entry in capture.get("retrieved", ()):
+            entry["in_prompt"] = bool(entry.get("text")) and entry["text"] in prompt
     reply = mem.llm.chat(
         "generate",
         [{"role": "user", "content": prompt}],
@@ -919,6 +963,7 @@ def run_instance(
     mem: AgenticMemory,
     instance: dict[str, Any],
     k: int | dict = 10,
+    k_total: int | None = None,
     memory_types: tuple[str, ...] | None = None,
     budget_tokens: int = 6000,
     reading_method: str = "con",
@@ -965,6 +1010,7 @@ def run_instance(
         mem,
         instance,
         k=k,
+        k_total=k_total,
         memory_types=memory_types,
         budget_tokens=budget_tokens,
         reading_method=reading_method,

@@ -212,6 +212,151 @@ def _sha256_file(path: Path, chunk: int = 1 << 20) -> str:
     return digest.hexdigest()
 
 
+class TracedEmbedder:
+    """A paid embedder whose spend survives a kill.
+
+    The llm-trace holds only CHAT calls — the embedder never routes through
+    `LLMClient` — so a retrieval arm's embedding spend was invisible to every
+    reader of the trace: `run_status.py` priced the `_s` top-50 arm at ~$1.51
+    against a summary total of $4.61, and a crash-resume's prior-spend banner
+    (the number the spend cap is enforced against) dropped the same share. This
+    wrapper records the embedder's usage durably as it happens, one JSON line
+    per `embed` call, to a sidecar `<tag>.embed-trace.jsonl`.
+
+    A sidecar rather than lines in the llm-trace, because the llm-trace can be
+    gzip: `LLMClient._trace` appends one gzip member per call under ITS OWN
+    lock, and a second writer's members interleaving mid-write would corrupt
+    the stream. The sidecar stays plain JSONL — no prompts inside, ~150 bytes a
+    line — and mirrors the trace's field names (`model`/`tokens_in`/
+    `tokens_out`) plus `kind: "embedding"` and a `calls` count, so the pricing
+    code reads both files with one loop.
+
+    Accounting is by cumulative-counter delta under a lock, not by wrapping the
+    counters themselves: `APIEmbedder.embed` increments `calls`/`tokens`
+    internally, so with N workers sharing this one instance a naive
+    before/after diff double-counts concurrent calls. The delta partitions the
+    cumulative totals exactly — a line may lump concurrent calls together (its
+    `calls` field says how many), but the file's sums equal the embedder's own
+    counters at every flush point. `flush_trace()` catches any residue at the
+    end of the run."""
+
+    def __init__(self, inner: Any, trace_path: Path) -> None:
+        self.inner = inner
+        self.trace_path = trace_path
+        self._lock = threading.Lock()
+        self._seen_calls = int(getattr(inner, "calls", 0))
+        self._seen_tokens = int(getattr(inner, "tokens", 0))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def embed(self, texts, kind="passage"):
+        try:
+            return self.inner.embed(texts, kind)
+        finally:
+            # In a finally: a failed request still cost attempts and tokens do
+            # not move, but calls do, and the record must not vanish with the
+            # exception (same contract as the chat trace, which logs failures).
+            self.flush_trace()
+
+    def flush_trace(self) -> None:
+        with self._lock:
+            d_calls = int(self.inner.calls) - self._seen_calls
+            d_tokens = int(self.inner.tokens) - self._seen_tokens
+            if not d_calls and not d_tokens:
+                return
+            self._seen_calls += d_calls
+            self._seen_tokens += d_tokens
+            line = {
+                "ts_iso": datetime.now(UTC).isoformat(),
+                "kind": "embedding",
+                "model": self.inner.name,
+                "calls": d_calls,
+                "tokens_in": d_tokens,
+                "tokens_out": 0,
+            }
+            try:
+                with self.trace_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(line, ensure_ascii=False) + "\n")
+            except Exception:  # durability best-effort: never break a paid call
+                logging.getLogger("agmem.repro.lme").exception(
+                    "failed to write embed-trace line (%d calls unrecorded)", d_calls
+                )
+
+
+def embed_trace_path_for(tag: str, out_dir: Path) -> Path:
+    """One naming rule, shared with run_status.py's reader by convention."""
+    return out_dir / f"{tag}.embed-trace.jsonl"
+
+
+def snapshot_wanted(organizers: list[str]) -> bool:
+    """Whether this arm's memory state gets dumped (.memory.jsonl/.memory.ops).
+
+    Organizer arms: yes — the derived state is paid, temperature-drawn and
+    unrecoverable without re-spending, which is exactly what the full-artifact-
+    capture rule exists for (exp_ace_finer.py has dumped it since Track 5; this
+    driver did not). Passthrough arms: no — their store is the haystack
+    verbatim (`lme.ingest` writes `"(date) role: content"` deterministically
+    from a dataset the stamp already pins by sha256), so 500 per-instance
+    snapshots would re-copy the corpus at multi-GB scale and capture nothing
+    the dataset file does not."""
+    return organizers != ["passthrough"]
+
+
+def dump_instance_state(helpers, mem, qid: str, snap_fh, ops_fh) -> None:
+    """One instance's full memory state + op log, appended to the run's shared
+    snapshot files.
+
+    The same two helpers exp_ace_finer.py uses (duplicating them is what the
+    C-8 ledger is about), called once per instance rather than once per run
+    because a LongMemEval arm builds 500 in-memory stores and closes each one:
+    this must run BEFORE `mem.close()`, and the caller holds a lock across it
+    (the helpers write many lines per call). Lines carry `{"conv": <qid>, ...}`
+    — `conv` is the helpers' unit key; here the unit is a question. A qid can
+    appear twice when a crash lands between this dump and the row write (the
+    row is re-answered, the organizer redraws at temperature): an auditor keys
+    on the LAST occurrence, the same rule the records resume applies."""
+    helpers.dump_memory_snapshot(mem, qid, snap_fh)
+    helpers.dump_op_log(mem, qid, ops_fh)
+    snap_fh.flush()
+    ops_fh.flush()
+
+
+def recall_fields(retrieved: list[dict], gold: set[str]) -> dict[str, Any]:
+    """Both evidence recalls for one row, from its retrieved list.
+
+    `evidence_recall_bundle` is the field earlier summaries called
+    `evidence_recall`, renamed to say what it scores: the bundle retrieval
+    returned, BEFORE `render()` spent its budget (same math, so old and new
+    rows compare directly). docs/20 ("Known capture defect", ~:805) records why
+    that is not enough: an evidence session can be in the bundle and cut from
+    the context, and bundle recall still reads 1.0 — right for a passthrough
+    arm whose bundle fits, wrong exactly for the organizer arm that overflows.
+    `evidence_recall_prompt` scores only the items whose rendered text survived
+    into the prompt actually sent (`lme.answer`'s `in_prompt` flag), which is
+    the number an organizer arm has to answer for.
+
+    `None` keeps its meaning from before — no session provenance at all, a
+    different statement from 0.0. The prompt field is additionally `None` when
+    no item carries an `in_prompt` verdict (a row captured before the flag
+    existed), never silently 0.0 for it."""
+
+    def _recall(items: list[dict]) -> float:
+        got = {s for c in items for s in (c.get("session_ids") or [])}
+        return round(len(gold & got) / len(gold), 4)
+
+    if not gold or not any(c.get("session_ids") for c in retrieved):
+        return {"evidence_recall_bundle": None, "evidence_recall_prompt": None}
+    return {
+        "evidence_recall_bundle": _recall(retrieved),
+        "evidence_recall_prompt": (
+            _recall([c for c in retrieved if c.get("in_prompt")])
+            if any(c.get("in_prompt") is not None for c in retrieved)
+            else None
+        ),
+    }
+
+
 def run_pool(
     instances: Iterable[dict],
     total: int,
@@ -220,6 +365,7 @@ def run_pool(
     reading: str,
     history_format: str,
     retrieval_k: int | None,
+    k_total: int | None,
     budget_tokens: int,
     embed_batch: int | None,
     workers: int,
@@ -228,6 +374,7 @@ def run_pool(
     budget: BudgetTracker,
     over_budget,
     log,
+    dump_state=None,
 ) -> list[dict]:
     """Answer every instance concurrently; return the rows this process produced.
 
@@ -327,6 +474,10 @@ def run_pool(
                     full_context=retrieval_k is None,
                     history_format=history_format,
                     k=retrieval_k or 10,
+                    # The read-budget alignment (docs §10.3): None reproduces
+                    # the per-type-k wiring, an int caps the bundle to that
+                    # many candidates across ALL memory types.
+                    k_total=k_total,
                     budget_tokens=budget_tokens,
                     judge=True,
                     enforce_pin=True,
@@ -351,6 +502,15 @@ def run_pool(
                 # replace the recorded failure with an AttributeError and lose the
                 # row all over again.
                 if mem is not None:
+                    if dump_state is not None:
+                        # Before close (the stores are in-memory), and even for
+                        # a failed row: the write path already spent whatever it
+                        # spent, and the state it bought is exactly what the
+                        # capture rule says must not need re-buying.
+                        try:
+                            dump_state(mem, qid)
+                        except Exception:  # capture must not cost the row
+                            log.exception("memory snapshot for %s failed; row unaffected", qid)
                     mem.close()
             elapsed_ms = round((time.perf_counter() - t0) * 1000, 1)
             capture = row.pop("retrieval", None) or {}
@@ -371,21 +531,19 @@ def run_pool(
                         # could not do with its 8.60 pp (docs/20, C7). They are
                         # free to record and unrecoverable without paying again.
                         "session_ids": c.get("session_ids"),
+                        # Whether this item's rendered text survived `render()`'s
+                        # budget into the prompt actually sent — the flag that
+                        # lets recall be scored on the prompt, not the bundle
+                        # (docs/20's capture defect; see `recall_fields`).
+                        "in_prompt": c.get("in_prompt"),
                     }
                     for c in capture.get("retrieved", [])
                 ]
                 # Gold is a set of SESSION ids, so recall is scored per session,
-                # not per item. `None` means this arm's memories carry no session
-                # provenance at all (an organizer summarising many sessions may
-                # legitimately have none) — a different statement from 0.0, and
-                # kept different.
-                gold = set(lme.evidence_session_ids(inst))
-                got = {s for c in row["retrieved"] for s in (c.get("session_ids") or [])}
-                row["evidence_recall"] = (
-                    None
-                    if not gold or not any(c.get("session_ids") for c in row["retrieved"])
-                    else round(len(gold & got) / len(gold), 4)
-                )
+                # not per item — bundle-level and prompt-level, see
+                # `recall_fields` for which field is which and why `None` is
+                # not 0.0.
+                row.update(recall_fields(row["retrieved"], set(lme.evidence_session_ids(inst))))
             usage = budget.summary()
             row.update(
                 {
@@ -448,6 +606,18 @@ def main() -> None:
         "reading arm into a memory arm: with the evidence-only oracle it measures what a "
         "retrieval layer LOSES when the whole haystack already fits, which is a tax, not a "
         "benefit. Needs a real embedder.",
+    )
+    ap.add_argument(
+        "--k-scope",
+        choices=["total", "per-type"],
+        default="total",
+        help="how --retrieval K is spent when the write path declares several memory types. "
+        "The pipeline applies K PER TYPE, which hands a 3-type organizer 3K candidates and "
+        "lets it fill a render budget the passthrough arm cannot (docs/20 measured 1.14-1.54x "
+        "more context reaching the reader; docs/research/longmemeval.md §10.3 names alignment "
+        "as the organizer arm's precondition). 'total' caps the bundle to the top K across all "
+        "types by retrieval score — a no-op for every single-type arm ever run. 'per-type' "
+        "reproduces the old, unfair wiring, kept so it stays measurable on purpose.",
     )
     ap.add_argument("--budget-tokens", type=int, default=6000, help="render budget for --retrieval")
     ap.add_argument(
@@ -608,11 +778,19 @@ def main() -> None:
     # A fake embedder is correct for the full-context path (nothing is ever
     # queried) and WRONG for a retrieval arm, where the vector is the mechanism.
     # Built once and shared: it is stateless, and 500 clients would be 500 pools.
-    embedder = (
+    raw_embedder = (
         FakeEmbedder(dim=64)
         if args.retrieval is None or args.dry_run
         else helpers.build_embedder(args.embedder)
     )
+    # A PAID embedder gets the trace wrapper (see `TracedEmbedder`): its spend
+    # is the llm-trace's blind spot, and `_prior_spend`/`run_status.py` both
+    # price runs from traces. The pricing helpers keep the RAW instance —
+    # `embed_model_name` is an isinstance check the wrapper would fail, and
+    # `budget_row` reads the same counters either way.
+    embedder: Any = raw_embedder
+    if helpers.embed_model_name(raw_embedder) is not None:
+        embedder = TracedEmbedder(raw_embedder, embed_trace_path_for(args.tag, out_dir))
 
     def build_mem(qid: str) -> AgenticMemory:
         # data_dir=None -> every store in memory, so 500 fresh stores cost no
@@ -663,7 +841,12 @@ def main() -> None:
     over_budget = None
     if args.max_spend_usd is not None and not args.dry_run:
         prior_spend = _prior_spend(
-            trace_path, out_dir / f"{args.tag}.json", args.reader, args.judge_model, helpers
+            trace_path,
+            embed_trace_path_for(args.tag, out_dir),
+            out_dir / f"{args.tag}.json",
+            args.reader,
+            args.judge_model,
+            helpers,
         )
         if prior_spend:
             log.info("earlier processes of this run spent $%.4f (from the trace)", prior_spend)
@@ -674,12 +857,12 @@ def main() -> None:
             # it indexes, and the cap that ignores that is not the cap that was
             # quoted.
             live = fold_row_keys(budget.summary())
-            helpers.fold_embed_budget(live, embedder)
+            helpers.fold_embed_budget(live, raw_embedder)
             spent = prior_spend + helpers.cost_usd(
                 live,
                 args.reader,
                 judge_model=args.judge_model,
-                embed_model=helpers.embed_model_name(embedder),
+                embed_model=helpers.embed_model_name(raw_embedder),
             )
             return spent >= args.max_spend_usd
 
@@ -700,6 +883,31 @@ def main() -> None:
         with records_path.open("w", encoding="utf-8") as fh:
             for row in kept:
                 fh.write(json.dumps(row, ensure_ascii=False, default=str) + "\n")
+    # Memory snapshots, organizer arms only (`snapshot_wanted`): one shared
+    # .memory.jsonl / .memory.ops.jsonl appended per instance under a lock —
+    # exp_ace_finer.py's capture, at this driver's per-instance lifecycle.
+    # Gzipped exactly when the trace is: the same `_s`/`_m` volume argument.
+    snap_fh = ops_fh = None
+    dump_state = None
+    if snapshot_wanted(organizers):
+        snap_path = out_dir / f"{args.tag}.memory.jsonl{'.gz' if gz else ''}"
+        ops_path = out_dir / f"{args.tag}.memory.ops.jsonl{'.gz' if gz else ''}"
+        mode = "at" if kept else "wt"
+        # Long-lived handles by design (closed in the finally below): 500
+        # per-instance dumps through one open/close apiece would re-open a gzip
+        # member per instance for nothing.
+        if gz:
+            snap_fh = gzip.open(snap_path, mode, encoding="utf-8")  # noqa: SIM115
+            ops_fh = gzip.open(ops_path, mode, encoding="utf-8")  # noqa: SIM115
+        else:
+            snap_fh = snap_path.open(mode[0], encoding="utf-8")
+            ops_fh = ops_path.open(mode[0], encoding="utf-8")
+        snap_lock = threading.Lock()
+
+        def dump_state(mem, qid: str) -> None:
+            with snap_lock:
+                dump_instance_state(helpers, mem, qid, snap_fh, ops_fh)
+
     sink = records_path.open("a" if kept else "w", encoding="utf-8")
     try:
         new_rows = run_pool(
@@ -709,6 +917,10 @@ def main() -> None:
             reading=args.reading,
             history_format=args.history_format,
             retrieval_k=args.retrieval,
+            # The read-budget alignment (docs §10.3 / docs/20): 'total' spends
+            # --retrieval K as ONE budget across all memory types; 'per-type'
+            # is the old wiring. Identical on every single-type arm.
+            k_total=(args.retrieval if args.k_scope == "total" else None),
             budget_tokens=args.budget_tokens,
             embed_batch=args.embed_batch,
             workers=args.workers,
@@ -717,9 +929,17 @@ def main() -> None:
             budget=budget,
             over_budget=over_budget,
             log=log,
+            dump_state=dump_state,
         )
     finally:
         sink.close()
+        for fh in (snap_fh, ops_fh):
+            if fh is not None:
+                fh.close()
+        # Any embedding usage since the last embed call's own flush (belt and
+        # braces — a paid run must not end with unrecorded spend).
+        if isinstance(embedder, TracedEmbedder):
+            embedder.flush_trace()
     elapsed = round(time.perf_counter() - t0, 1)
     rows = kept + new_rows
 
@@ -750,7 +970,7 @@ def main() -> None:
     # A retrieval arm embeds every turn it ingests, and those calls are NOT in the
     # chat budget. Left out, the arm would look cheaper than it is and could not
     # explain its own total.
-    helpers.fold_embed_budget(folded, embedder)
+    helpers.fold_embed_budget(folded, raw_embedder)
     summary: dict[str, Any] = {
         "stamp": {
             "dataset": args.dataset,
@@ -776,6 +996,13 @@ def main() -> None:
             if args.retrieval is None
             else f"retrieval_top{args.retrieval}",
             "retrieval_k": args.retrieval,
+            # Read-budget alignment (docs §10.3): how K was scoped, and the
+            # effective total cap. 'total' is a no-op on single-type arms, so
+            # every pre-existing arm reproduces under the default.
+            "k_scope": None if args.retrieval is None else args.k_scope,
+            "k_total": (args.retrieval if args.k_scope == "total" else None)
+            if args.retrieval is not None
+            else None,
             "budget_tokens": None if args.retrieval is None else args.budget_tokens,
             # Which embedding regime produced the index. Batched and per-turn arms
             # are not comparable to each other (see `lme.ingest`), so this is not a
@@ -816,6 +1043,17 @@ def main() -> None:
         "timing": {"eval_s": elapsed},
         "records_file": f"{args.tag}.records.jsonl",
         "trace_file": trace_path.name,
+        # The embedding sidecar (chat spend's blind spot — see `TracedEmbedder`)
+        # and the organizer-arm memory snapshots; None when the arm has neither.
+        "embed_trace_file": (
+            embedder.trace_path.name if isinstance(embedder, TracedEmbedder) else None
+        ),
+        "memory_file": (
+            f"{args.tag}.memory.jsonl{'.gz' if gz else ''}" if dump_state is not None else None
+        ),
+        "memory_ops_file": (
+            f"{args.tag}.memory.ops.jsonl{'.gz' if gz else ''}" if dump_state is not None else None
+        ),
     }
     if args.dry_run:
         summary["dry_run_quote"] = _quote(client, len(todo_ids), args, reader_spec, judge_spec)
@@ -824,7 +1062,7 @@ def main() -> None:
             folded,
             args.reader,
             judge_model=args.judge_model,
-            embed_model=helpers.embed_model_name(embedder),
+            embed_model=helpers.embed_model_name(raw_embedder),
         )
         summary["cost_usd"] = round(this_process + prior_spend, 6)
         summary["cost_usd_this_process"] = round(this_process, 6)
@@ -843,46 +1081,76 @@ def main() -> None:
     )
 
 
-def _prior_spend(trace_path: Path, summary_path: Path, reader: str, judge: str, helpers) -> float:
+def _prior_spend(
+    trace_path: Path,
+    embed_trace_path: Path,
+    summary_path: Path,
+    reader: str,
+    judge: str,
+    helpers,
+) -> float:
     """USD spent by earlier processes of this run — the larger of two records.
 
-    The trace is the one that survives a kill, but it only holds CHAT calls: the
-    embedder does not route through `LLMClient`, so a retrieval arm's embedding
-    spend is invisible there. On the `_s` top-50 arm that was $1.11 of a $2.59
-    total, and a resumed process would have reported $1.51 for a measurement that
-    had already cost $2.59 — an under-count in the direction that matters, since
-    this number is also what the spend cap is enforced against.
+    The trace side is BOTH traces: the llm-trace holds only CHAT calls (the
+    embedder never routes through `LLMClient`), and before the embed sidecar
+    existed that made a resumed `_s` top-50 process report $1.51 for a
+    measurement that had already cost $2.59 — an under-count in the direction
+    that matters, since this number is also what the spend cap is enforced
+    against. `TracedEmbedder` now records the missing share to
+    `<tag>.embed-trace.jsonl`, and it is priced here at each line's own model.
 
-    So: the trace when the earlier process died without writing a summary, and
-    the earlier summary's own total when it wrote one. Neither can overstate, so
-    the max is the honest estimate."""
+    So: the traces when the earlier process died without writing a summary, and
+    the earlier summary's own total when it wrote one. An arm measured before
+    the sidecar existed still has an embed-blind trace side, which is why the
+    max with the summary stays: neither record can overstate, so the max is the
+    honest estimate."""
     from_summary = 0.0
     if summary_path.exists():
         try:
             from_summary = float(json.loads(summary_path.read_text()).get("cost_usd") or 0.0)
         except (json.JSONDecodeError, TypeError, ValueError):
             from_summary = 0.0
-    if not trace_path.exists():
+    if not trace_path.exists() and not embed_trace_path.exists():
         return from_summary
     per_model: dict[str, dict] = {}
-    with (
-        gzip.open(trace_path, "rt", encoding="utf-8")
-        if trace_path.suffix == ".gz"
-        else trace_path.open(encoding="utf-8")
-    ) as fh:
-        for line in fh:
-            try:
-                call = json.loads(line)
-            except (json.JSONDecodeError, EOFError, OSError):
-                break
-            row = per_model.setdefault(str(call.get("model")), {"tokens_in": 0, "tokens_out": 0})
-            row["tokens_in"] += call.get("tokens_in") or 0
-            row["tokens_out"] += call.get("tokens_out") or 0
+    if trace_path.exists():
+        with (
+            gzip.open(trace_path, "rt", encoding="utf-8")
+            if trace_path.suffix == ".gz"
+            else trace_path.open(encoding="utf-8")
+        ) as fh:
+            for line in fh:
+                try:
+                    call = json.loads(line)
+                except (json.JSONDecodeError, EOFError, OSError):
+                    break
+                row = per_model.setdefault(
+                    str(call.get("model")), {"tokens_in": 0, "tokens_out": 0}
+                )
+                row["tokens_in"] += call.get("tokens_in") or 0
+                row["tokens_out"] += call.get("tokens_out") or 0
     total = 0.0
     for model, row in per_model.items():
         if model not in (reader, judge):
             continue
         total += helpers.cost_usd({"generate": row}, model)
+    if embed_trace_path.exists():
+        per_embed: dict[str, int] = {}
+        for line in embed_trace_path.open(encoding="utf-8"):
+            try:
+                call = json.loads(line)
+            except json.JSONDecodeError:
+                break
+            per_embed[str(call.get("model"))] = per_embed.get(str(call.get("model")), 0) + (
+                call.get("tokens_in") or 0
+            )
+        for model, tokens in per_embed.items():
+            # Priced under the `embed` role at the embedding model's own rates —
+            # the same split `cost_usd` applies to a folded budget, so the two
+            # accountings cannot disagree on a rate.
+            total += helpers.cost_usd(
+                {"embed": {"tokens_in": tokens, "tokens_out": 0}}, reader, embed_model=model
+            )
     return max(total, from_summary)
 
 

@@ -8,11 +8,12 @@
 # (the paper's published A-Mem Table 1). Link expansion OFF here to match the
 # plain (non-robust) upstream read path.
 #
-# WRITE-ONCE / READ-SWEEP: ingest all 10 convs ONCE into a shared persistent
-# store (guarded — skipped if it already exists, e.g. from a prior run or from
-# phase2.sh which reuses the SAME store), then score with --eval-only. The notes
-# are identical regardless of eval-mode/expand/k, so the (paid) write path is
-# spent once and re-scoring is free. Delete the store dir to force a fresh ingest.
+# WRITE-ONCE / READ-SWEEP: score an existing shared seed store
+# (results/repro/stores/full_all_seed${SEED}, default seed1 — the stores the
+# headline campaign ingested; phase2.sh reuses the SAME one). Ingest runs only
+# if the store is missing its sentinel. The notes are identical regardless of
+# eval-mode/expand/k, so the (paid) write path is spent once and re-scoring is
+# free. Delete the store dir to force a fresh ingest.
 # Cost: ~$0.9 ingest (once) + ~$0.7 answers ≈ $1.6 on gpt-4o-mini (skips ingest
 # if the shared store already exists).
 # Prereq: repo-root .env.local with OPENAI_API_KEY; embedder downloaded.
@@ -28,18 +29,26 @@ mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/$(basename "$0" .sh)_$(date -u +%Y%m%dT%H%M%SZ).log"
 exec > >(tee -a "$LOG") 2>&1
 
-STORE="results/repro/stores/full_all"
+# The campaign's stores are the SEEDED ones phase1b_headline.sh ingested
+# (results/repro/stores/full_all_seed{1,2,3}); the unseeded full_all this
+# script once pointed at no longer exists, so keeping that path meant every
+# invocation silently re-paid the ~$0.9 ingest instead of reusing a store.
+# SEED picks which existing draw to score (default: seed1).
+SEED="${SEED:-1}"
+STORE="results/repro/stores/full_all_seed${SEED}"
 WORKERS="${WORKERS:-8}"   # concurrent QA workers (results identical to 1)
+INGEST_WORKERS="${INGEST_WORKERS:-4}"  # only used if the seed store is missing
 
-# 1) Ingest ONCE (shared with phase2.sh) — skip only if a COMPLETE ingest is
-# proven by the sentinel. A bare/partial store dir (e.g. a crashed 10-conv
-# ingest) is wiped and re-ingested clean, so eval never micro-averages over a
-# truncated store.
+# 1) Ingest ONCE (shared with phase2.sh and the headline scripts) — skip if the
+# seed store's combined sentinel proves a COMPLETE ingest. The fallback is the
+# same conversation-parallel, resumable orchestrator the headline campaign
+# actually ran (it wipes only partial per-conv stores and writes ONE combined
+# sentinel), so a wiped store re-ingests the way the seed stores were built.
 if [ ! -f "$STORE/.ingest_complete.json" ]; then
-    rm -rf "$STORE"
-    uv run python scripts/exp_amem_repro.py \
-        --conv all --eval-mode wujiang \
-        --data-dir "$STORE" --ingest-only
+    uv run python scripts/repro/ingest_parallel.py \
+        --convs all --workers "$INGEST_WORKERS" \
+        --tag-suffix "_seed${SEED}" \
+        --data-dir "$STORE"
 fi
 
 # 2) Score the persisted store — WujiangXu-faithful metric, no re-ingest.

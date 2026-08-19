@@ -60,6 +60,30 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
             max_tokens_key="max_completion_tokens",
             fixed_sampling=True,
         ),
+        # LongMemEval quote confirmation — the §10.3 open item "terra/sol 레지스트리
+        # 등록 (견적 확정에 필요)". Prices copied verbatim from
+        # docs/research/longmemeval.md §8.2 (lines 721-722; 2026-07-30 인하 반영):
+        # terra $2.00/$12.00, sol $5.00/$30.00 per 1M in/out. The dialect flags are
+        # the gpt-5.6 family's (same as luna above: `max_completion_tokens`, fixed
+        # sampling) — family wiring, not a priced fact from the doc.
+        ModelSpec(
+            "gpt-5.6-terra",
+            _OPENAI,
+            "OPENAI_API_KEY",
+            2.00,
+            12.00,
+            max_tokens_key="max_completion_tokens",
+            fixed_sampling=True,
+        ),
+        ModelSpec(
+            "gpt-5.6-sol",
+            _OPENAI,
+            "OPENAI_API_KEY",
+            5.00,
+            30.00,
+            max_tokens_key="max_completion_tokens",
+            fixed_sampling=True,
+        ),
         # Embedding models. They live in the same registry because they are
         # priced the same way and quoted in the same table — a run that folds its
         # embedder spend in under an `embed` role prices it through
