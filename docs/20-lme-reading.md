@@ -788,6 +788,13 @@ or the truncation. This campaign has already measured that context volume moves
 this score hard (C6: nine times less context won by 21 points), so the confound
 is not small enough to wave through.
 
+> **2026-08-19 — the alignment landed.** `cap_total_candidates` in the bench now
+> cuts the bundle to the top `k_total` across ALL memory types by retrieval score,
+> and the driver defaults to it (`--k-scope total`); `--k-scope per-type` preserves
+> this section's unfair wiring for reproduction. The cap is a no-op for every
+> single-type arm already measured, so no past number moves. Reason ① above is
+> therefore resolved; the arm stays unrun on reasons ②③ (spend approval).
+
 **2. Four independent nulls already point the same way.** ACE's playbook did not
 separate from no-learning in any configuration; ReasoningBank did not separate
 from base (48.24 → 48.24); Zep's §4.1 operating point did not separate; LoCoMo's
@@ -801,6 +808,8 @@ out effects larger than the ones nobody is claiming.
 in service of productization; fidelity is the instrument. The chain C1–C7 is
 complete and the shortage is not evidence — it is that §9.5's presentation
 structure has been updated through 3c and nothing has been written against it.
+(2026-08-19: written — `docs/21-lme-findings.md` now stands against that structure,
+with this document as its evidence ledger.)
 
 ### Known capture defect, recorded rather than fixed
 

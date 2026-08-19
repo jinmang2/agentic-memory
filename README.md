@@ -177,6 +177,7 @@ tests/           822 tests, incl. fidelity pinning suites
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
 | [docs/19-ace-finer.md](docs/19-ace-finer.md) | ACE's self-evolving playbook on FiNER, measured against not having one — and why the control arm is half the finding |
 | [docs/20-lme-reading.md](docs/20-lme-reading.md) | LongMemEval with the memory held constant: oracle, retrieval and context arms that move only the reading — and the organizer arm that is priced but deliberately not run |
+| [docs/21-lme-findings.md](docs/21-lme-findings.md) | the LongMemEval findings arranged for presentation: what the benchmark actually ranks, every number sourced to docs/20, and the never-run organizer arm stated up front (Korean) |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |

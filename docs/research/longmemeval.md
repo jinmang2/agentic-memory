@@ -817,7 +817,7 @@ workers=8로 **13분**. 판정 기준은 실행 전에 [`docs/20`](../20-lme-rea
 (≥5pp 성립 / 2–5pp 약한 성립 / <2pp 불성립).
 
 **결과: 스프레드 task-averaged 12.57pp, overall 15.40pp — 성립.** 분해하면 리더 교체가 +11~12pp,
-읽기 방식이 +3~4pp이고 페어링 CI는 하나(luna의 task-averaged con−direct, +2.18 [−0.99, +5.57])를
+읽기 방식이 +3~4pp이고 페어링 CI는 하나(luna의 task-averaged con−direct, +2.18 [−1.09, +5.54]〔2026-08-19 교정: 종전 표기 [−0.99, +5.57]은 전사 오류 — 정본은 `results/repro/lme_c4_paired.json`의 [−1.0944, +5.5434]이며 docs/20 §과 일치〕)를
 빼고 전부 0을 제외한다. 타입별로는 두 single-session 회상 타입이 모든 arm에서 포화(97~100)라
 움직임이 **multi-session(+20.3pp)·temporal-reasoning(+24.8pp)·preference(+13.3pp)** 에 몰린다 —
 검색이 완벽할 때 남는 것은 **찾기가 아니라 찾아온 것을 다루기**이고, 그 부분은 메모리 시스템의
@@ -891,6 +891,9 @@ oracle은 **천장 조건**이라 거기서 나온 것은 그대로 일반화되
    따라서 C6의 절대값을 upstream 검색 baseline과 나란히 놓으면 안 된다.
 
 ### 9.5 발표 구조
+
+> **2026-08-19**: 이 구조(3c까지)에 대한 발표문이 [`docs/21-lme-findings.md`](../21-lme-findings.md)로
+> 작성됐다. 근거 원장은 docs/20이며, organizer arm 부재를 포함한 §9.4의 정직성 목록을 본문에 그대로 싣는다.
 
 ```
 1. 다들 LongMemEval 점수로 메모리 순위를 매긴다          (현황: §5 비교가능성 행렬)
