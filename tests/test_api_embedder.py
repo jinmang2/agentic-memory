@@ -140,7 +140,11 @@ def test_failed_request_is_counted_then_re_raised(monkeypatch):
     api = FakeEmbeddingsAPI()
 
     def boom(**kwargs):
-        raise RuntimeError("429")
+        # A CONNECTION failure, which is what this test is about. It used to say
+        # "429"; a 429 now has its own retry budget (the server names a wait, and
+        # a link that is down does not), so that string would exercise the wrong
+        # path — see the rate-limit tests at the end of this file.
+        raise RuntimeError("Connection reset by peer")
 
     api.create = boom
     e = APIEmbedder(dim=4, client=SimpleNamespace(embeddings=api))
@@ -564,3 +568,77 @@ def test_a_single_oversized_text_still_halves_rather_than_splitting(monkeypatch)
     e, api = _ceiling_emb(limit=5000)
     e.embed(["x" * 24_000])
     assert api.attempts == [24_000, 12_288, 6_144, 3_072]
+
+
+class RateLimitedAPI(FakeEmbeddingsAPI):
+    """429s the first `fail_times` calls, the way the org TPM ceiling does."""
+
+    def __init__(self, fail_times, message=None, **kw):
+        super().__init__(**kw)
+        self.fail_times = fail_times
+        self.attempts = 0
+        self.message = message or (
+            "Error code: 429 - {'error': {'message': 'Rate limit reached for "
+            "text-embedding-3-small on tokens per min (TPM): Limit 5000000, Used "
+            "4999535, Requested 29456. Please try again in 347ms.', 'code': "
+            "'rate_limit_exceeded'}}"
+        )
+
+    def create(self, **kwargs):
+        self.attempts += 1
+        if self.attempts <= self.fail_times:
+            self.requests.append(kwargs)
+            raise RuntimeError(self.message)
+        return super().create(**kwargs)
+
+
+def _rl_emb(fail_times, message=None):
+    api = RateLimitedAPI(fail_times, message=message, dim=4)
+    e = APIEmbedder(
+        model_name="text-embedding-3-small", dim=4, client=SimpleNamespace(embeddings=api)
+    )
+    return e, api
+
+
+def test_a_429_is_waited_out_rather_than_spent_on_transport_retries(monkeypatch):
+    """Batching made the run 22x faster and the next ceiling it hit was the org's
+    tokens-per-minute budget: 20 of 500 `_s` rows died on 429s. Two transport
+    retries at 2s and 4s are sized for a blipping link, not for a refill window."""
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    e, api = _rl_emb(fail_times=4)
+    out = e.embed(["hello"])
+    assert len(out) == 1
+    assert api.attempts == 5  # four refusals then the answer
+    assert e.rate_limit_waits == 4
+    assert e.transport_retries == 2  # untouched — nothing about the link failed
+
+
+def test_the_wait_the_server_named_is_the_wait_we_take(monkeypatch):
+    """Under a TPM ceiling the window refills on a clock the client cannot see, so
+    the server's own "try again in 347ms" beats a blind exponential."""
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    e, _api = _rl_emb(fail_times=1)
+    e.embed(["hello"])
+    assert len(slept) == 1
+    assert 0.347 <= slept[0] <= 0.347 + 0.5  # the named wait, plus jitter only
+
+
+def test_a_429_without_a_named_wait_falls_back_to_exponential(monkeypatch):
+    slept = []
+    monkeypatch.setattr("time.sleep", lambda s: slept.append(s))
+    e, _api = _rl_emb(fail_times=2, message="Error code: 429 - rate_limit_exceeded")
+    e.embed(["hello"])
+    assert len(slept) == 2 and slept[1] > slept[0]
+
+
+def test_a_run_that_never_stops_being_rate_limited_still_surfaces(monkeypatch):
+    """Six retries, then the error is the caller's problem — a silent zero vector
+    would poison the store with a neighbourless item."""
+    monkeypatch.setattr("time.sleep", lambda *_: None)
+    e, api = _rl_emb(fail_times=99)
+    with pytest.raises(RuntimeError, match="429"):
+        e.embed(["hello"])
+    assert e.rate_limit_waits == 6
+    assert api.attempts == 9  # 1 + 6 rate-limit retries + 2 transport retries

@@ -22,6 +22,8 @@ from __future__ import annotations
 
 import logging
 import math
+import random
+import re
 import time
 from typing import Any
 
@@ -62,6 +64,34 @@ CHARS_PER_TOKEN_FLOOR = 3.0
 # actually rejected. `_s`'s 5 truncations are unaffected: they succeeded on the
 # first attempt and still do.
 MIN_INPUT_CHARS = 1024
+
+# Batching raised throughput ~22x, and the first thing it hit was not the input
+# ceiling but the ORGANISATION's tokens-per-minute budget: the `_s` batched arm
+# lost 20 of 500 rows to 429s reading "Used 4999535, Limit 5000000". A 429 is the
+# one error the server tells you how to fix — it names the wait — so it gets its
+# own budget rather than sharing the transport retries, which are sized for a
+# blipping link (2 attempts, 2s and 4s) and are simply the wrong shape here.
+RATE_LIMIT_RETRIES = 6
+RATE_LIMIT_MAX_SLEEP = 30.0
+_RETRY_AFTER = re.compile(r"try again in ([\d.]+)\s*(ms|s)\b", re.IGNORECASE)
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "rate_limit_exceeded" in text or "rate limit reached" in text
+
+
+def _retry_after_seconds(exc: Exception) -> float | None:
+    """The wait the server itself suggested, e.g. "Please try again in 347ms."
+
+    Preferred over a blind exponential: under a TPM ceiling the window refills on
+    a clock the client cannot see, so guessing longer wastes the run and guessing
+    shorter just spends another attempt."""
+    match = _RETRY_AFTER.search(str(exc))
+    if not match:
+        return None
+    value = float(match.group(1))
+    return value / 1000.0 if match.group(2).lower() == "ms" else value
 
 
 def _is_input_too_long(exc: Exception) -> bool:
@@ -150,6 +180,11 @@ class APIEmbedder:
         # because it is a silent change to what got indexed, and a run that did
         # it must be able to say how often rather than look clean.
         self.truncations = 0
+        # How long this run spent waiting on the org's TPM ceiling. Reported
+        # rather than swallowed: it is the cost batching moved from round trips
+        # to queueing, and a run that spends most of itself here should drop
+        # workers rather than pretend it is fast.
+        self.rate_limit_waits = 0
         self.max_input_chars = int(MAX_INPUT_TOKENS[model_name] * CHARS_PER_TOKEN_FLOOR)
 
     def _cap(self, texts: list[str], max_chars: int) -> list[str]:
@@ -199,6 +234,7 @@ class APIEmbedder:
 
         self.calls += 1
         transport_left = self.transport_retries
+        rate_left = RATE_LIMIT_RETRIES
         spent = 0
         while True:
             start = time.perf_counter()
@@ -217,6 +253,26 @@ class APIEmbedder:
                 # recovered blip still shows up in `errors`.
                 self.errors += 1
                 self.latency_ms_total += (time.perf_counter() - start) * 1000
+                if _is_rate_limited(exc) and rate_left > 0:
+                    # Not a transport failure and not a request-shaped one: the
+                    # request was fine and the clock was not. Honour the wait the
+                    # server named, plus jitter so twelve workers do not all come
+                    # back in the same millisecond and re-trip the same ceiling.
+                    wait = _retry_after_seconds(exc)
+                    if wait is None:
+                        wait = 2.0 ** (RATE_LIMIT_RETRIES - rate_left)
+                    wait = min(wait + random.uniform(0.0, 0.5), RATE_LIMIT_MAX_SLEEP)
+                    logger.warning(
+                        "%s rate-limited (%d retries left) — sleeping %.2fs: %s",
+                        self.name,
+                        rate_left,
+                        wait,
+                        str(exc)[:120],
+                    )
+                    self.rate_limit_waits += 1
+                    rate_left -= 1
+                    time.sleep(wait)
+                    continue
                 if _is_input_too_long(exc) and len(texts) > 1:
                     # A BATCH cannot say which of its inputs was too long, and
                     # halving the budget for all of them would truncate innocent
