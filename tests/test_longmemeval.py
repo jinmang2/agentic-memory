@@ -23,6 +23,7 @@ from agmem.bench.longmemeval import (
     iter_longmemeval,
     iter_turns,
     load_longmemeval,
+    retrieval_provenance,
     render_sessions,
     run_instance,
     sort_haystack_by_date,
@@ -741,5 +742,64 @@ def test_the_encoder_reaches_the_cap_through_answer():
         )
         prompt = mem.llm.calls[0]["prompt"]
         assert "abcd" in prompt and "abcde" not in prompt
+    finally:
+        mem.close()
+
+
+# ---------------- retrieval provenance: the field C7 could not compute ----------------
+
+
+def test_provenance_resolves_a_raw_turn_to_its_session():
+    """`ingest` puts `session_id`/`date` on every turn's meta, and the gold is a
+    set of SESSION ids — so an episodic hit must resolve to one or recall cannot
+    be scored at all."""
+    from agmem.core.types import Episode
+
+    ep = Episode(content="x", meta={"session_id": "s1", "date": "2023/05/01 (Mon) 09:00"})
+    assert retrieval_provenance(ep) == {
+        "session_ids": ["s1"],
+        "date": "2023/05/01 (Mon) 09:00",
+    }
+
+
+def test_provenance_reads_a_dict_shaped_item_too():
+    """Organizer-produced memories reach the bundle as plain dicts."""
+    assert retrieval_provenance({"meta": {"session_id": "s7"}})["session_ids"] == ["s7"]
+
+
+def test_a_summary_over_many_sessions_reports_all_of_them():
+    """A Nemori episode covers several sessions; scoring it against gold needs
+    every one it drew from, not the first."""
+    item = {"meta": {"session_ids": ["s1", "s2", "s2", "s3"]}}
+    assert retrieval_provenance(item)["session_ids"] == ["s1", "s2", "s3"]  # deduped, ordered
+
+
+def test_a_memory_with_no_session_provenance_says_so_rather_than_guessing():
+    """An A-Mem note may cite no session. An empty list is a FACT about that
+    memory type — it cannot be scored for session recall — and the driver turns
+    it into a null recall rather than a 0.0, which would read as a miss."""
+    assert retrieval_provenance({"meta": {}})["session_ids"] == []
+    assert retrieval_provenance(object())["session_ids"] == []
+    assert retrieval_provenance({"meta": None})["session_ids"] == []
+
+
+def test_provenance_survives_an_item_that_is_not_a_mapping_at_all():
+    """It runs inside the paid answer path; a surprising item type must not take
+    the row down."""
+    assert retrieval_provenance("just a string") == {"session_ids": [], "date": None}
+    assert retrieval_provenance(None) == {"session_ids": [], "date": None}
+
+
+def test_the_capture_carries_provenance_into_the_row():
+    mem = _mem()
+    try:
+        mem.llm = _StubLLM({"generate": "ok"})
+        ingest(mem, INSTANCE)
+        capture: dict = {}
+        answer(mem, INSTANCE, k=5, capture=capture)
+        assert capture["retrieved"], "nothing retrieved — the rest of this test is vacuous"
+        assert all("session_ids" in c for c in capture["retrieved"])
+        seen = {s for c in capture["retrieved"] for s in c["session_ids"]}
+        assert seen <= {"s1", "s2"} and seen
     finally:
         mem.close()

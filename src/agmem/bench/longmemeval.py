@@ -507,6 +507,42 @@ def _sampling_kwargs(
     return kwargs
 
 
+def retrieval_provenance(item: Any) -> dict[str, Any]:
+    """The haystack coordinates behind one retrieved memory, for recall scoring.
+
+    LongMemEval's gold is a set of SESSION ids (`answer_session_ids`), so a run
+    that records only which memory item came back cannot answer the one question
+    an accuracy drop raises: did the evidence reach the reader at all? The `_m`
+    arm lost 8.60 pp and could not split that into retrieval failure and reader
+    failure, because these fields were not captured (docs/20, C7). They cost
+    nothing to record and cannot be recovered without paying for the run again.
+
+    ``ingest`` puts ``session_id``/``date`` on every raw turn's ``meta``, so an
+    episodic hit always resolves. An ORGANIZER-produced memory legitimately may
+    not: a Nemori episode summarises several sessions, an A-Mem note may cite
+    none. ``{"session_ids": []}`` there is a fact about that memory type — it
+    cannot be scored for session recall — and is recorded as such rather than
+    guessed at or silently dropped.
+    """
+    meta = getattr(item, "meta", None)
+    if meta is None and isinstance(item, dict):
+        meta = item.get("meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    ids: list[str] = []
+    single = meta.get("session_id")
+    if single:
+        ids.append(str(single))
+    many = meta.get("session_ids") or meta.get("source_session_ids")
+    if isinstance(many, (list, tuple)):
+        ids.extend(str(x) for x in many if x)
+    # dedup, order preserved: a summary citing the same session twice is one hit
+    seen: dict[str, None] = {}
+    for i in ids:
+        seen.setdefault(i, None)
+    return {"session_ids": list(seen), "date": str(meta.get("date") or "") or None}
+
+
 def answer(
     mem: AgenticMemory,
     instance: dict[str, Any],
@@ -610,6 +646,7 @@ def answer(
                     or (s.item.data.get("id") if hasattr(s.item, "data") else None),
                     "memory_type": s.memory_type,
                     "score": s.score,
+                    **retrieval_provenance(s.item),
                     "text": (
                         s.item.render()
                         if hasattr(s.item, "render")

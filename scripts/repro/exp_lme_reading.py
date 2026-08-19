@@ -364,9 +364,28 @@ def run_pool(
                         "id": c.get("id"),
                         "memory_type": c.get("memory_type"),
                         "score": c.get("score"),
+                        # The haystack coordinates, not just the memory id. Without
+                        # these a drop in accuracy cannot be split into "the
+                        # evidence never arrived" and "it arrived and the reader
+                        # did not use it" — which is exactly what the `_m` arm
+                        # could not do with its 8.60 pp (docs/20, C7). They are
+                        # free to record and unrecoverable without paying again.
+                        "session_ids": c.get("session_ids"),
                     }
                     for c in capture.get("retrieved", [])
                 ]
+                # Gold is a set of SESSION ids, so recall is scored per session,
+                # not per item. `None` means this arm's memories carry no session
+                # provenance at all (an organizer summarising many sessions may
+                # legitimately have none) — a different statement from 0.0, and
+                # kept different.
+                gold = set(lme.evidence_session_ids(inst))
+                got = {s for c in row["retrieved"] for s in (c.get("session_ids") or [])}
+                row["evidence_recall"] = (
+                    None
+                    if not gold or not any(c.get("session_ids") for c in row["retrieved"])
+                    else round(len(gold & got) / len(gold), 4)
+                )
             usage = budget.summary()
             row.update(
                 {
