@@ -1,0 +1,392 @@
+{
+ "generated_by": "scripts/repro/x2_oracle_prep.py",
+ "date": "2026-08-19",
+ "spec": "docs/_internal/plans/2026-08-07-expansion-layer-design.md \u00a7X2 (+ 2026-08-19 design append)",
+ "contributed_definition": "proxy: an item contributed iff it appeared >=1 time in retrieval.retrieved of a row with j==True (1,540 judged rows; category 5 is answered but unjudged and cannot define contribution). The true oracle is counterfactual; this proxy brackets it \u2014 see the plan append.",
+ "arms": {
+  "nemori_a": {
+   "label": "Nemori arm A (upstream)",
+   "sources": {
+    "records": "results/repro/gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.records.jsonl",
+    "ops": "results/repro/gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.memory.ops.jsonl",
+    "store": "results/repro/gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.memory.jsonl + .json (memory_capacity, stamp.memory_types)",
+    "union_records": [
+     "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.records.jsonl"
+    ]
+   },
+   "published_j": 67.6,
+   "store_items_servable": 2704,
+   "op_counts": {
+    "ADD:episodes": 555,
+    "ADD:episodic": 5882,
+    "ADD:semantic": 1926,
+    "INVALIDATE:episodes": 223,
+    "MERGE:episodes": 223
+   },
+   "served": {
+    "distinct_items_ever_served": 2407,
+    "distinct_items_in_correct_contexts": 2380,
+    "served_slots_in_correct_contexts": 31230
+   },
+   "proxy_oracle": {
+    "keep_items": 2380,
+    "delete_items": 324,
+    "deletion_fraction": 0.1198,
+    "deletion_fraction_by_type": {
+     "episodes": 0.3111,
+     "semantic": 0.0426
+    },
+    "keep_ids_file": "results/ext/x2/keep_ids/nemori_a.json",
+    "union_across_measured_read_configs": {
+     "keep_items": 2380,
+     "deletion_fraction": 0.1198,
+     "n_read_configs": 1
+    }
+   },
+   "lineage": {
+    "verdict": "present",
+    "per_type": {
+     "episodes": {
+      "creating_ops": 778,
+      "with_source_episode_ids": 778,
+      "with_member_ids": 0
+     },
+     "semantic": {
+      "creating_ops": 1926,
+      "with_source_episode_ids": 1926,
+      "with_member_ids": 0
+     }
+    }
+   },
+   "read_path_pool_dependence": "none \u2014 dense top-k per type, no expansion, no fusion; correct-context preservation argument holds",
+   "paid_step": {
+    "what": "rebuild the store from keep_ids (embeddings reused from the committed snapshot's embedding_text \u2014 no embedding spend for stored items), re-run the arm's own headline read path + answer + judge over the same 1,986 questions",
+    "store": "results/ext/x2/keep_ids/nemori_a.json",
+    "questions": {
+     "answered": 1986,
+     "judged": 1540
+    },
+    "expected_llm_calls": {
+     "generate": 1986,
+     "judge": 1540,
+     "read_side": 0
+    },
+    "quoted_cost_usd": 1.370978,
+    "quote_basis": "arm\ub2f9 $0.3\u20131.4 (expansion-layer plan \u00a71.3; per-arm quote = the arm's measured eval cost_usd)",
+    "notes": ""
+   }
+  },
+  "nemori_b": {
+   "label": "Nemori arm B (0.85 filter live)",
+   "sources": {
+    "records": "results/repro/gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.records.jsonl",
+    "ops": "results/repro/gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.memory.ops.jsonl",
+    "store": "results/repro/gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.memory.jsonl + .json (memory_capacity, stamp.memory_types)",
+    "union_records": [
+     "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.records.jsonl"
+    ]
+   },
+   "published_j": 65.78,
+   "store_items_servable": 2530,
+   "op_counts": {
+    "ADD:episodes": 763,
+    "ADD:episodic": 5882,
+    "ADD:semantic": 1745,
+    "INVALIDATE:episodes": 22,
+    "MERGE:episodes": 22
+   },
+   "served": {
+    "distinct_items_ever_served": 2446,
+    "distinct_items_in_correct_contexts": 2418,
+    "served_slots_in_correct_contexts": 30390
+   },
+   "proxy_oracle": {
+    "keep_items": 2418,
+    "delete_items": 112,
+    "deletion_fraction": 0.0443,
+    "deletion_fraction_by_type": {
+     "episodes": 0.0739,
+     "semantic": 0.0309
+    },
+    "keep_ids_file": "results/ext/x2/keep_ids/nemori_b.json",
+    "union_across_measured_read_configs": {
+     "keep_items": 2418,
+     "deletion_fraction": 0.0443,
+     "n_read_configs": 1
+    }
+   },
+   "lineage": {
+    "verdict": "present",
+    "per_type": {
+     "episodes": {
+      "creating_ops": 785,
+      "with_source_episode_ids": 785,
+      "with_member_ids": 0
+     },
+     "semantic": {
+      "creating_ops": 1745,
+      "with_source_episode_ids": 1745,
+      "with_member_ids": 0
+     }
+    }
+   },
+   "read_path_pool_dependence": "none \u2014 dense top-k per type; preservation argument holds",
+   "paid_step": {
+    "what": "rebuild the store from keep_ids (embeddings reused from the committed snapshot's embedding_text \u2014 no embedding spend for stored items), re-run the arm's own headline read path + answer + judge over the same 1,986 questions",
+    "store": "results/ext/x2/keep_ids/nemori_b.json",
+    "questions": {
+     "answered": 1986,
+     "judged": 1540
+    },
+    "expected_llm_calls": {
+     "generate": 1986,
+     "judge": 1540,
+     "read_side": 0
+    },
+    "quoted_cost_usd": 1.121987,
+    "quote_basis": "arm\ub2f9 $0.3\u20131.4 (expansion-layer plan \u00a71.3; per-arm quote = the arm's measured eval cost_usd)",
+    "notes": ""
+   }
+  },
+  "amem": {
+   "label": "A-Mem (kw+perhit headline)",
+   "sources": {
+    "records": "results/repro/gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.records.jsonl",
+    "ops": "results/repro/gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.memory.ops.jsonl",
+    "store": "results/repro/gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.memory.jsonl + .json (memory_capacity, stamp.memory_types)",
+    "union_records": [
+     "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.records.jsonl",
+     "gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.records.jsonl",
+     "gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.records.jsonl",
+     "gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.records.jsonl"
+    ]
+   },
+   "published_j": 61.23,
+   "store_items_servable": 5882,
+   "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:notes": 5882,
+    "LINK:notes": 5866,
+    "UPDATE:notes": 16342
+   },
+   "served": {
+    "distinct_items_ever_served": 4771,
+    "distinct_items_in_correct_contexts": 4378,
+    "served_slots_in_correct_contexts": 24706
+   },
+   "proxy_oracle": {
+    "keep_items": 4378,
+    "delete_items": 1504,
+    "deletion_fraction": 0.2557,
+    "deletion_fraction_by_type": {
+     "notes": 0.2557
+    },
+    "keep_ids_file": "results/ext/x2/keep_ids/amem.json",
+    "union_across_measured_read_configs": {
+     "keep_items": 4743,
+     "deletion_fraction": 0.1936,
+     "n_read_configs": 4
+    }
+   },
+   "lineage": {
+    "verdict": "present",
+    "per_type": {
+     "notes": {
+      "creating_ops": 5882,
+      "with_source_episode_ids": 5882,
+      "with_member_ids": 0
+     }
+    }
+   },
+   "read_path_pool_dependence": "link expansion \u2014 expansion set shrinks when linked notes are deleted; base dense hits preserved, expansions not guaranteed",
+   "paid_step": {
+    "what": "rebuild the store from keep_ids (embeddings reused from the committed snapshot's embedding_text \u2014 no embedding spend for stored items), re-run the arm's own headline read path + answer + judge over the same 1,986 questions",
+    "store": "results/ext/x2/keep_ids/amem.json",
+    "questions": {
+     "answered": 1986,
+     "judged": 1540
+    },
+    "expected_llm_calls": {
+     "generate": 1986,
+     "judge": 1540,
+     "read_side": 1986
+    },
+    "quoted_cost_usd": 1.090467,
+    "quote_basis": "arm\ub2f9 $0.3\u20131.4 (expansion-layer plan \u00a71.3; per-arm quote = the arm's measured eval cost_usd)",
+    "notes": "read-side keyword-rewrite calls are the arm's own lineage (docs/18) and stay in"
+   }
+  },
+  "zep_cross_encoder": {
+   "label": "Zep cross_encoder (\u00a74.1)",
+   "sources": {
+    "records": "results/repro/gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.records.jsonl",
+    "ops": "results/repro/gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.memory.ops.jsonl",
+    "store": "results/repro/gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.memory.jsonl + .json (memory_capacity, stamp.memory_types)",
+    "union_records": [
+     "gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.records.jsonl",
+     "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.records.jsonl",
+     "gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.records.jsonl",
+     "gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.records.jsonl"
+    ]
+   },
+   "published_j": 42.73,
+   "store_items_servable": 12620,
+   "op_counts": {
+    "ADD:communities": 1243,
+    "ADD:entities": 2599,
+    "ADD:episodic": 5882,
+    "ADD:facts": 8778,
+    "INVALIDATE:facts": 1293,
+    "UPDATE:entities": 895,
+    "UPDATE:facts": 4373
+   },
+   "served": {
+    "distinct_items_ever_served": 8247,
+    "distinct_items_in_correct_contexts": 6263,
+    "served_slots_in_correct_contexts": 19740
+   },
+   "proxy_oracle": {
+    "keep_items": 6263,
+    "delete_items": 6357,
+    "deletion_fraction": 0.5037,
+    "deletion_fraction_by_type": {
+     "communities": 0.2043,
+     "entities": 0.3174,
+     "facts": 0.6013
+    },
+    "keep_ids_file": "results/ext/x2/keep_ids/zep_cross_encoder.json",
+    "union_across_measured_read_configs": {
+     "keep_items": 8476,
+     "deletion_fraction": 0.3284,
+     "n_read_configs": 4
+    }
+   },
+   "lineage": {
+    "verdict": "present",
+    "per_type": {
+     "entities": {
+      "creating_ops": 2599,
+      "with_source_episode_ids": 2599,
+      "with_member_ids": 0
+     },
+     "facts": {
+      "creating_ops": 8778,
+      "with_source_episode_ids": 8778,
+      "with_member_ids": 0
+     },
+     "communities": {
+      "creating_ops": 1243,
+      "with_source_episode_ids": 0,
+      "with_member_ids": 1243
+     }
+    }
+   },
+   "read_path_pool_dependence": "BM25 IDF + BFS + RRF fusion + cross-encoder over the fused candidate set \u2014 every channel is pool-dependent; no preservation guarantee",
+   "paid_step": {
+    "what": "rebuild the store from keep_ids (embeddings reused from the committed snapshot's embedding_text \u2014 no embedding spend for stored items), re-run the arm's own headline read path + answer + judge over the same 1,986 questions",
+    "store": "results/ext/x2/keep_ids/zep_cross_encoder.json",
+    "questions": {
+     "answered": 1986,
+     "judged": 1540
+    },
+    "expected_llm_calls": {
+     "generate": 1986,
+     "judge": 1540,
+     "read_side": 0
+    },
+    "quoted_cost_usd": 0.361083,
+    "quote_basis": "arm\ub2f9 $0.3\u20131.4 (expansion-layer plan \u00a71.3; per-arm quote = the arm's measured eval cost_usd)",
+    "notes": "cross-encoder reranker needs the GPU and 8,528 s of eval wall clock (docs/18 recipe table)"
+   }
+  },
+  "mem0": {
+   "label": "Mem0 v0.1.94",
+   "sources": {
+    "records": "results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.records.jsonl",
+    "ops": "results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.memory.ops.jsonl",
+    "store": "results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.memory.jsonl + .json (memory_capacity, stamp.memory_types)",
+    "union_records": [
+     "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.records.jsonl"
+    ]
+   },
+   "published_j": 31.82,
+   "store_items_servable": 5427,
+   "op_counts": {
+    "ADD:episodic": 5882,
+    "ADD:semantic": 5654,
+    "DELETE:semantic": 227,
+    "NOOP:semantic": 26209,
+    "UPDATE:semantic": 1077
+   },
+   "served": {
+    "distinct_items_ever_served": 3643,
+    "distinct_items_in_correct_contexts": 2738,
+    "served_slots_in_correct_contexts": 14700
+   },
+   "proxy_oracle": {
+    "keep_items": 2738,
+    "delete_items": 2689,
+    "deletion_fraction": 0.4955,
+    "deletion_fraction_by_type": {
+     "semantic": 0.4955
+    },
+    "keep_ids_file": "results/ext/x2/keep_ids/mem0.json",
+    "union_across_measured_read_configs": {
+     "keep_items": 2738,
+     "deletion_fraction": 0.4955,
+     "n_read_configs": 1
+    }
+   },
+   "lineage": {
+    "verdict": "absent",
+    "per_type": {
+     "semantic": {
+      "creating_ops": 5654,
+      "with_source_episode_ids": 0,
+      "with_member_ids": 0
+     }
+    }
+   },
+   "read_path_pool_dependence": "none \u2014 dense top-30 over semantic; preservation argument holds",
+   "paid_step": {
+    "what": "rebuild the store from keep_ids (embeddings reused from the committed snapshot's embedding_text \u2014 no embedding spend for stored items), re-run the arm's own headline read path + answer + judge over the same 1,986 questions",
+    "store": "results/ext/x2/keep_ids/mem0.json",
+    "questions": {
+     "answered": 1986,
+     "judged": 1540
+    },
+    "expected_llm_calls": {
+     "generate": 1986,
+     "judge": 1540,
+     "read_side": 0
+    },
+    "quoted_cost_usd": 0.304599,
+    "quote_basis": "arm\ub2f9 $0.3\u20131.4 (expansion-layer plan \u00a71.3; per-arm quote = the arm's measured eval cost_usd)",
+    "notes": ""
+   },
+   "noop_quality": {
+    "semantic_verdicts": 33167,
+    "noop_ops": 26209,
+    "noop_pct_of_verdicts": 79.0,
+    "distinct_noop_targets": 4386,
+    "noop_targets_surviving_to_final_store": 4212,
+    "noop_targets_later_deleted": 174,
+    "adds_later_deleted": 227,
+    "contributed_rate_pct": {
+     "noop_reconfirmed_items": 53.2,
+     "never_reconfirmed_items": 41.0,
+     "whole_store": 50.5
+    },
+    "max_noops_on_one_item": 68,
+    "discards": {
+     "mem0/hallucinated_id": 184
+    },
+    "discards_source": "per-conv ingest summaries' `drops` (counted declines that upstream loses uncounted \u2014 organizer docstring)"
+   }
+  }
+ },
+ "unavailable": {
+  "memoryos": "no *.memory.ops.jsonl / *.records.jsonl on disk; only results/locomo-conv0-memoryos.json (conv-0 F1/BLEU summary, pre-artifact-contract run)"
+ },
+ "paid_round_total_quote_usd": 4.25
+}
