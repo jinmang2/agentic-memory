@@ -602,3 +602,54 @@ uv run --with scipy python scripts/repro/lme_c4_analysis.py \
     --arms gpt-4o-mini_lme_s_con_k50 gpt-4o-mini_lme_m_con_k50 \
     --out results/repro/lme_m_paired.json
 ```
+
+---
+
+## Embedding jitter — what a numerically invisible change costs (2026-08-19, $2.62)
+
+Batching the ingest embeddings is a 22x speedup (`_s` retrieval: 4.3 h → 11.6 min)
+and it is **not** a free one: OpenAI's embeddings are not bit-identical across
+batch sizes. Measured on this endpoint, a text embedded alone against the same
+text in a batch of 128 gives **cosine 0.999999546**, components apart by up to
+**1.4e-4**. Small enough to be invisible; large enough to reorder near-ties when
+you take the top 50 of ~500 candidates.
+
+So before any batched arm was used for anything, `_s × con × k50` was re-run in
+the batched regime under its own tag. **The per-turn arm was not overwritten** —
+C6 rests on it, and the point was to price the difference, not to replace it.
+
+| `_s × mini × con × k50`, same 500 questions | task-avg | overall |
+|---|---|---|
+| per-turn embedding (`..._k50`, 2026-08-17) | 80.81 | **81.60** |
+| batched at 128 (`..._k50_batched`, 2026-08-19) | 81.41 | **81.40** |
+| **paired Δ** | −0.59 [−3.28, +2.02] | **+0.20 [−2.20, +2.60]** |
+
+**McNemar 20/19, p = 1.000.** The discordance is as symmetric as it can be: the
+two regimes disagree, and they disagree in no direction.
+
+⇒ **Batching does not move the score.** +0.20 pp overall is smaller than this
+harness's own same-arm rerun (+0.40 pp, §9.4.1) and far inside the ±2 pp floor
+below which we do not read LongMemEval differences. Batched arms are therefore
+usable — paired against other batched arms, and stamped `embed_batch` so which
+regime produced an index is never a guess.
+
+### The number worth keeping, though, is the per-question one
+
+Overall moved 0.20 pp. **39 of 500 individual verdicts flipped** — 7.8% — from a
+change no one could see in a vector. For comparison, re-running the *same arm*
+end to end flips 20. **Changing the embedding batch size disturbs more of this
+benchmark's per-question answers than re-running it does.**
+
+Per type the swings are larger still: multi-session **76.69 → 70.68** (−6.01),
+single-session-preference 53.33 → 56.67, temporal-reasoning 77.44 → 79.70. At
+n=133 and n=30 those are inside type-level noise, but they set the resolution:
+**a per-type LongMemEval figure quoted to a decimal place is quoting noise**, and
+nobody reporting per-type gains on this benchmark reports a floor for them.
+
+This is a fourth axis of incomparability to put beside §6's P1–P15: not the
+dataset release, not the judge, not the reader, but the **numerical regime of the
+index** — which no published LongMemEval result states, and which two honest
+teams running identical code would differ on by simply batching differently.
+
+Reproduce: `lme_c4_analysis.py --arms gpt-4o-mini_lme_s_con_k50
+gpt-4o-mini_lme_s_con_k50_batched` → `results/repro/lme_embed_jitter_paired.json`.
