@@ -1,0 +1,396 @@
+{
+ "meta": {
+  "script": "scripts/repro/x6_compression_curve.py",
+  "n_boot": 10000,
+  "seed": 0,
+  "abstain_marker": "no information available",
+  "locomo_external_full_context": {
+   "j": 72.9,
+   "source": "Mem0 paper, arXiv:2504.19413 Table 2 (Full-context row), their harness and judge",
+   "measured_here": false
+  },
+  "note": "all points recomputed from named artifacts; script aborts if any recomputed headline disagrees with docs/18 or docs/20"
+ },
+ "locomo": [
+  {
+   "bench": "locomo",
+   "arm": "arm A",
+   "family": "nemori",
+   "stem": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA",
+   "n_judged": 1540,
+   "J": 67.6,
+   "J_ci95": [
+    65.26,
+    69.87
+   ],
+   "abstention_pct": 19.5,
+   "acc_when_answered_pct": 84.0,
+   "prompt_tokens_per_q": 4408.9,
+   "prompt_tokens_source": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json llm_budget.generate",
+   "store_items_retrievable": 2704,
+   "store_unit_mean_chars": 442.5,
+   "store_snapshot_bytes": 4278720,
+   "store_source": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.memory.jsonl + gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA.records.jsonl",
+   "eval_cost_usd": 1.370978
+  },
+  {
+   "bench": "locomo",
+   "arm": "arm B",
+   "family": "nemori",
+   "stem": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB",
+   "n_judged": 1540,
+   "J": 65.78,
+   "J_ci95": [
+    63.38,
+    68.18
+   ],
+   "abstention_pct": 20.6,
+   "acc_when_answered_pct": 82.9,
+   "prompt_tokens_per_q": 3573.5,
+   "prompt_tokens_source": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json llm_budget.generate",
+   "store_items_retrievable": 2530,
+   "store_unit_mean_chars": 379.5,
+   "store_snapshot_bytes": 3368774,
+   "store_source": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.memory.jsonl + gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB.records.jsonl",
+   "eval_cost_usd": 1.121987
+  },
+  {
+   "bench": "locomo",
+   "arm": "kw+perhit",
+   "family": "amem",
+   "stem": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH",
+   "n_judged": 1540,
+   "J": 61.23,
+   "J_ci95": [
+    58.77,
+    63.57
+   ],
+   "abstention_pct": 25.1,
+   "acc_when_answered_pct": 81.7,
+   "prompt_tokens_per_q": 3321.9,
+   "prompt_tokens_source": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.json llm_budget.generate",
+   "store_items_retrievable": 5882,
+   "store_unit_mean_chars": 159.3,
+   "store_snapshot_bytes": 10333525,
+   "store_source": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.memory.jsonl + gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH.records.jsonl",
+   "eval_cost_usd": 1.090467
+  },
+  {
+   "bench": "locomo",
+   "arm": "kw+global5",
+   "family": "amem",
+   "stem": "gpt-4o-mini_all_k10_ours_expand-on_run1_e3s",
+   "n_judged": 1540,
+   "J": 59.87,
+   "J_ci95": [
+    57.47,
+    62.27
+   ],
+   "abstention_pct": 26.9,
+   "acc_when_answered_pct": 82.0,
+   "prompt_tokens_per_q": 1912.6,
+   "prompt_tokens_source": "gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json llm_budget.generate",
+   "store_items_retrievable": 5882,
+   "store_unit_mean_chars": 159.3,
+   "store_snapshot_bytes": 10333525,
+   "store_source": "gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.memory.jsonl + gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_all_k10_ours_expand-on_run1_e3s.records.jsonl",
+   "eval_cost_usd": 0.670446
+  },
+  {
+   "bench": "locomo",
+   "arm": "rawq+global5",
+   "family": "amem",
+   "stem": "gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ",
+   "n_judged": 1540,
+   "J": 65.13,
+   "J_ci95": [
+    62.73,
+    67.47
+   ],
+   "abstention_pct": 21.6,
+   "acc_when_answered_pct": 83.0,
+   "prompt_tokens_per_q": 1937.2,
+   "prompt_tokens_source": "gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json llm_budget.generate",
+   "store_items_retrievable": 5882,
+   "store_unit_mean_chars": 159.3,
+   "store_snapshot_bytes": 10333525,
+   "store_source": "gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.memory.jsonl + gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_amem_rawq_all_k10_ours_expand-on_run1_e3sRAWQ.records.jsonl",
+   "eval_cost_usd": 0.633297
+  },
+  {
+   "bench": "locomo",
+   "arm": "rawq+perhit",
+   "family": "amem",
+   "stem": "gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH",
+   "n_judged": 1540,
+   "J": 65.58,
+   "J_ci95": [
+    63.18,
+    67.92
+   ],
+   "abstention_pct": 21.0,
+   "acc_when_answered_pct": 83.0,
+   "prompt_tokens_per_q": 3283.2,
+   "prompt_tokens_source": "gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.json llm_budget.generate",
+   "store_items_retrievable": 5882,
+   "store_unit_mean_chars": 159.3,
+   "store_snapshot_bytes": 10333525,
+   "store_source": "gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.memory.jsonl + gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_amem_rawq_perhit_all_k10_ours_expand-on_run1_e3sRQPH.records.jsonl",
+   "eval_cost_usd": 1.034484
+  },
+  {
+   "bench": "locomo",
+   "arm": "cross_encoder",
+   "family": "zep",
+   "stem": "gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ",
+   "n_judged": 1540,
+   "J": 42.73,
+   "J_ci95": [
+    40.26,
+    45.19
+   ],
+   "abstention_pct": 32.2,
+   "acc_when_answered_pct": 63.0,
+   "prompt_tokens_per_q": 1090.3,
+   "prompt_tokens_source": "gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.json llm_budget.generate",
+   "store_items_retrievable": 12620,
+   "store_unit_mean_chars": 65.2,
+   "store_snapshot_bytes": 9156455,
+   "store_source": "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.memory.jsonl + gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_zep_cross_encoder_all_k10_ours_expand-off_run1_e3sZ.records.jsonl",
+   "eval_cost_usd": 0.38003
+  },
+  {
+   "bench": "locomo",
+   "arm": "rrf",
+   "family": "zep",
+   "stem": "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf",
+   "n_judged": 1540,
+   "J": 41.62,
+   "J_ci95": [
+    39.16,
+    44.09
+   ],
+   "abstention_pct": 35.8,
+   "acc_when_answered_pct": 64.8,
+   "prompt_tokens_per_q": 1026.8,
+   "prompt_tokens_source": "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.json llm_budget.generate",
+   "store_items_retrievable": 12620,
+   "store_unit_mean_chars": 65.2,
+   "store_snapshot_bytes": 9156455,
+   "store_source": "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.memory.jsonl + gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.records.jsonl",
+   "eval_cost_usd": 0.361083
+  },
+  {
+   "bench": "locomo",
+   "arm": "mmr",
+   "family": "zep",
+   "stem": "gpt-4o-mini_zep_mmr_all_k10_ours_expand-off_run1_e3sZmmr",
+   "n_judged": 1540,
+   "J": 40.78,
+   "J_ci95": [
+    38.31,
+    43.25
+   ],
+   "abstention_pct": 36.3,
+   "acc_when_answered_pct": 64.0,
+   "prompt_tokens_per_q": 1048.2,
+   "prompt_tokens_source": "gpt-4o-mini_zep_mmr_all_k10_ours_expand-off_run1_e3sZmmr.llm-trace.jsonl (generate rows)",
+   "store_items_retrievable": 12620,
+   "store_unit_mean_chars": 65.2,
+   "store_snapshot_bytes": 9156455,
+   "store_source": "gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.memory.jsonl + gpt-4o-mini_zep_rrf_all_k10_ours_expand-off_run1_e3sZrrf.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_zep_mmr_all_k10_ours_expand-off_run1_e3sZmmr.records.jsonl",
+   "eval_cost_usd": null
+  },
+  {
+   "bench": "locomo",
+   "arm": "edge_rrf",
+   "family": "zep",
+   "stem": "gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf",
+   "n_judged": 1540,
+   "J": 34.87,
+   "J_ci95": [
+    32.53,
+    37.21
+   ],
+   "abstention_pct": 46.8,
+   "acc_when_answered_pct": 65.5,
+   "prompt_tokens_per_q": 441.8,
+   "prompt_tokens_source": "gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.json llm_budget.generate",
+   "store_items_retrievable": 8778,
+   "store_unit_mean_chars": 41.6,
+   "store_snapshot_bytes": 9156455,
+   "store_source": "gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.memory.jsonl + gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_zep_edge_rrf_all_k10_ours_expand-off_run1_e3sZerrf.records.jsonl",
+   "eval_cost_usd": 0.186759
+  },
+  {
+   "bench": "locomo",
+   "arm": "edge_mentions",
+   "family": "zep",
+   "stem": "gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions",
+   "n_judged": 1540,
+   "J": 33.05,
+   "J_ci95": [
+    30.71,
+    35.39
+   ],
+   "abstention_pct": 49.9,
+   "acc_when_answered_pct": 65.9,
+   "prompt_tokens_per_q": 439.9,
+   "prompt_tokens_source": "gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.json llm_budget.generate",
+   "store_items_retrievable": 8778,
+   "store_unit_mean_chars": 41.6,
+   "store_snapshot_bytes": 9156455,
+   "store_source": "gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.memory.jsonl + gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_zep_edge_episode_mentions_all_k10_ours_expand-off_run1_e3sZmentions.records.jsonl",
+   "eval_cost_usd": 0.186123
+  },
+  {
+   "bench": "locomo",
+   "arm": "Mem0 v0.1.94",
+   "family": "mem0",
+   "stem": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM",
+   "n_judged": 1540,
+   "J": 31.82,
+   "J_ci95": [
+    29.55,
+    34.16
+   ],
+   "abstention_pct": 55.6,
+   "acc_when_answered_pct": 71.7,
+   "prompt_tokens_per_q": 836.5,
+   "prompt_tokens_source": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json llm_budget.generate",
+   "store_items_retrievable": 5427,
+   "store_unit_mean_chars": 46.0,
+   "store_snapshot_bytes": 4460477,
+   "store_source": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.memory.jsonl + gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.json (memory_capacity, stamp.memory_types)",
+   "records": "results/repro/gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM.records.jsonl",
+   "eval_cost_usd": 0.304599
+  }
+ ],
+ "lme": [
+  {
+   "bench": "lme",
+   "arm": "oracle full",
+   "corpus": "oracle",
+   "read": "full",
+   "embed_regime": null,
+   "tag": "gpt-4o-mini_lme_oracle_con",
+   "n": 500,
+   "overall": 83.6,
+   "overall_ci95": [
+    80.4,
+    86.8
+   ],
+   "task_averaged": 83.89,
+   "prompt_tokens_per_q": 6217.2,
+   "prompt_tokens_source": "gpt-4o-mini_lme_oracle_con.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_oracle_con.records.jsonl",
+   "eval_cost_usd": 1.046749
+  },
+  {
+   "bench": "lme",
+   "arm": "oracle top-10",
+   "corpus": "oracle",
+   "read": "k10",
+   "embed_regime": "per-turn",
+   "tag": "gpt-4o-mini_lme_oracle_con_k10",
+   "n": 500,
+   "overall": 80.6,
+   "overall_ci95": [
+    77.0,
+    84.0
+   ],
+   "task_averaged": 81.97,
+   "prompt_tokens_per_q": 2570.0,
+   "prompt_tokens_source": "gpt-4o-mini_lme_oracle_con_k10.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_oracle_con_k10.records.jsonl",
+   "eval_cost_usd": 0.850496
+  },
+  {
+   "bench": "lme",
+   "arm": "_s full",
+   "corpus": "s",
+   "read": "full",
+   "embed_regime": null,
+   "tag": "gpt-4o-mini_lme_s_con",
+   "n": 500,
+   "overall": 60.4,
+   "overall_ci95": [
+    56.0,
+    64.8
+   ],
+   "task_averaged": 58.4,
+   "prompt_tokens_per_q": 113190.5,
+   "prompt_tokens_source": "gpt-4o-mini_lme_s_con.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_s_con.records.jsonl",
+   "eval_cost_usd": 9.065401
+  },
+  {
+   "bench": "lme",
+   "arm": "_s top-50",
+   "corpus": "s",
+   "read": "k50",
+   "embed_regime": "per-turn",
+   "tag": "gpt-4o-mini_lme_s_con_k50",
+   "n": 500,
+   "overall": 81.6,
+   "overall_ci95": [
+    78.2,
+    85.0
+   ],
+   "task_averaged": 80.81,
+   "prompt_tokens_per_q": 11828.0,
+   "prompt_tokens_source": "gpt-4o-mini_lme_s_con_k50.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_s_con_k50.records.jsonl",
+   "eval_cost_usd": 2.620801
+  },
+  {
+   "bench": "lme",
+   "arm": "_s top-50 batched",
+   "corpus": "s",
+   "read": "k50",
+   "embed_regime": "batched-128",
+   "tag": "gpt-4o-mini_lme_s_con_k50_batched",
+   "n": 500,
+   "overall": 81.4,
+   "overall_ci95": [
+    78.0,
+    84.6
+   ],
+   "task_averaged": 81.41,
+   "prompt_tokens_per_q": 11825.2,
+   "prompt_tokens_source": "gpt-4o-mini_lme_s_con_k50_batched.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_s_con_k50_batched.records.jsonl",
+   "eval_cost_usd": 2.624345
+  },
+  {
+   "bench": "lme",
+   "arm": "_m top-50 batched",
+   "corpus": "m",
+   "read": "k50",
+   "embed_regime": "batched-128",
+   "tag": "gpt-4o-mini_lme_m_con_k50_batched",
+   "n": 500,
+   "overall": 72.8,
+   "overall_ci95": [
+    68.8,
+    76.6
+   ],
+   "task_averaged": 72.56,
+   "prompt_tokens_per_q": 11700.7,
+   "prompt_tokens_source": "gpt-4o-mini_lme_m_con_k50_batched.records.jsonl (mean usage.generate.tokens_in; summaries are per-process and undercount resumed arms)",
+   "records": "results/repro/gpt-4o-mini_lme_m_con_k50_batched.records.jsonl",
+   "eval_cost_usd": 4.614834
+  }
+ ]
+}
