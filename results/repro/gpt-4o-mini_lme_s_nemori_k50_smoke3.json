@@ -1,0 +1,172 @@
+{
+  "stamp": {
+    "dataset": "s",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 3,
+    "n_answered": 3,
+    "n_judged": 3,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 3,
+    "full_context": false,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "nemori"
+    ],
+    "read_path": "retrieval_top50",
+    "retrieval_k": 50,
+    "budget_tokens": 20000,
+    "embed_batch": 128,
+    "history_format": "json",
+    "embedder": "text-embedding-3-small",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "52e74a333fe13361b46f25c16299a854aa219cff",
+    "utc_started": "2026-08-19T06:52:13.715426+00:00",
+    "utc_finished": "2026-08-19T07:56:04.584858+00:00",
+    "dry_run": false,
+    "resumed_from_records": 0,
+    "max_spend_usd": 2.0,
+    "prior_spend_usd": 0.0
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 100.0,
+        "n": 3
+      }
+    },
+    "task_averaged": 100.0,
+    "overall": 100.0,
+    "abstention": null,
+    "n": 3
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "extract/segment": {
+      "calls": 1561,
+      "tokens_in": 1531362,
+      "tokens_out": 19883,
+      "latency_ms_avg": 1248.2,
+      "errors": 0
+    },
+    "distill/narrate": {
+      "calls": 492,
+      "tokens_in": 486461,
+      "tokens_out": 111722,
+      "latency_ms_avg": 3158.1,
+      "errors": 0
+    },
+    "distill/predict_calibrate": {
+      "calls": 901,
+      "tokens_in": 572233,
+      "tokens_out": 125484,
+      "latency_ms_avg": 2427.1,
+      "errors": 0
+    },
+    "generate": {
+      "calls": 3,
+      "tokens_in": 47773,
+      "tokens_out": 529,
+      "latency_ms_avg": 6341.3,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 3,
+      "tokens_in": 891,
+      "tokens_out": 5,
+      "latency_ms_avg": 648.6,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 2579,
+      "tokens_in": 571820,
+      "tokens_out": 0,
+      "latency_ms_avg": 419.7,
+      "errors": 0
+    }
+  },
+  "llm_budget_by_row": {
+    "extract/segment": {
+      "calls": 1561,
+      "tokens_in": 1531362,
+      "tokens_out": 19883,
+      "latency_ms_avg": 1248.2,
+      "errors": 0
+    },
+    "distill/narrate": {
+      "calls": 492,
+      "tokens_in": 486461,
+      "tokens_out": 111722,
+      "latency_ms_avg": 3158.1,
+      "errors": 0
+    },
+    "distill/predict_calibrate": {
+      "calls": 901,
+      "tokens_in": 572233,
+      "tokens_out": 125484,
+      "latency_ms_avg": 2427.1,
+      "errors": 0
+    },
+    "generate|51a45a95": {
+      "calls": 1,
+      "tokens_in": 15946,
+      "tokens_out": 220,
+      "latency_ms_avg": 4094.7,
+      "errors": 0
+    },
+    "judge|51a45a95": {
+      "calls": 1,
+      "tokens_in": 342,
+      "tokens_out": 2,
+      "latency_ms_avg": 699.3,
+      "errors": 0
+    },
+    "generate|118b2229": {
+      "calls": 1,
+      "tokens_in": 16012,
+      "tokens_out": 189,
+      "latency_ms_avg": 3138.7,
+      "errors": 0
+    },
+    "judge|118b2229": {
+      "calls": 1,
+      "tokens_in": 311,
+      "tokens_out": 2,
+      "latency_ms_avg": 719.1,
+      "errors": 0
+    },
+    "generate|e47becba": {
+      "calls": 1,
+      "tokens_in": 15815,
+      "tokens_out": 120,
+      "latency_ms_avg": 11790.4,
+      "errors": 0
+    },
+    "judge|e47becba": {
+      "calls": 1,
+      "tokens_in": 238,
+      "tokens_out": 1,
+      "latency_ms_avg": 527.4,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 2756.7
+  },
+  "records_file": "gpt-4o-mini_lme_s_nemori_k50_smoke3.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_s_nemori_k50_smoke3.llm-trace.jsonl.gz",
+  "cost_usd": 0.563959,
+  "cost_usd_this_process": 0.563959
+}

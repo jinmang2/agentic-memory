@@ -742,3 +742,72 @@ workers buy contention rather than speed.
 
 Reproduce: `lme_c4_analysis.py --arms gpt-4o-mini_lme_s_con_k50_batched
 gpt-4o-mini_lme_m_con_k50_batched` → `results/repro/lme_m_paired.json`.
+
+---
+
+## organizer × `_s` — measured, quoted, and NOT run (2026-08-19)
+
+§9.4.5 is the campaign's largest remaining hole: **no LongMemEval number we have
+has ever had a memory system in it.** Every arm through 2026-08-19 is passthrough
+plus an embedding index. The arm that would close it was wired, smoke-tested and
+then deliberately not run. This section records what the smoke bought, because
+the reasons not to run are worth more than the arm would have been.
+
+### What the $0.564 smoke measured (nemori × `_s`, 3/3 complete)
+
+| | per instance |
+|---|---|
+| write calls | **~984** (segment 520 · narrate 164 · predict_calibrate 300) |
+| write cost | **$0.188** |
+| wall clock | **34–46 min** |
+| evidence_recall | 1.0 on all three |
+
+⇒ **500 questions ≈ $94 and 26 h at workers=12; 150 ≈ $28 and 8 h.**
+
+**The research doc's "$50–70 for Nemori" was wrong**, and so is the basis of the
+A-Mem (~$110) and Zep (~$210) figures beside it: all three came from scaling a
+LoCoMo measurement by 22.5x rather than from rendering this benchmark's prompts.
+The measured number is what §10.3 now carries.
+
+### Why it was not run — three reasons, in order of weight
+
+**1. As wired, the arm cannot answer the question it exists for.** `k` is applied
+**per memory type**, and `render()` spends a shared `budget_tokens` in score order
+until an item does not fit. Nemori declares three produced types, passthrough one:
+
+| arm | candidates | what actually reached the reader |
+|---|---|---|
+| passthrough k50 | 50 | 51,894 / 70,605 chars — **under the 80,000 budget** |
+| nemori k50 | 150 | 79,943 / 80,275 chars — **at the budget, truncated** |
+
+So the reader gets **1.14–1.54x more context** in the organizer arm, not because
+the organizer is better but because it has more material to fill a budget the
+other arm cannot fill. If the organizer wins, we cannot say whether it was the
+organizer or the context; if it loses, we cannot say whether it was the organizer
+or the truncation. This campaign has already measured that context volume moves
+this score hard (C6: nine times less context won by 21 points), so the confound
+is not small enough to wave through.
+
+**2. Four independent nulls already point the same way.** ACE's playbook did not
+separate from no-learning in any configuration; ReasoningBank did not separate
+from base (48.24 → 48.24); Zep's §4.1 operating point did not separate; LoCoMo's
+five arms give ρ(write calls, J) = **−0.60**; and MemMachine's own published
+ablation puts every ingest improvement together at +0.8 against +4.2 for
+retrieval depth. The prior on a positive result here is low, and at an affordable
+n=150 the paired interval is ±6–7 pp — wide enough that a null would only rule
+out effects larger than the ones nobody is claiming.
+
+**3. LongMemEval is lane B, not the goal.** Phase 2 scoped five tracks plus demos
+in service of productization; fidelity is the instrument. The chain C1–C7 is
+complete and the shortage is not evidence — it is that §9.5's presentation
+structure has been updated through 3c and nothing has been written against it.
+
+### Known capture defect, recorded rather than fixed
+
+`capture["retrieved"]` is built from `bundle.items`, and `render()` truncates
+**after** that. So `evidence_recall` scores *what retrieval returned*, not *what
+the prompt contained* — an evidence session can be in the bundle and cut from the
+context, and the field would still read 1.0. It is right for a passthrough arm
+whose bundle fits inside the budget, and wrong exactly where it would matter most:
+an organizer arm that overflows. Fixing it means scoring the rendered selection,
+not the bundle. Cheap, and pointless until an arm needs it.
