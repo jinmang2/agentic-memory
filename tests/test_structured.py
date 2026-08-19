@@ -142,3 +142,22 @@ def test_drops_counter_stays_threadsafe(monkeypatch):
     for t in threads:
         t.join()
     assert caller.drops["r"] == 20
+
+
+def test_transport_recoveries_count_only_retries_that_worked(monkeypatch):
+    """The field's own comment defines a recovery as a transport failure a retry
+    RECOVERED. The counter used to increment in the except branch — before the
+    retry's outcome existed — so it counted attempts (`APIEmbedder` got this
+    right first; `StructuredCaller` now matches)."""
+    monkeypatch.setattr("agmem.llm.structured.time.sleep", lambda s: None)
+    caller, _ = _caller([TimeoutError("x"), TimeoutError("x"), '{"ok": 1}'], transport_retries=3)
+    assert caller.call("extract", "p", {"type": "object"}, required_keys=("ok",)) == {"ok": 1}
+    assert caller.transport_recoveries == {"extract": 2}
+
+
+def test_spent_retries_that_never_recovered_are_not_recoveries(monkeypatch):
+    monkeypatch.setattr("agmem.llm.structured.time.sleep", lambda s: None)
+    caller, _ = _caller([TimeoutError("x")] * 10, transport_retries=2)
+    assert caller.call("extract", "p", {"type": "object"}, required_keys=("ok",)) is None
+    assert caller.drops == {"extract": 1}
+    assert caller.transport_recoveries == {}, "retries were spent; none of them recovered anything"

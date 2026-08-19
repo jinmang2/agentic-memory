@@ -241,10 +241,9 @@ class APIEmbedder:
             try:
                 resp = self._client.embeddings.create(**kwargs)
                 # Counted here and not at the moment of the retry, because a
-                # recovery is a retry that WORKED. `StructuredCaller` increments
-                # its own counter in the except branch, so a call that retried
-                # twice and then dropped still reports two "recoveries" there —
-                # this does not copy that.
+                # recovery is a retry that WORKED. `StructuredCaller` once
+                # incremented in its except branch — attempts, not recoveries —
+                # and now follows this same count-on-success pattern.
                 self.transport_recoveries += spent
                 break
             except Exception as exc:

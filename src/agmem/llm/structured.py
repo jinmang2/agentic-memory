@@ -175,6 +175,7 @@ class StructuredCaller:
 
         last_output = ""
         transport_left = self.transport_retries
+        transport_spent = 0  # retries taken since the last reply that came back
         attempt = 0
         while attempt <= max_retries:
             try:
@@ -208,10 +209,21 @@ class StructuredCaller:
                     # fault and change the prompt under test.
                     transport_left -= 1
                     time.sleep(2.0 ** (self.transport_retries - transport_left))
-                    with self._lock:
-                        self.transport_recoveries[role] = self.transport_recoveries.get(role, 0) + 1
+                    transport_spent += 1
                     continue
                 break
+            if transport_spent:
+                # Credited only once a reply actually came back, because a
+                # recovery is a retry that WORKED. This used to increment in the
+                # except branch above — counting ATTEMPTS — so a call that
+                # retried twice and then dropped still reported two "recoveries",
+                # the opposite of the field's own definition. `APIEmbedder` had
+                # the correct pattern first; this now matches it.
+                with self._lock:
+                    self.transport_recoveries[role] = (
+                        self.transport_recoveries.get(role, 0) + transport_spent
+                    )
+                transport_spent = 0
             parsed = coerce_to_schema(extract_json(last_output), schema)
             if parsed is not None and all(k in parsed for k in required_keys):
                 return parsed
