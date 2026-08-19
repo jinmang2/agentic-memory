@@ -7,6 +7,7 @@ profile so runs are comparable.
 
 from __future__ import annotations
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -184,6 +185,26 @@ class AgmemConfig:
         )
 
 
+def _resolve_api_key(value: str) -> str:
+    """Resolve the ``env:NAME`` indirection `agmem.example.toml` documents.
+
+    The convention existed in the example file long before any code honored it:
+    a literal ``"env:OPENAI_API_KEY"`` was passed straight through to the
+    OpenAI client and failed as a 401 at the first call, far from the config
+    that caused it. Resolution happens here, at load time, so an unset variable
+    fails loudly where it is named. Any other value — including the
+    ``"not-needed"`` default local servers ignore — passes through untouched."""
+    if value.startswith("env:"):
+        name = value[len("env:") :]
+        resolved = os.environ.get(name)
+        if not resolved:
+            raise ValueError(
+                f"api_key = {value!r}: environment variable {name!r} is not set (or empty)"
+            )
+        return resolved
+    return value
+
+
 def load_config(path: str | Path) -> AgmemConfig:
     """Parse a TOML config file into an `AgmemConfig`. Missing `path` or
     malformed TOML raises (`FileNotFoundError`/`tomllib.TOMLDecodeError`) —
@@ -213,9 +234,17 @@ def load_config(path: str | Path) -> AgmemConfig:
         llm_roles[role] = RoleConfig(
             endpoint=cfg["endpoint"],
             model=cfg["model"],
-            api_key=cfg.get("api_key", "not-needed"),
+            api_key=_resolve_api_key(cfg.get("api_key", "not-needed")),
             temperature=cfg.get("temperature", 0.1),
             max_tokens=cfg.get("max_tokens", 1024),
+            # Dropped here until 2026-08-19, which made part of the model
+            # registry unreachable from TOML: gpt-5.6-luna rejects `max_tokens`
+            # (needs `max_completion_tokens`), and endpoints needing request
+            # extras (vLLM guided_json, reasoning_effort) need `extra_body` —
+            # the Python API could set both, so only the runbook's TOML path
+            # silently had the smaller reachable set.
+            max_tokens_key=cfg.get("max_tokens_key", "max_tokens"),
+            extra_body=dict(cfg.get("extra_body", {})),
         )
 
     defaults = AgmemConfig()
@@ -229,6 +258,9 @@ def load_config(path: str | Path) -> AgmemConfig:
         strict=raw.get("profile", {}).get("strict", False),
         sync_write=raw.get("write", {}).get("sync", defaults.sync_write),
         use_guided_json=raw.get("llm_options", {}).get("guided_json", defaults.use_guided_json),
+        structured_reply_retries=raw.get("llm_options", {}).get(
+            "structured_reply_retries", defaults.structured_reply_retries
+        ),
         lexical_types=tuple(retrieval.get("lexical_types", defaults.lexical_types)),
         bfs_types=tuple(retrieval.get("bfs_types", defaults.bfs_types)),
         bfs_max_depth=retrieval.get("bfs_max_depth", defaults.bfs_max_depth),

@@ -103,3 +103,70 @@ def test_load_config_reads_read_path_knobs(tmp_path):
         defaults.link_expansion_cap,
         defaults.attach_sources_top_r,
     )
+
+
+def test_load_config_plumbs_role_transport_fields_and_reply_retries(tmp_path, monkeypatch):
+    """`max_tokens_key`/`extra_body`/`structured_reply_retries` were dropped by
+    the TOML loader while the Python API took them, so a TOML-driven run could
+    not target gpt-5.6-luna (`max_completion_tokens`-only) at all."""
+    from agmem.config import load_config
+
+    path = tmp_path / "agmem.toml"
+    path.write_text(
+        "[llm_options]\n"
+        "structured_reply_retries = 4\n"
+        "[llm.judge]\n"
+        'endpoint = "https://api.openai.com/v1"\n'
+        'model = "gpt-5.6-luna"\n'
+        'api_key = "env:AGMEM_TEST_KEY"\n'
+        'max_tokens_key = "max_completion_tokens"\n'
+        "[llm.judge.extra_body]\n"
+        'reasoning_effort = "low"\n'
+    )
+    monkeypatch.setenv("AGMEM_TEST_KEY", "sk-from-env")
+    cfg = load_config(path)
+    role = cfg.llm_roles["judge"]
+    assert role.max_tokens_key == "max_completion_tokens"
+    assert role.extra_body == {"reasoning_effort": "low"}
+    assert role.api_key == "sk-from-env"  # the documented env: indirection, resolved
+    assert cfg.structured_reply_retries == 4
+
+    # omitted keys keep the RoleConfig/AgmemConfig defaults, as everywhere else
+    bare = tmp_path / "bare.toml"
+    bare.write_text('[llm.judge]\nendpoint = "http://localhost:8080/v1"\nmodel = "m"\n')
+    role = load_config(bare).llm_roles["judge"]
+    assert (role.max_tokens_key, role.extra_body, role.api_key) == (
+        "max_tokens",
+        {},
+        "not-needed",
+    )
+    assert load_config(bare).structured_reply_retries == 1
+
+
+def test_load_config_env_api_key_unset_fails_at_load_not_at_first_call(tmp_path, monkeypatch):
+    """An unset variable must fail HERE, where the config names it — the raw
+    `env:NAME` string used to travel to the endpoint and die as a 401."""
+    import pytest
+
+    from agmem.config import load_config
+
+    monkeypatch.delenv("AGMEM_TEST_MISSING_KEY", raising=False)
+    path = tmp_path / "agmem.toml"
+    path.write_text(
+        "[llm.judge]\n"
+        'endpoint = "https://api.openai.com/v1"\n'
+        'model = "m"\n'
+        'api_key = "env:AGMEM_TEST_MISSING_KEY"\n'
+    )
+    with pytest.raises(ValueError, match="AGMEM_TEST_MISSING_KEY"):
+        load_config(path)
+
+
+def test_load_config_literal_api_key_passes_through_untouched(tmp_path):
+    from agmem.config import load_config
+
+    path = tmp_path / "agmem.toml"
+    path.write_text(
+        '[llm.judge]\nendpoint = "http://localhost:8080/v1"\nmodel = "m"\napi_key = "sk-literal"\n'
+    )
+    assert load_config(path).llm_roles["judge"].api_key == "sk-literal"

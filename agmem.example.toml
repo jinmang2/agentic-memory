@@ -27,11 +27,48 @@ max_tokens = 1024
 [llm.distill]
 endpoint = "http://localhost:8080/v1"
 model = "qwen3-0.6b"
+# 아래 두 키는 로더가 RoleConfig로 그대로(verbatim) 전달한다:
+# extra_body = { chat_template_kwargs = { enable_thinking = false } }
+#                      # OpenAI 호환 요청 본문에 그대로 병합 (vLLM guided_json 등)
+# max_tokens_key = "max_completion_tokens"
+#                      # 일부 신형 모델(gpt-5.6-luna 등)은 max_tokens를 거부하고
+#                      # max_completion_tokens를 요구 — max_tokens를 보낼 kwarg 이름
 
 # [llm.judge]
 # endpoint = "https://api.openai.com/v1"
 # model = "gpt-4o-2024-08-06"              # LongMemEval judge pin
-# api_key = "env:OPENAI_API_KEY"
+# api_key = "env:OPENAI_API_KEY"      # "env:NAME"은 로더가 os.environ["NAME"]으로
+#                                      # 해석한다 — 미설정이면 명시적 에러 (silent 통과 없음)
+
+# 전역 LLM 옵션 — 역할별이 아니라 AgmemConfig 전역 knob (src/agmem/config.py `load_config`)
+# [llm_options]
+# structured_reply_retries = 1   # 구조화 응답이 깨졌을 때 허용하는 교정 턴 수 (전역)
+# guided_json = true             # vLLM guided_json 사용 여부
+
+# read-path 노브 — src/agmem/config.py `load_config`가 읽는 키 전부.
+# 생략된 키는 AgmemConfig 기본값 유지 (아래 주석 값이 곧 기본값).
+[retrieval]
+# lexical_types = ["episodic"]         # BM25/FTS 렉시컬 채널을 dense와 융합할 메모리 타입
+# bfs_types = []                       # Zep 그래프 BFS 채널(φ_bfs)을 켤 타입 — Zep 외엔 없음
+# bfs_max_depth = 3                    # BFS 탐색 깊이 (upstream MAX_SEARCH_DEPTH)
+# rrf_k = 60                           # RRF 융합 상수: score = 1/(rrf_k + rank)
+# dense_min_score = 0.0                # dense 채널 cosine 컷오프, 0 = off (Zep 레시피는 0.6)
+# reranker_params = {}                 # reranker 생성자 인자 (예: {model_name = "BAAI/bge-reranker-v2-m3"})
+# link_expansion_cap = 5               # A-Mem 1-hop 링크 확장 예산, 0 = off
+# link_expansion_per_hit = false       # true = hit마다 별도 예산 (upstream 형태), false = 전역 공유
+# attach_sources_top_r = 2             # Nemori r: 원문 메시지를 붙일 상위 에피소드 수
+# graph_expansion_cap = 0              # GraphRecall(엔티티→인접 엣지) 예산, 0 = off (기본)
+# graph_expansion_hops = 1             # GraphRecall 홉 수
+# task_graph_expansion_cap = 5         # G-Memory 태스크 그래프 1-hop 확장 (Eq.5), 0 = off
+# task_graph_insight_cap = 10          # G-Memory 인사이트 서빙 캡 (Eq.6; 발표 하네스는 3)
+# page_recall_cap = 7                  # MemoryOS 2단계 페이지 리콜 큐 (pypi 계보; eval 계보는 10)
+# page_recall_threshold = 0.1          # 페이지 유사도 임계
+# page_recall_segment_threshold = 0.1  # 1단계 세그먼트 게이트
+# page_recall_keyword_similarity = "containment_mean"  # eval 계보 공식; jaccard = chromadb 계보
+# memmachine_expand_context = 0        # MemMachine 문맥 확장 (upstream query_memory 기본; LoCoMo 런은 3)
+# memmachine_context_limit = 20        # MemMachine 문맥 리밋 (LoCoMo 런은 30)
+# query_strategy = "direct"            # 읽기측 제어 정책 — 미설정(기본)이면 단일 검색, 설정 시 질문마다 LLM 지출
+# query_strategy_limit = 20            # 정책의 rerank/truncate 캡 (upstream search_limit=20)
 
 # [override]
 # vector_store = "NumpyVectorStore"        # profile 기본값 강제 오버라이드
