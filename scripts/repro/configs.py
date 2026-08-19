@@ -266,6 +266,22 @@ CONFIGS: dict[str, RunnerConfig] = {
             link_expansion_cap=11,
             link_expansion_per_hit=True,
         ),
+        # Paper Table 3 "w/o memory evolution" ablation arm — the switch docs/14's
+        # "evolution ablation 주의" callout and phase3_ablation.sh recorded as
+        # missing. Identical to `amem` except the organizer skips the batched
+        # Ps2+Ps3 EVOLVE_PROMPT call after Ps1 note construction: ADD-only notes,
+        # no links (both upstream editions decide links inside that same call, so
+        # they cannot survive the skip — rationale in AMemOrganizer.__init__),
+        # half the write calls. docs/14 sketched this knob as a `--no-evolution`
+        # runner flag; it lands as a --config name instead because that is this
+        # table's established pattern ("an experiment arm is a --config name,
+        # reproducible from the CLI line alone") and needs zero runner changes.
+        # run_ready=False: this write path has never survived a real ingest (it
+        # is a strict subset of amem's, but the gate attests runs, not
+        # reasoning) — pilot one conv with --allow-unverified-config first.
+        RunnerConfig(
+            "amem_noevolve", lambda: [AMemOrganizer(evolve=False)], ("notes",), run_ready=False
+        ),
         # Track 3. The study read upstream prose as "at least 4-6 LLM calls per
         # episode", which at 5,882 turns would be 23.5k-35.3k write calls. The
         # CountingLLM pass has now measured it against this port instead of

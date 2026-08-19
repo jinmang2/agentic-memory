@@ -529,6 +529,63 @@ def test_amem_string_shaped_neighbor_updates_do_not_lose_the_note():
         mem.close()
 
 
+def test_amem_evolve_off_skips_the_evolution_call_and_its_ops():
+    """The Table 3 w/o-evolution ablation switch docs/14's "evolution ablation
+    주의" callout recorded as unimplemented. evolve=False must change the LLM
+    call count observably (that is what the ablation isolates): Ps1 still runs,
+    the batched Ps2+Ps3 EVOLVE_PROMPT call never fires, and no LINK/UPDATE ops
+    form — links have no non-evolution source in either upstream edition, so
+    ADD is the only op kind the arm may emit. The default arm on the same
+    inputs pays the distill call; that pairing is the call-count evidence."""
+    from agmem.organizers.amem import AMemOrganizer
+
+    def two_note_llm():
+        return StubLLM(
+            {
+                "extract": [
+                    {"keywords": ["k1"], "context": "c1", "tags": ["t1"]},
+                    {"keywords": ["k2"], "context": "c2", "tags": ["t2"]},
+                ],
+                "distill": [
+                    {"should_evolve": True, "connections": [], "new_note_tags": ["t2x"]},
+                ],
+            }
+        )
+
+    # default arm (evolve=True): 2nd message retrieves the 1st note as a
+    # neighbor and spends the evolution call — 3 write calls total
+    llm_on = two_note_llm()
+    mem_on = make_mem(AMemOrganizer(), llm_on)
+    try:
+        assert mem_on.organizers[0].evolve is True  # default = pre-switch behavior
+        mem_on.add_message("first note about topic alpha")
+        mem_on.add_message("second note about topic alpha")
+        assert [role for role, _ in llm_on.calls] == ["extract", "extract", "distill"]
+    finally:
+        mem_on.close()
+
+    # ablation arm (evolve=False): same inputs, distill never fires — the
+    # queued response is still sitting unconsumed, and it was never even
+    # requested (a drop would mean the call happened and failed)
+    llm_off = two_note_llm()
+    mem_off = make_mem(AMemOrganizer(evolve=False), llm_off)
+    try:
+        mem_off.add_message("first note about topic alpha")
+        mem_off.add_message("second note about topic alpha")
+        assert [role for role, _ in llm_off.calls] == ["extract", "extract"]
+        assert len(llm_off.responses["distill"]) == 1
+        assert llm_off.drops == {}
+        ops = mem_off.log.tail(20)
+        note_ops = [o for o in ops if o.target_type == "notes"]
+        assert {o.op for o in note_ops} == {OpType.ADD}
+        assert len(note_ops) == 2  # both notes stored, Ps1 metadata intact
+        notes = mem_off.doc_store.list_items("notes", namespace=mem_off.namespace)
+        assert {n["context"] for n in notes} == {"c1", "c2"}
+        assert all(not n.get("links") for n in notes)
+    finally:
+        mem_off.close()
+
+
 def test_amem_degrades_without_llm():
     from agmem.organizers.amem import AMemOrganizer
 

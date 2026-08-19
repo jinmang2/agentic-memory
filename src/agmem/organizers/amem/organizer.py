@@ -172,16 +172,34 @@ class AMemOrganizer(Organizer):
     for the upstream bug fixes this port applies). Per message: construct a
     note, retrieve ``top_k`` neighbors, then one batched evolution call
     decides links/tag refinements — all as returned ADD/LINK/UPDATE
-    MemoryOps, never direct store writes."""
+    MemoryOps, never direct store writes. ``evolve=False`` is the Table 3
+    w/o-evolution ablation arm: Ps1 only, ADD ops only — see ``__init__``
+    for why it suppresses link formation too."""
 
     name = "amem"
 
     produces = ("notes",)
 
-    def __init__(self, top_k: int = 5) -> None:
+    def __init__(self, top_k: int = 5, evolve: bool = True) -> None:
         # k=5 is the upstream CODE default (hardcoded in both editions'
         # find_related_memories); the paper's k=10 is the QA retrieval k.
         self.top_k = top_k
+        # evolve=False is the paper's Table 3 "w/o memory evolution" ablation arm
+        # that docs/14-amem-reproduction.md's "evolution ablation 주의" callout and
+        # scripts/repro/phase3_ablation.sh recorded as unimplemented (follow-up
+        # required). Semantics: Ps1 note construction still runs; the batched
+        # Ps2+Ps3 EVOLVE_PROMPT call is skipped ENTIRELY — 1 write LLM call per
+        # message instead of 2, which is the observable the ablation isolates
+        # (evolution's cost as well as its effect). Because BOTH upstream
+        # editions decide links inside that same call (process_memory's
+        # "strengthen" action; there is no link-only prompt anywhere upstream),
+        # disabling evolution necessarily disables link formation too: the arm
+        # emits ADD ops only. docs/14's sketch said "ADD+LINK만 emit", but a
+        # links-without-evolution arm would need a prompt upstream never had —
+        # fidelity loses either way, and skipping the call is what the ablation
+        # question actually needs. True (the default) is byte-identical to the
+        # pre-switch organizer: same prompts, same call sites, same ops.
+        self.evolve = evolve
 
     def on_message(self, episode: Episode, ctx: OrganizerContext) -> list[MemoryOp]:
         """Runs the full note pipeline (Ps1 construction -> neighbor retrieval
@@ -224,6 +242,13 @@ class AMemOrganizer(Organizer):
             timestamp=episode.timestamp,
         )
         ops = [self._add_op(note, talk_time)]
+
+        # w/o-evolution ablation arm (see __init__): stop after Ps1. Neighbor
+        # retrieval is skipped too — its only consumer is the evolution prompt,
+        # so running it would spend an embed+search per message on data nothing
+        # reads, and the retrieval is not itself part of what the ablation keeps.
+        if not self.evolve:
+            return ops
 
         # 2. neighbor retrieval — embedding includes metadata (A-Mem finding)
         query_embedding = ctx.embedder.embed([note.embedding_text()])[0]

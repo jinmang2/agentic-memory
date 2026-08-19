@@ -4,15 +4,13 @@
 # ablation shows evolution's biggest lift is on Temporal (+14.6 F1). Full LoCoMo,
 # WujiangXu-faithful eval.
 #
-# !! FOLLOW-UP REQUIRED — no evolution-off switch exists yet. !!
-# Our AMemOrganizer (src/agmem/organizers/amem.py) gates evolution on the LLM's
-# per-note `should_evolve` verdict (amem.py:209), NOT on a constructor flag.
-# There is currently NO `AMemOrganizer(evolve=False)` (or equivalent) to force
-# link-generation-only. To run this ablation faithfully, first add such a switch
-# (e.g. skip the EVOLVE_PROMPT call and emit only ADD + LINK ops when
-# evolution is disabled), then wire a `--no-evolution` flag into
-# scripts/exp_amem_repro.py. Until then this script only runs the Full arm and
-# documents the gap.
+# 2026-08-19: the evolution-off switch EXISTS — `AMemOrganizer(evolve=False)`
+# (src/agmem/organizers/amem/organizer.py), reachable as `--config amem_noevolve`.
+# The switch is ADD-only, not the "ADD + LINK" this banner once sketched: upstream
+# decides links INSIDE the evolve call (the "strengthen" action — there is no
+# link-only prompt to keep), so skipping evolution skips links with it, which is
+# exactly what Table 3's w/o-evolution ablation removes. The arm is gated
+# run_ready=False until a one-conv pilot survives (`--allow-unverified-config`).
 # Cost (Full arm only): ~$1.6 on gpt-4o-mini. With the ablation arm added: ~$3.2.
 # Prereq: repo-root .env.local with OPENAI_API_KEY; embedder downloaded.
 set -euo pipefail
@@ -37,7 +35,8 @@ uv run python scripts/exp_amem_repro.py \
     --expand-links off \
     --workers "$WORKERS"
 
-# w/o-evolution arm — BLOCKED until an evolution-off switch is implemented.
-# echo "TODO: add AMemOrganizer(evolve=False) + --no-evolution flag, then:"
+# w/o-evolution arm — switch implemented 2026-08-19; still spend-gated (approval +
+# a one-conv pilot to lift run_ready=False). When approved:
 # uv run python scripts/exp_amem_repro.py --conv all --k 10 \
-#     --eval-mode wujiang --expand-links off --no-evolution
+#     --eval-mode wujiang --expand-links off \
+#     --config amem_noevolve --allow-unverified-config

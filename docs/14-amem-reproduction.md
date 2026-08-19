@@ -236,6 +236,17 @@ bash scripts/repro/phase3_ablation.sh  # rung 3: Full vs w/o-evolution (아래 �
 > ablation을 하려면 (1) evolution 비활성 시 `EVOLVE_PROMPT` 콜을 건너뛰고 ADD+LINK만
 > emit하는 스위치를 추가하고, (2) `exp_amem_repro.py`에 `--no-evolution` 플래그를 배선해야
 > 한다. `phase3_ablation.sh`는 현재 Full arm만 돌리고 이 gap을 명시한다 → **follow-up 필요**.
+>
+> **(2026-08-19) 스위치 구현 완료** — `AMemOrganizer(evolve=False)`가 Ps1 노트 구성 뒤의
+> 배치 Ps2+Ps3 `EVOLVE_PROMPT` 콜을 통째로 건너뛴다(메시지당 write 콜 2→1; neighbor
+> retrieval도 소비자가 그 프롬프트뿐이라 함께 skip). 위 (1)의 "ADD+LINK만 emit"은 문자
+> 그대로는 구현하지 않았다: 두 업스트림 에디션 모두 링크를 바로 그 배치 콜의 "strengthen"
+> 액션 안에서 결정하므로(별도 link-only 프롬프트가 상류에 없음) evolution을 끄면 링크
+> 생성도 함께 꺼진다 → **ADD만 emit** (근거 전문은 `AMemOrganizer.__init__` 주석). (2)는
+> `--no-evolution` 플래그 대신 configs.py의 arm 패턴을 따라 **`--config amem_noevolve`**로
+> 배선했다(run_ready=False — 캠페인 전 `--allow-unverified-config`로 conv0 pilot 필요).
+> 기본값 `evolve=True`는 프롬프트·콜·op 전부 스위치 이전과 바이트 동일. **ablation 자체는
+> 여전히 미실행**(지출 승인 별도).
 
 ### 산출물 & 영속성 (Artifacts & persistence) — 재현성 계약
 
