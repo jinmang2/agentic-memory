@@ -77,3 +77,6 @@ docs/_internal/
 # $0 quote artifacts: reproducible with --dry-run, and they must not look
 # like measurements sitting next to the paid ones.
 results/repro/dryrun/
+
+# Claude Code local session state (hooks wiring uses absolute machine paths; lock is runtime)
+.claude/

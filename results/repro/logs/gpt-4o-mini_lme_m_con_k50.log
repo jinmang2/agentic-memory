@@ -1,0 +1,64 @@
+2026-08-18 15:01:53,324 INFO agmem.repro.lme: dataset=longmemeval_m_cleaned.json n=500 sha256=9d79e5524794 reader=gpt-4o-mini reading=con judge=gpt-4o-2024-08-06
+2026-08-18 15:01:53,330 INFO agmem.repro.lme: 2 earlier rows carry no verdict — they will be re-answered
+2026-08-18 15:01:53,330 INFO agmem.repro.lme: resuming: 48/500 questions already answered
+2026-08-18 15:01:54,564 INFO agmem.repro.lme: earlier processes of this run spent $0.1323 (from the trace)
+2026-08-18 15:02:27,567 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (1 truncated so far)
+2026-08-18 15:02:27,656 WARNING agmem.embed.api_embedder: text-embedding-3-small rejected an input as over 8192 tokens — halving the character budget to 12288 and retrying
+2026-08-18 15:02:27,657 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 12288 chars (2 truncated so far)
+2026-08-18 15:11:00,384 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (3 truncated so far)
+2026-08-18 15:11:00,476 WARNING agmem.embed.api_embedder: text-embedding-3-small rejected an input as over 8192 tokens — halving the character budget to 12288 and retrying
+2026-08-18 15:11:00,476 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 12288 chars (4 truncated so far)
+2026-08-18 15:31:16,529 WARNING agmem.embed.api_embedder: embedding input of 41886 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (5 truncated so far)
+2026-08-18 16:02:22,988 WARNING agmem.embed.api_embedder: embedding input of 53474 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (6 truncated so far)
+2026-08-18 16:17:57,113 INFO openai._base_client: Retrying request to /embeddings in 0.421240 seconds
+2026-08-18 16:17:57,144 INFO openai._base_client: Retrying request to /embeddings in 0.412179 seconds
+2026-08-18 16:17:57,245 INFO openai._base_client: Retrying request to /embeddings in 0.417555 seconds
+2026-08-18 16:17:57,296 INFO openai._base_client: Retrying request to /embeddings in 0.478254 seconds
+2026-08-18 16:17:57,347 INFO openai._base_client: Retrying request to /embeddings in 0.406574 seconds
+2026-08-18 16:17:57,360 INFO openai._base_client: Retrying request to /embeddings in 0.457488 seconds
+2026-08-18 16:17:57,392 INFO openai._base_client: Retrying request to /embeddings in 0.465799 seconds
+2026-08-18 16:17:57,417 INFO openai._base_client: Retrying request to /embeddings in 0.482654 seconds
+2026-08-18 16:17:57,450 INFO openai._base_client: Retrying request to /embeddings in 0.437675 seconds
+2026-08-18 16:17:57,451 INFO openai._base_client: Retrying request to /embeddings in 0.384902 seconds
+2026-08-18 16:17:57,452 INFO openai._base_client: Retrying request to /embeddings in 0.400234 seconds
+2026-08-18 16:17:57,474 INFO openai._base_client: Retrying request to /embeddings in 0.438568 seconds
+2026-08-18 16:21:32,724 INFO agmem.repro.lme: 25/452 answered
+2026-08-18 17:00:49,935 INFO openai._base_client: Retrying request to /embeddings in 0.451716 seconds
+2026-08-18 17:00:51,333 INFO openai._base_client: Retrying request to /embeddings in 0.419725 seconds
+2026-08-18 17:00:51,335 INFO openai._base_client: Retrying request to /embeddings in 0.492054 seconds
+2026-08-18 17:00:51,339 INFO openai._base_client: Retrying request to /embeddings in 0.428699 seconds
+2026-08-18 17:00:51,395 INFO openai._base_client: Retrying request to /embeddings in 0.471860 seconds
+2026-08-18 17:00:51,419 INFO openai._base_client: Retrying request to /embeddings in 0.458330 seconds
+2026-08-18 17:00:51,425 INFO openai._base_client: Retrying request to /embeddings in 0.428336 seconds
+2026-08-18 17:00:51,431 INFO openai._base_client: Retrying request to /embeddings in 0.419967 seconds
+2026-08-18 17:00:51,964 INFO openai._base_client: Retrying request to /embeddings in 0.461855 seconds
+2026-08-18 17:00:51,977 INFO openai._base_client: Retrying request to /embeddings in 0.496661 seconds
+2026-08-18 17:00:51,979 INFO openai._base_client: Retrying request to /embeddings in 0.480865 seconds
+2026-08-18 17:00:52,026 INFO openai._base_client: Retrying request to /embeddings in 0.437462 seconds
+2026-08-18 17:05:35,447 INFO openai._base_client: Retrying request to /embeddings in 0.493705 seconds
+2026-08-18 17:09:39,487 WARNING agmem.embed.api_embedder: embedding input of 76591 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (7 truncated so far)
+2026-08-18 17:32:17,558 INFO agmem.repro.lme: 50/452 answered
+2026-08-18 17:38:47,928 WARNING agmem.embed.api_embedder: embedding input of 41886 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (8 truncated so far)
+2026-08-18 17:57:39,694 WARNING agmem.embed.api_embedder: embedding input of 37239 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (9 truncated so far)
+2026-08-18 18:02:18,665 WARNING agmem.embed.api_embedder: embedding input of 53474 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (10 truncated so far)
+2026-08-18 18:18:54,351 INFO agmem.repro.lme: 75/452 answered
+2026-08-18 18:27:54,342 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (11 truncated so far)
+2026-08-18 18:27:54,442 WARNING agmem.embed.api_embedder: text-embedding-3-small rejected an input as over 8192 tokens — halving the character budget to 12288 and retrying
+2026-08-18 18:27:54,443 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 12288 chars (12 truncated so far)
+2026-08-18 20:48:51,556 INFO openai._base_client: Retrying request to /embeddings in 0.424102 seconds
+2026-08-18 20:48:51,536 INFO openai._base_client: Retrying request to /embeddings in 0.446595 seconds
+2026-08-18 20:48:51,544 INFO openai._base_client: Retrying request to /embeddings in 0.466830 seconds
+2026-08-18 20:48:51,550 INFO openai._base_client: Retrying request to /embeddings in 0.443162 seconds
+2026-08-18 20:48:51,564 INFO openai._base_client: Retrying request to /embeddings in 0.386994 seconds
+2026-08-18 20:48:51,575 INFO openai._base_client: Retrying request to /embeddings in 0.377070 seconds
+2026-08-18 20:48:51,637 INFO openai._base_client: Retrying request to /embeddings in 0.426321 seconds
+2026-08-18 20:48:51,646 INFO openai._base_client: Retrying request to /embeddings in 0.489063 seconds
+2026-08-18 20:48:51,648 INFO openai._base_client: Retrying request to /embeddings in 0.413137 seconds
+2026-08-18 20:48:51,712 INFO openai._base_client: Retrying request to /embeddings in 0.417398 seconds
+2026-08-18 20:48:51,753 INFO openai._base_client: Retrying request to /embeddings in 0.491518 seconds
+2026-08-18 20:48:51,755 INFO openai._base_client: Retrying request to /embeddings in 0.428791 seconds
+2026-08-18 20:49:08,443 WARNING agmem.embed.api_embedder: embedding input of 37239 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (13 truncated so far)
+2026-08-18 21:19:33,217 WARNING agmem.embed.api_embedder: embedding input of 76591 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (14 truncated so far)
+2026-08-18 21:28:31,384 INFO agmem.repro.lme: 100/452 answered
+2026-08-18 21:28:33,142 WARNING agmem.embed.api_embedder: embedding input of 76591 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (15 truncated so far)
+2026-08-18 21:36:28,363 WARNING agmem.embed.api_embedder: embedding input of 76591 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (16 truncated so far)

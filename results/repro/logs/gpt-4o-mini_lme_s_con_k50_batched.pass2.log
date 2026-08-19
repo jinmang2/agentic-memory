@@ -1,0 +1,5 @@
+2026-08-19 09:48:08,128 INFO agmem.repro.lme: dataset=longmemeval_s_cleaned.json n=500 sha256=d6f21ea9d60a reader=gpt-4o-mini reading=con judge=gpt-4o-2024-08-06
+2026-08-19 09:48:08,162 INFO agmem.repro.lme: 20 earlier rows carry no verdict — they will be re-answered
+2026-08-19 09:48:08,163 INFO agmem.repro.lme: resuming: 480/500 questions already answered
+2026-08-19 09:48:09,560 INFO agmem.repro.lme: earlier processes of this run spent $2.5235 (from the trace)
+2026-08-19 09:48:49,970 INFO agmem.repro.lme: [done] task_averaged=81.41 overall=81.4 abstention=76.67 n=500 -> /home/jinmang2/agentic_memory/results/repro/gpt-4o-mini_lme_s_con_k50_batched.json

@@ -1,0 +1,18 @@
+2026-08-18 13:05:52,736 INFO agmem.repro.lme: dataset=longmemeval_m_cleaned.json n=500 sha256=9d79e5524794 reader=gpt-4o-mini reading=con judge=gpt-4o-2024-08-06
+2026-08-18 13:08:42,026 WARNING agmem.embed.api_embedder: embedding input of 42875 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (1 truncated so far)
+2026-08-18 13:11:52,078 WARNING agmem.embed.api_embedder: embedding input of 41886 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (2 truncated so far)
+2026-08-18 13:21:29,601 WARNING agmem.embed.api_embedder: embedding input of 42875 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (3 truncated so far)
+2026-08-18 13:43:27,119 WARNING agmem.embed.api_embedder: embedding input of 31153 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (4 truncated so far)
+2026-08-18 13:45:31,197 WARNING agmem.embed.api_embedder: embedding input of 42875 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (5 truncated so far)
+2026-08-18 14:02:49,228 WARNING agmem.embed.api_embedder: embedding input of 37239 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (6 truncated so far)
+2026-08-18 14:10:10,932 WARNING agmem.embed.api_embedder: embedding input of 31153 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (7 truncated so far)
+2026-08-18 14:15:45,162 INFO agmem.repro.lme: 25/500 answered
+2026-08-18 14:40:24,835 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (8 truncated so far)
+2026-08-18 14:40:24,921 WARNING agmem.embed.api_embedder: embedding request failed (2 retries left): Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:40:27,061 WARNING agmem.embed.api_embedder: embedding request failed (1 retries left): Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:40:31,148 WARNING agmem.repro.lme: question e48988bc failed: BadRequestError: Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:50:03,653 WARNING agmem.embed.api_embedder: embedding input of 29294 chars exceeds text-embedding-3-small's ceiling — indexing the first 24576 chars (9 truncated so far)
+2026-08-18 14:50:03,753 WARNING agmem.embed.api_embedder: embedding request failed (2 retries left): Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:50:05,849 WARNING agmem.embed.api_embedder: embedding request failed (1 retries left): Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:50:09,944 WARNING agmem.repro.lme: question 51a45a95 failed: BadRequestError: Error code: 400 - {'error': {'message': "Invalid 'input[0]': maximum input length is 8192 tokens.", 'type': 'invalid_request_error', 'param': None, 'code': None}}
+2026-08-18 14:50:09,948 INFO agmem.repro.lme: 50/500 answered
