@@ -70,6 +70,12 @@ class AdmissionGated(Organizer):
         self.name = wrapped.name
         self.produces = wrapped.produces
         self.consumes = wrapped.consumes
+        # Mirrored for the same reason as the three above: `AgenticMemory.bulk_ingest`
+        # routes on this flag, and the class default (False) on the wrapper sent a
+        # gated zep_graph down the batched fast path the flag exists to keep it off —
+        # its on_message reads the store, so batching shows it the full corpus where
+        # per-message ingest shows a prefix.
+        self.observes_store_on_message = wrapped.observes_store_on_message
         # A gate left at novelty_types=None (unset) compares N against the
         # host's own output types. Without this defaulting, wrapping any
         # non-A-Mem organizer would fall back to A-Mem's ("notes",), search a
@@ -145,6 +151,13 @@ class AdmissionGated(Organizer):
 
     def flush_buffer(self, ctx: OrganizerContext) -> list[MemoryOp]:
         return self.wrapped.flush_buffer(ctx)
+
+    def recent_context(self) -> str:
+        """Forwarded, not gated: admission governs writes, and this is a read
+        channel. Benches call it on the instance they hold — this wrapper — so
+        the base class's "" here silently dropped a gated MemoryOS's verbatim
+        STM injection at QA."""
+        return self.wrapped.recent_context()
 
     def retire(self, superseded: set[str]) -> list[MemoryOp]:
         return self.wrapped.retire(superseded)

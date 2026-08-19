@@ -656,3 +656,42 @@ def test_task_driven_organizers_have_no_message_hook_to_gate():
         org = cls()
         assert not overrides(org, "on_message"), cls.__name__
         assert overrides(org, "on_task_end"), cls.__name__
+
+
+def test_wrapper_mirrors_observes_store_on_message():
+    """`AgenticMemory.bulk_ingest` routes on this flag, and it reads it off the
+    instance it holds — the wrapper. The class default (False) here sent a gated
+    zep_graph down the batched fast path the flag exists to keep it off: its
+    on_message reads the store, so batching shows it the full corpus where
+    per-message ingest shows a prefix."""
+    from agmem.organizers.zep_graph import ZepGraphOrganizer
+
+    assert AdmissionGated(ZepGraphOrganizer(), AdmissionGate()).observes_store_on_message is True
+    assert AdmissionGated(AMemOrganizer(), AdmissionGate()).observes_store_on_message is False
+
+
+def test_gated_memoryos_recent_context_passes_through():
+    """MemoryOS's STM is injected verbatim at QA time via `recent_context()`,
+    which benches call on the instance they hold; the base-class "" on the
+    wrapper silently dropped that channel for every gated run."""
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    inner = MemoryOSOrganizer(dialogue_chain=False)
+    gated = AdmissionGated(inner, AdmissionGate())
+    gated.on_message(_ep("I prefer tea over coffee."), _ctx())  # admitted -> lands in STM
+    assert "tea" in inner.recent_context()
+    assert gated.recent_context() == inner.recent_context()
+
+
+def test_chained_recent_context_forwards_the_wrapped_stm():
+    """Same gap, same fix, on the other wrapper: `ChainedConsumer` stopped
+    `recent_context` at the adapter. It wraps exactly one organizer, so the
+    chaining semantic is simply "the wrapped organizer's buffer"."""
+    from agmem.organizers.experimental import ChainedConsumer
+    from agmem.organizers.memoryos import MemoryOSOrganizer
+
+    inner = MemoryOSOrganizer(dialogue_chain=False, keep_incomplete_pages=True)
+    chained = ChainedConsumer(inner, "episodes")
+    inner.on_message(_ep("Distilled: the user prefers tea."), _ctx())
+    assert "tea" in inner.recent_context()
+    assert chained.recent_context() == inner.recent_context()

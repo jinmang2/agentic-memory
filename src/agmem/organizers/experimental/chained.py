@@ -145,6 +145,16 @@ class ChainedConsumer(Organizer):
         ops.extend(self.wrapped.flush_buffer(ctx))
         return ops
 
+    def recent_context(self) -> str:
+        """The wrapped organizer's recent buffer, verbatim. This adapter wraps
+        exactly one organizer, so "forward to wrapped" is the whole chaining
+        semantic — a chained MemoryOS keeps its STM, and it fed that STM from
+        the events this adapter handed it, so the injected window is the
+        upstream-derived units rather than raw turns (consistent with what the
+        chain stores). The adapter buffers only not-yet-fed batches and has no
+        recency channel of its own to add."""
+        return self.wrapped.recent_context()
+
     # ---- internals ----------------------------------------------------------
 
     def _unit(self, unit_id: str, content: str, date: str, ctx: OrganizerContext) -> Episode:
