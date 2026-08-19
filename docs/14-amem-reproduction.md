@@ -102,7 +102,7 @@ LoCoMo, F1 (BLEU-1은 참고용 2번째 수치 — docs/08/13의 선행 분석 �
 
 ---
 
-## 5. 이 브랜치(`feat/locomo-eval-fidelity`)의 코드 변경 전량
+## 5. 이 브랜치(`feat/locomo-eval-fidelity` — 이후 `main`으로 병합, 브랜치는 삭제됨)의 코드 변경 전량
 
 ### 5.1 commit e74534a — snap-research eval 충실도 수정 (선행)
 
@@ -114,7 +114,7 @@ LoCoMo, F1 (BLEU-1은 참고용 2번째 수치 — docs/08/13의 선행 분석 �
 | `locomo.py:gold_for` | cat3 gold `"A; B; C"` → 첫 alias `"A"` truncation | snap-research가 primary answer로 채점 |
 | `locomo.py:ANSWER_PROMPT_NO_ABSTAIN` | cat5는 abstention 문장 제거한 프롬프트 | cat5는 답을 강제(거부 불가) |
 | `locomo.py:judge_answer` + `evaluate(judge=)` | Mem0-style binary J-score (cat1–4, opt-in) | Mem0 판정 재현 |
-| `bench/_porter.py` | Porter stemmer 구현 | stemming 의존성 없이 |
+| `bench/_porter.py` (현재 `src/agmem/_porter.py`) | Porter stemmer 구현 | stemming 의존성 없이 |
 
 ### 5.2 이번 commit — A-Mem 재현 하네스 + wujiang eval 모드
 
@@ -287,7 +287,8 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
   eval-only에서 on/off 가능.
 - **`--eval-mode`/`--judge`도 채점-시점**. 따라서 같은 store 하나로 wujiang·ours 둘 다 평가
   가능 → smoke.sh는 ingest 1회 + eval-only 2회, phase1b/phase2는 같은
-  `results/repro/stores/full_all` store를 공유(존재하면 ingest skip).
+  `results/repro/stores/full_all_seed<seed>` store를 공유(존재하면 ingest skip;
+  `SEED` env로 선택, 기본 1 — 2026-08-19에 seed 스토어 3벌 체제로 경로 갱신).
 
 `<tag>` = `<model>_<conv>_k<k>_<eval-mode>_expand-<on|off>_run<runs>` (ingest-only는
 `<model>_<conv>_ingest`).
@@ -311,32 +312,15 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
 
 ---
 
-## 8. 결과 (실행 후 채움)
+## 8. 결과
 
-> 아래 표는 **placeholder**. 각 phase 실행 후 결과 JSON의 `overall`/`by_category`로 채운다.
-> F1은 wujiang set-based(rung 1a/1b/3), BLEU-1/J는 참고. rung 2는 ours 메트릭.
-
-### 8.1 사다리 비교 (overall + per-category F1)
-
-| Rung | Multi | Temporal | Open | Single | Adversarial | Overall F1 | 비고 |
-|---|---|---|---|---|---|---|---|
-| 0 published (A-Mem) | 27.02 | 45.85 | 12.14 | 44.65 | 50.03 | — | 논문 |
-| 1a upstream@ours | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | 업스트림 코드 |
-| 1b our-reimpl@aligned | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | wujiang |
-| 2 our-production | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ | ours+judge+expand |
-
-### 8.2 k-sweep (rung 3, wujiang overall F1)
-
-| k | 10 | 20 | 30 | 40 | 50 |
-|---|---|---|---|---|---|
-| Overall F1 | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-
-### 8.3 evolution ablation (rung 3) — **switch 미구현, follow-up**
-
-| 조건 | Multi | Temporal | Open | Single | Adversarial |
-|---|---|---|---|---|---|
-| Full | ⬜ | ⬜ | ⬜ | ⬜ | ⬜ |
-| w/o evolution | (blocked) | | | | |
+> **(2026-08-19)** 이 섹션의 placeholder 표(⬜)는 이 문서 안에서 끝내 채워지지 않았고,
+> 이제 채우지 않는다: 사다리 실행 이후의 fidelity 수정들이 write 경로를 바꿔 rung 구획
+> 그대로의 표가 더 이상 정본이 될 수 없기 때문이다. **A-Mem의 측정 정본은
+> `docs/18-locomo-4way.md`의 5-way 표다** — 전체 10-conversation, 단일 하네스·단일 judge,
+> per-category 표와 read-path ablation(키워드 rewrite, per-hit 링크 확장 캡) 포함.
+> rung 0(논문 발표치: Multi 27.02 / Temporal 45.85 / Open 12.14 / Single 44.65 /
+> Adversarial 50.03)과의 대조·해석도 그 문서의 각주 규칙을 따라 인용할 것.
 
 ---
 

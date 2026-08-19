@@ -36,7 +36,7 @@ scripts/serve-llm.sh         # 데몬 기동 (:8080, OpenAI-compatible)
    4~5GB를 상시 점유해 mmap된 모델이 스왑으로 밀림. GPU 상주가 사실상 필수.
 2. Qwen3는 기본 thinking 모드가 켜져 있어 추출 태스크에서 토큰 낭비 —
    요청에 `extra_body={"chat_template_kwargs": {"enable_thinking": false}}` 필수
-   (agmem `RoleConfig.extra_body`로 지정, `agmem.example.toml` 참고).
+   (agmem `RoleConfig.extra_body`로 지정. 2026-08-19부터 TOML 경로도 지원 — `agmem.example.toml`의 `[llm.<role>]` 테이블 `extra_body` 키가 RoleConfig로 그대로 전달된다).
 3. guided_json(vLLM 전용)은 llama.cpp가 무시하므로 agmem의 파싱 방어층(재시도→drop)이
    실질 방어선. 0.6B에서 3/3 통과 확인.
 

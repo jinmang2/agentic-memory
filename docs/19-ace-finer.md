@@ -396,7 +396,7 @@ interval narrower than the truth. Neither is worth an interval, so `finer_paired
    can change what gets learned** — it can flip a sample to correct *inside* the training step, so
    the reflector sees outcomes ours never produces, bullet counters accrue per round, and the curator
    receives the reflection written about the *final* attempt rather than the first. **This is the
-   largest open question in the table**, and an `online_retry` arm is what would close it.
+   largest open question in the table**, and an `online_retry` arm is what would close it. (→ It was: the arm ran 2026-08-17 and closed the question — see the "Measured" paragraph two below, and "The retry arm writes the knowledge".)
 
    Reading the online loop also settles a question worth stating: **the reported accuracy is not
    contaminated by training on the sample being scored.** The window is tested in full before any

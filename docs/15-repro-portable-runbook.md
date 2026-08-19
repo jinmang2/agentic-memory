@@ -5,7 +5,7 @@
 > 계약 문서는 `docs/14-amem-reproduction.md`. 이 런북은 그걸 self-contained 절차로 압축한 것.
 
 ## 0. 전제 (이 브랜치에 이미 다 있음)
-- 브랜치: **`feat/locomo-eval-fidelity`** (origin push됨, HEAD `d38c96e`)
+- 브랜치: **`main`** (2026-08-19 기준 HEAD `14a3b5c`; 종전의 `feat/locomo-eval-fidelity`는 main으로 병합 후 삭제됨 — origin에는 main 하나만 있다)
 - 저장소: `github.com:jinmang2/agentic-memory`
 - 하네스: `scripts/exp_amem_repro.py`, `scripts/repro/phase1b_headline.sh`, `scripts/repro/aggregate_headline.py`
 
@@ -15,7 +15,7 @@
 curl -LsSf https://astral.sh/uv/install.sh | sh    # 또는 pipx install uv
 
 # (2) 브랜치 클론
-git clone -b feat/locomo-eval-fidelity git@github.com:jinmang2/agentic-memory.git
+git clone git@github.com:jinmang2/agentic-memory.git   # main (구 재현 브랜치는 병합·삭제됨)
 cd agentic-memory       # 리포 루트 = 모든 스크립트의 기준
 
 # (3) 의존성 동기화
@@ -26,7 +26,7 @@ uv sync
 ```
 
 ## 2. 데이터셋 배치 (필수 — 하네스가 고정 경로를 읽음)
-하네스 `DATA = ~/.agmem/datasets/locomo10.json` (`scripts/exp_amem_repro.py:43`). 그 경로에
+하네스 `DATA = ~/.agmem/datasets/locomo10.json` (`scripts/exp_amem_repro.py:53`). 그 경로에
 `locomo10.json`(2.8MB, 1,986 QA)을 둔다. 파일은 upstream 리포 `data/locomo10.json`과 **바이트 동일**.
 ```bash
 mkdir -p ~/.agmem/datasets

@@ -305,7 +305,7 @@
 >   upstream per-hit. 어떤 수치도 이 캐비앗 없이 "논문 재현"으로 인용 금지.
 
 > **2026-07-21 experimental 경계 분리** (spec
-> `docs/superpowers/specs/2026-07-21-organizer-experimental-split-design.md`): 논문·공식코드에
+> `docs/_internal/specs/2026-07-21-organizer-experimental-split-design.md`(gitignored 내부 문서)): 논문·공식코드에
 > 대응물이 없는 **크로스-organizer 합성**을 `organizers/experimental/`로 격리 — 충실
 > organizer(amem/memoryos)에서 구 `input="episodes"` chained-manager 코드를 제거하고
 > `experimental.ChainedConsumer` 어댑터로 추출(`nemori_amem`/`nemori_memoryos`). Nemori의
@@ -317,7 +317,7 @@
 > E2E 실측 후.
 
 > **2026-07-18 Nemori 라이프사이클 재설계** (스펙:
-> `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`): 아래 표 Nemori 행의
+> `docs/_internal/specs/2026-07-18-nemori-lifecycle-redesign-design.md`(gitignored 내부 문서)): 아래 표 Nemori 행의
 > "episode merging, 배치 세그멘테이션 모드" 누락은 `fidelity="v4"|"upstream"` 스위치
 > (`EpisodeMerger`, `BatchPartitioner`, `organizers/nemori/stages.py`)로 해소됨 — 등급/측정 판정은 실측
 > 전까지 재산정하지 않음(표는 v1 디폴트 기준 그대로 유지).
@@ -405,3 +405,9 @@
    payload에 `subject_id`/`object_id`·`entity_type`을 실어 `AgenticMemory._apply_graph`가
    적용. organizer에는 `edges_between` 읽기만 남았고, 로그 재생으로 그래프가 복원됨을
    `test_zep_graph_is_rebuildable_from_the_evolution_log`가 단언한다.
+
+---
+
+> **(2026-08-19) 이 문서의 감사 로그는 11차에서 끝난다.** 최종 12차 라운드 — 8개 병렬
+> fresh-eyes 감사, 적대적 검증(96개 판정: 94 확정/2 반박), 그리고 조치 기록 — 는
+> `docs/research/fidelity-round12-fresh-eyes-reaudit.md`가 정본이다.

@@ -94,7 +94,7 @@ The interesting engineering in this repo is not that nine systems were written; 
 - Findings then went through an **adversarial verification pass** whose job was to *refute* them, using **zero LLM/API/model calls**: code-line citation, and deterministic reproductions with hand-made vectors and stubs.
 - **96 verdicts: 94 confirmed, 2 sub-claims refuted** — and the refutations were honored in the fixes.
 - Everything confirmed was either fixed to match upstream or kept and **disclosed as a deliberate deviation at the code site** (e.g. we skip an evolution call the published A-Mem edition wastes on an empty store — so our per-conversation call count is exactly −1, and the docstring says so).
-- **711 tests** (measured 2026-08-08, `uv run pytest -q`: 711 passed, 1 skipped), many of them pinning tests written specifically so a fidelity property cannot silently regress.
+- **822 tests** (measured 2026-08-19, `uv run pytest -q`: 822 passed, 1 skipped), many of them pinning tests written specifically so a fidelity property cannot silently regress.
 
 Recurring defect classes this process surfaced — useful beyond this repo — are catalogued in `docs/16-abstraction-study.md`: *the same constant applied to different math*, *reviving a knob that is dead upstream*, *reading one variant when the benchmark ran another*, and *a docstring that outlived its code*.
 
@@ -104,7 +104,7 @@ Recurring defect classes this process surfaced — useful beyond this repo — a
 
 **Measurement is deliberately deferred.** No benchmark result is claimed on this page.
 
-LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). The fidelity fixes from the latest audit round changed write-path behavior in seven of the methodologies, which invalidated the pre-audit numbers; **five write paths have since been re-measured post-fix on the full LoCoMo 10-conversation set under one harness and one judge — A-Mem, Nemori (both arms of the ledger's B-3 pair), Mem0 and Zep — and are tabulated in [`docs/18-locomo-4way.md`](docs/18-locomo-4way.md).** The remaining five methodologies have no post-fix number, and LongMemEval has never been run at all (ledger C-4). The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first and an unmeasured row stays visibly empty.
+LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are committed under `results/` (see `docs/14-amem-reproduction.md` and the portable runbook in `docs/15-repro-portable-runbook.md`). The fidelity fixes from the latest audit round changed write-path behavior in seven of the methodologies, which invalidated the pre-audit numbers; **five write paths have since been re-measured post-fix on the full LoCoMo 10-conversation set under one harness and one judge — A-Mem, Nemori (both arms of the ledger's B-3 pair), Mem0 and Zep — and are tabulated in [`docs/18-locomo-4way.md`](docs/18-locomo-4way.md).** The remaining five methodologies have no post-fix **conversational (LoCoMo)** number — two of them, ACE and ReasoningBank, do carry measured FiNER numbers in [`docs/19-ace-finer.md`](docs/19-ace-finer.md). LongMemEval has since been measured on the **reading side** (2026-08, [`docs/20-lme-reading.md`](docs/20-lme-reading.md)): oracle, retrieval and context arms over the full 500 questions, holding the memory constant and moving only what the answerer reads. What has **never** been run on LongMemEval is an organizer (memory-system) arm — that hole is known, priced, and deliberately still open. (Ledger C-4 is about the benchmark's own traps — two unequal official "accuracies" and a `has_answer` label that leaks the answer — not about run status.) The working rule in this project is that a number produced by a mislabeled lineage is worse than no number, so the wiring gets verified first and an unmeasured row stays visibly empty.
 
 ---
 
@@ -114,7 +114,7 @@ LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are
 uv sync                     # full install (real vector/graph backends + local embedder)
 uv sync --no-default-groups --group dev   # core-only: suite still runs, heavy paths skip
 
-uv run pytest tests/ -q     # 711 passed, 1 skipped (core-only: 687 passed, 24 skipped)
+uv run pytest tests/ -q     # 822 passed, 1 skipped (2026-08-19; core-only figures date from 2026-08-08: 687 passed, 24 skipped)
 ```
 
 ```python
@@ -165,7 +165,7 @@ src/agmem/
   mcp/           MCP server
   hooks/         Claude Code SessionStart recall and UserPromptSubmit capture
 docs/            design record (00–20) + docs/research/ paper↔code forensics + docs/demos/
-tests/           711 tests, incl. fidelity pinning suites
+tests/           822 tests, incl. fidelity pinning suites
 ```
 
 ## Documentation
@@ -176,6 +176,7 @@ tests/           711 tests, incl. fidelity pinning suites
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
 | [docs/19-ace-finer.md](docs/19-ace-finer.md) | ACE's self-evolving playbook on FiNER, measured against not having one — and why the control arm is half the finding |
+| [docs/20-lme-reading.md](docs/20-lme-reading.md) | LongMemEval with the memory held constant: oracle, retrieval and context arms that move only the reading — and the organizer arm that is priced but deliberately not run |
 | [docs/02-survey-comparison.md](docs/02-survey-comparison.md) | survey of the systems: mechanisms, benchmarks, reproducibility |
 | [docs/04-architecture.md](docs/04-architecture.md) | module structure, organizer contract, chaining |
 | [docs/05-api-design.md](docs/05-api-design.md) | Python API, MCP tools, bench CLI |

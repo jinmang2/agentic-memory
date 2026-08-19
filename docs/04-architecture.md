@@ -126,7 +126,7 @@ agentic_memory/                      # 패키지명: agmem (pip install agmem)
     └── 12-code-conventions.md       # 이름/docstring/구조 컨벤션 (리뷰 게이트 기준)
 ```
 
-로드맵(미구현 모듈): `core/namespace.py`, `retrieval/expand.py`(time-range 추출), `embed/api_embedder.py`, `bench/judges.py·report.py`, `train/eval_extract.py`, graph store용 `QueueStore`/`GraphStore` 공통 Protocol.
+로드맵(미구현 모듈): `core/namespace.py`, `retrieval/expand.py`(time-range 추출), ~~`embed/api_embedder.py`~~(2026-08-19 정정: 구현 완료 — full 프로파일 기본 embedder), `bench/judges.py·report.py`, `train/eval_extract.py`, graph store용 `QueueStore`/`GraphStore` 공통 Protocol.
 
 `bench/longmemeval.py`는 구현됨 — LoCoMo와 **구조가 다르다**: LoCoMo 샘플 1개 = 대화 1개 + 질문 다수(메모리 1개로 전부 처리)인데, LongMemEval 인스턴스 1개 = **질문 1개 + 자기 haystack ~40세션**이라 충실한 실행은 질문마다 메모리를 새로 만든다(`_s` 기준 500개). 그래서 `ingest`가 corpus가 아니라 instance를 받고, 인스턴스별 메모리 수명은 호출자가 소유한다(`run_instance`).
 
@@ -275,18 +275,21 @@ read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드�
 | A-Mem | ✓ | — | — | — | — | — | — | — |
 | Nemori | ✓ | — | — | — | ✓ | ✓ | — | ✓ |
 | MemoryOS | ✓ | — | ✓ | — | — | ✓ | ✓ | ✓ |
+| Mem0 | ✓ | — | — | — | — | ✓ | — | — |
 | Zep-graph | ✓ | — | — | — | — | — | — | — |
 | ACE | — | ✓ | — | ✓ | — | — | — | — |
 | ReasoningBank | — | ✓ | — | — | — | — | — | — |
 | G-Memory | — | ✓ | ✓ | ✓ | — | — | — | — |
+| MemMachine | ✓ | — | — | — | — | — | — | — |
+| MemMachine-profile | ✓ | — | — | — | ✓ | — | — | — |
 
 읽는 법 세 가지:
 
-- **`on_message` 계열 5종과 `on_task_end` 계열 3종은 입력 단위가 다르다** — 대화 벤치
+- **`on_message` 계열 8종과 `on_task_end` 계열 3종은 입력 단위가 다르다** — 대화 벤치
   (LoCoMo/LongMemEval)는 앞의 5종만 측정하고 뒤의 3종은 아무 것도 생산하지 않는다. Phase 5
   비교표를 하나의 벤치로 그릴 수 없는 이유이고, admission policy가 뒤의 3종에 적용 불가인
   이유이기도 하다(§1.2, taxonomy §2.5).
-- **`consolidate`를 구현한 방법론은 Nemori 하나뿐이다.** 여러 논문이 "consolidation"이라 부르는
+- **`consolidate`를 구현한 방법론은 Nemori와 MemMachine-profile 둘뿐이다.** 여러 논문이 "consolidation"이라 부르는
   것은 대부분 `on_message` 안의 인라인 승격/병합이다 — 용어가 최소 3가지를 가리키므로
   taxonomy §2.4.1의 **언제**(inline/deferred) × **무엇을**(요약/통합/승격/무효화) 두 축으로
   갈라서 봐야 한다.
@@ -301,6 +304,7 @@ read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드�
 | A-Mem | ADD(note), LINK, UPDATE(이웃) | `notes` | doc+vec |
 | Nemori | ADD(episode/semantic), MERGE(episode/semantic)+INVALIDATE(supersedes) | `episodes`, `semantic` | doc+vec |
 | MemoryOS | ADD(page/segment), MERGE, ADD(profile fact), DELETE(LFU) | `pages`, `semantic` | doc+vec |
+| Mem0 | ADD(fact), UPDATE(fact), DELETE(fact), NOOP(변경 없음 판정) | `semantic` | doc+vec |
 | Zep-graph | ADD(entity/fact), MERGE(dedup), INVALIDATE(모순) | `entities`, `facts` | doc+vec+graph |
 | ACE | ADD(bullet), UPDATE(카운터), MERGE(dedup) | `playbook` | doc+vec(dedup용) |
 | ReasoningBank | ADD(strategy), ADD(experience) | `strategies`, `experiences` | doc+vec |
@@ -308,10 +312,10 @@ read 쪽 `is_servable`이 같은 목록을 봐야 하고 retrieval은 파사드�
 | MemMachine | ADD(derivative) — LLM 콜 없음 | `derivatives` | doc+vec |
 | MemMachine-profile | ADD(feature), DELETE(커맨드/consolidation) | `semantic` | doc+vec |
 
-→ 10개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
+→ 레지스트리의 11개 organizer 모두 `(훅 × MemoryOp 7종 × store 3종)` 안에 들어감. 추상화 누수 없음을 Phase 1에서
 A-Mem/ReasoningBank로 먼저 검증.
 
-**memory type은 방법론 전용이 아니다**: `semantic`을 Nemori와 MemoryOS가, `strategies`를
+**memory type은 방법론 전용이 아니다**: `semantic`을 Nemori·MemoryOS·Mem0·MemMachine-profile이, `strategies`를
 ReasoningBank와 G-Memory가 공유한다. 타입만으로 소유자를 알 수 없으므로 파사드가 ADD 적용 시
 op의 `actor`를 아이템에 함께 기록하고(`memory.py::_apply_one`), 소유권이 필요한 곳은 그것으로
 판정한다 — Nemori의 semantic 통합기가 후보를 자기 것으로 한정하는 것

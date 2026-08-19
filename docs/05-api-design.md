@@ -87,7 +87,7 @@ mem.capabilities()                             # 감지 결과 + 활성 어댑�
    segmenter(`per_message`/`batch`)·episode merge(`off`/`llm`)·semantic integration
    (`append`/`dedup`/`llm3way`)·consolidation(`off`/`semantic_offline`) 4축을 프리셋으로
    묶고 개별 kwarg로 오버라이드 가능 (docs/11 §4, 스펙:
-   `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`). 나머지
+   `docs/_internal/specs/2026-07-18-nemori-lifecycle-redesign-design.md` — gitignored 내부 문서). 나머지
    organizer로의 `fidelity=` 확장은 로드맵.
 4. **라이프사이클 훅 2종 (인라인/유예)** — `on_memory_event`(다른 organizer의 ADD/UPDATE/
    MERGE를 `consumes` 구독으로 수신, chaining)와 `consolidate`(명시적 `mem.consolidate()`
@@ -140,7 +140,7 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
   (`lexical_types` / `link_expansion_cap` / `attach_sources_top_r` / `graph_expansion_cap`)를
   받는다 — `retrieval/steps.py`가 upstream 이탈을 "config로 ablatable"이라 주장하는데 그게
   Python API에서만 참이고 TOML(재현 런북이 쓰는 경로)에선 조용히 무시되고 있었다.
-- `SEMAPHORE_LIMIT` 상당의 `worker_concurrency` 노출 (로컬 LLM 데몬 보호).
+- ~~`SEMAPHORE_LIMIT` 상당의 `worker_concurrency` 노출~~ (2026-08-19 정정: 이 이름의 노브는 어디에도 구현되지 않았다. 실재하는 동시성 노브는 repro 스크립트의 `--workers`다 — `scripts/repro/ingest_parallel.py`의 대화 병렬 워커 수 = in-flight LLM 콜 상한, `scripts/repro/exp_lme_reading.py`의 질문 병렬 워커 수(기본 8).)
 - 배포 3형태: ① `uvx agmem-mcp` (로컬 stdio) ② Docker compose (agmem + vLLM) ③ 기존 Claude Code 세션 연동 예제.
 
 ### 2.3 Claude Code 등록 예시
@@ -216,6 +216,12 @@ LongMemEval은 **문자열 지표가 없다** — LLM judge가 유일한 점수�
 CLI 드라이버는 **의도적으로 미작성** — 인스턴스당 메모리를 새로 만드는 구조라 500질문 실행이
 곧 500 ingest이고, 측정 승인 전에는 그 비용을 지불할 수 없다. 라이브러리 수준의 배선
 (load/ingest/answer/judge/aggregate + full-context 베이스라인)은 완료돼 있다.
+
+> **(2026-08-19 정정)** 위 문단은 더 이상 사실이 아니다: 드라이버는 이후
+> `scripts/repro/exp_lme_reading.py`로 작성됐고 승인된 예산 안에서 실제로 실행됐다 —
+> oracle 4개 arm과 retrieval/context arm들의 측정 결과는 `docs/20-lme-reading.md`,
+> 아티팩트는 `results/repro/gpt-4o-mini_lme_*`. organizer(메모리 시스템) arm만이
+> 여전히 실행된 적 없다 (docs/20의 의도적 보류).
 
 - ingest 아티팩트 캐시(`artifacts/`)로 설정 그리드 재평가 시 재-ingest 생략.
 - 모든 결과에 `{profile, commit, model, judge, dataset_version, runs}` 스탬프 — 재현성 규율 (Zep-LoCoMo 논란 반면교사).

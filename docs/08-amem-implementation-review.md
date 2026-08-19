@@ -95,6 +95,10 @@ on_message(ep):
 
 ## 4. LoCoMo 1차 재현 (conv0, 로컬 0.6B 단독)
 
+> **(2026-08-19)** 이 섹션의 수치는 예비 결과로, 이후의 정식 측정 —
+> `docs/18-locomo-4way.md`의 전체 10-conversation 5-way (gpt-4o-mini, LLM judge) —
+> 가 이를 대체한다. 아래는 당시 기록으로 보존.
+
 > 조건: LoCoMo conv 0 (세션 19, 423턴, QA 199개 전부), passthrough(raw episode +
 > hybrid BM25+dense retrieval) vs A-Mem(수정판, episodic+notes 검색), **동일**
 > Qwen3-0.6B-Q8_0(answer/extract/distill 전부), e5-small 임베더, k=10,

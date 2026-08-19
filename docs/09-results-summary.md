@@ -1,5 +1,9 @@
 # LoCoMo conv0 4-way 재현 결과 (2026-07-16)
 
+> **⚠ SUPERSEDED (2026-08-19).** 여기서 "보류 중"이던 재측정은 이후 수행됐다:
+> 전체 10-conversation 5-way(A-Mem·Nemori·Mem0·Zep 포함, gpt-4o-mini + LLM judge)는
+> `docs/18-locomo-4way.md`가 정본이다. 이 문서는 당시 로컬 0.6B 예비 결과의 기록으로 보존.
+
 > 조건: LoCoMo conv0 (세션 19, 423턴, QA 199), **전 역할 Qwen3-0.6B-Q8_0** (RTX 2060,
 > llama.cpp), e5-small 임베더, k=10, F1/BLEU-1. 단일 run 예비 결과.
 > 원자료: `results/locomo-conv0-*.json` (per-question 레코드 포함).
@@ -21,7 +25,7 @@
 > A-Mem은 read에서 1-hop 링크 확장 누락, Nemori는 검색 설정 3중 불일치(semantic 20→10,
 > r=2 원문 첨부 누락, 1600토큰 예산) 상태로 측정됨 — P0 수정 완료, 재측정은 보류 중.
 > **2026-07-18 라이프사이클 재설계** (스펙:
-> `docs/superpowers/specs/2026-07-18-nemori-lifecycle-redesign-design.md`)로 `nemori_v4` /
+> `docs/_internal/specs/2026-07-18-nemori-lifecycle-redesign-design.md` — gitignored 내부 문서)로 `nemori_v4` /
 > `nemori_upstream` / `nemori_mix` / `nemori_memoryos` / `nemori_amem` 5개 config가
 > `scripts/exp_locomo_conv0.py`에 추가됨(기존 `nemori`=v1 동치는 불변) — **아직 실측 대기**,
 > 이 표에는 반영되지 않았다.

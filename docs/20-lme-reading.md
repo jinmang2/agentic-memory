@@ -811,3 +811,8 @@ context, and the field would still read 1.0. It is right for a passthrough arm
 whose bundle fits inside the budget, and wrong exactly where it would matter most:
 an organizer arm that overflows. Fixing it means scoring the rendered selection,
 not the bundle. Cheap, and pointless until an arm needs it.
+
+> **(2026-08-19)** The fix landed: the recall is now scored on the rendered
+> selection — what the prompt actually contained — not on `bundle.items`. The
+> paragraph above is kept as the record of the defect as it stood when the
+> numbers in this document were produced.

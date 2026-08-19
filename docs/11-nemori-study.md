@@ -88,30 +88,30 @@ nemori/
 
 ## 4. 우리 구현 워크스루
 
-### 4.1 write 경로 — `NemoriOrganizer` (nemori.py)
+### 4.1 write 경로 — `NemoriOrganizer` (organizers/nemori/organizer.py; 프롬프트·스테이지는 stages.py — 이하 행번호 2026-08-19 재검증)
 
-메시지 하나가 들어오면 (`on_message`, :210):
+메시지 하나가 들어오면 (`on_message`, organizer.py:392):
 
 ```
 buffer에 추가
 ├─ len < buffer_min(2)        → 대기
 ├─ len ≥ buffer_max(25)       → 버퍼 전체를 세그먼트로 flush   (v1 β_max — 단 v1 수식은
 │                                M만 flush하고 m_{t+1}은 잔류; 최신 포함 flush는 경미한 편차)
-└─ 그 외 → BOUNDARY_PROMPT LLM 콜 (:77)
+└─ 그 외 → BOUNDARY_PROMPT LLM 콜 (stages.py:61)
     boundary=true ∧ confidence ≥ 0.7(σ_boundary)
     → buffer[:-1]을 세그먼트로 flush, 최신 메시지는 다음 에피소드의 시작으로 잔류
 ```
 
-세그먼트 flush (`_flush_segment`, :256):
+세그먼트 flush (`_flush_segment`, organizer.py:485):
 
-1. **에피소드 생성** — `EPISODE_PROMPT`(:101): title(10-20단어) + 3인칭 과거형 서사
+1. **에피소드 생성** — `EPISODE_PROMPT`(organizer.py:162): title(10-20단어) + 3인칭 과거형 서사
    (결정·감정·계획 포함) + **상대시간 → "원 표현 (절대날짜)" 괄호 병기** + 발생시각
    분석(timestamp). 실패 시 기계적 폴백(title=첫 8단어, narrative=원문) — 세그먼트를
    잃지 않음.
 2. **ADD episodes** — payload에 title/narrative/timestamp/`source_episode_ids`
    (원본 메시지 ID들 — read 경로의 r=2 원문 첨부가 이걸 소비).
    임베딩 텍스트는 `title\nnarrative` (upstream `title + " " + content` 등가).
-3. **Predict-Calibrate** (`_predict_calibrate`, :288):
+3. **Predict-Calibrate** (`_predict_calibrate`, organizer.py:585):
    - 에피소드 임베딩으로 semantic top-10 검색 (upstream search_top_k_semantic=10)
    - **cold start**: 검색된 semantic이 없으면 예측 생략, `DIRECT_EXTRACT_PROMPT`로
      **에피소드(title+narrative)에서** 직접 추출 (upstream direct 경로와 동일 입력).
@@ -160,8 +160,8 @@ buffer에 추가
 **2026-07-18 라이프사이클 재설계(Task 10-14)로 배치분할/에피소드 병합/semantic 3-way
 통합 세 편차는 해소됐다** — `NemoriOrganizer(fidelity="v4"|"upstream", ...)` 스위치가
 `BatchPartitioner`(배치 분할) + `EpisodeMerger`(v4 §3.2.3 / upstream 0.85·1h-gap) +
-`ThreeWayIntegrator`(v4 §3.3.3 new/merge/conflict)를 각각 선택한다(`docs/superpowers/
-specs/2026-07-18-nemori-lifecycle-redesign-design.md` §2). 실험 config `nemori_v4` /
+`ThreeWayIntegrator`(v4 §3.3.3 new/merge/conflict)를 각각 선택한다(`docs/_internal/
+specs/2026-07-18-nemori-lifecycle-redesign-design.md` §2 — gitignored 내부 문서). 실험 config `nemori_v4` /
 `nemori_upstream` / `nemori_mix`(인라인 append + 유예 `semantic_offline` consolidate
 ablation)가 이 세 조합을 각각 재현한다. 기본 실험 config `nemori`는 fidelity 미지정
 = `v1` 프리셋으로 여전히 이전 동작과 동치(회귀 없음) — 아래 표는 `v1` 기준의 잔여

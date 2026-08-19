@@ -130,12 +130,12 @@ Fig.2 캡션: "linked memories … are also **automatically accessed**" = 1-hop 
 
 ### 4.1 write 경로 — `AMemOrganizer` (`organizers/amem/organizer.py`)
 
-메시지당 파이프라인 (`_ingest`, `amem.py:188`):
+메시지당 파이프라인 (`_ingest`, `organizer.py:196`):
 ```
-1. Ps1 노트 구성      (LLM 1콜, NOTE_PROMPT → keywords/context/tags JSON)   amem.py:202-217
-2. 이웃 top-k 검색     (식3 metadata-concat 임베딩 질의, store계층 cosine)   amem.py:221-226
-3. Ps2+Ps3 배치 진화   (LLM 1콜, 이웃 전체 한 프롬프트 — EVOLVE_PROMPT)      amem.py:237-248
-  → [ADD(note), LINK(단방향), UPDATE(이웃 context/tags 재임베딩)]           amem.py:262-325
+1. Ps1 노트 구성      (LLM 1콜, NOTE_PROMPT → keywords/context/tags JSON)   organizer.py:210-226
+2. 이웃 top-k 검색     (식3 metadata-concat 임베딩 질의, store계층 cosine)   organizer.py:228-236
+3. Ps2+Ps3 배치 진화   (LLM 1콜, 이웃 전체 한 프롬프트 — EVOLVE_PROMPT)      organizer.py:238-261
+  → [ADD(note), LINK(단방향), UPDATE(이웃 context/tags 재임베딩)]           organizer.py:266-360
 ```
 스토리지를 직접 만지지 않고 **`MemoryOp(ADD/LINK/UPDATE/INVALIDATE)` 리스트를 반환** →
 append-only 로그로 **replay·audit 가능**. 원논문의 "evolution이 뭘 바꿨는지 추적 불가"
@@ -149,9 +149,9 @@ dense top-k(식10) → 검색된 노트의 링크 이웃 1-hop 확장(`find_rela
 호출자가 도달할 수 없었다).
 
 ### 4.3 우리 프롬프트 2종의 계보
-- `NOTE_PROMPT` (`amem.py:77`): B.1 의미충실 축약("nouns/verbs" 초점,
+- `NOTE_PROMPT` (`organizer.py:102`): B.1 의미충실 축약("nouns/verbs" 초점,
   speaker/time 제외, ≥3). "intended audience" 문구는 누락(영향 낮음).
-- `EVOLVE_PROMPT` (`amem.py:89`): B.2–B.3 결합 프롬프트를 배치 1콜로. **actions 어휘를
+- `EVOLVE_PROMPT` (`organizer.py:114`): B.2–B.3 결합 프롬프트를 배치 1콜로. **actions 어휘를
   논문 strengthen/merge/prune → 우리 `strengthen`/`update_neighbor`로 재매핑**
   (merge/prune는 우리 UPDATE/INVALIDATE MemoryOp로 흡수). 이웃 갱신을 논문의 positional
   `new_context_neighborhood` 배열 대신 **ID 기반 `neighbor_updates`**로(#32 수정의 귀결).
@@ -268,4 +268,4 @@ uv run python scripts/exp_locomo_conv0.py --configs passthrough amem
 ## 8. 더 읽기
 - 발표용 리뷰: docs/08 / 충실도 등급표: docs/10
 - 포렌식 원장: docs/research/fidelity-round3(§1) · round4(§1)
-- 코드: `src/agmem/organizers/amem/organizer.py` · `src/agmem/retrieval/pipeline.py:181`
+- 코드: `src/agmem/organizers/amem/organizer.py` · `src/agmem/retrieval/steps.py:91` (`LinkExpansion`)

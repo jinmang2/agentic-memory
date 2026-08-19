@@ -1,6 +1,6 @@
 # 개발 로드맵
 
-> 목표: ① 8개 방법론 직접 구현 ② MCP 배포 ③ 0.5B급 소형 모델로 PC에서 table 재현 ④ 필요 시 보조모델 학습.
+> 목표: ① 9개 방법론 직접 구현(작성 당시 8개로 계획, 이후 MemMachine 추가 — organizer 레지스트리는 11종) ② MCP 배포 ③ 0.5B급 소형 모델로 PC에서 table 재현 ④ 필요 시 보조모델 학습.
 > 각 Phase는 "동작하는 수직 슬라이스"를 끝점으로 함. 기간은 스터디 병행 기준 러프 추정.
 
 ## Phase 0 — 스캐폴딩 (1주) — 2026-07-16 대부분 완료
@@ -45,6 +45,8 @@
       (`render_sessions`)까지 포함. **미작성**: CLI 드라이버와 ingest 아티팩트 캐시 —
       인스턴스마다 메모리를 새로 만드는 구조라 500질문 = 500 ingest이고, 측정 승인 전에는
       드라이버를 쓸 이유가 없다. 데이터 버전(cleaned 여부)은 결과와 함께 기록 필요.
+      **(2026-08-19 정정: 드라이버는 이후 작성·실행 완료 — 측정 결과와 드라이버 경로는
+      `docs/20-lme-reading.md`.)**
 - [ ] 1차 재현 실험 (PC, 0.6B extract + API judge):
   - A-Mem × LoCoMo — 원논문 GPT-4o-mini 수치와 방향성 비교
   - ReasoningBank류 × 간단 태스크(수학/코딩 스트림, reasoning-bank-slm 프로토콜 참고)
@@ -90,9 +92,14 @@
 | WSL RAM 7.8GB 병목 | 실측 | `.wslconfig` 상향; 서버형 store는 full 프로파일로 격리; mmap 벡터 |
 | judge 비용 누적 | LongMemEval 그리드 폭발 | ingest 캐시 + LoCoMo(F1) 우선 + judge 호출 상한 설정 |
 | G-Memory LICENSE 부재 | 조사 확인 | 코드 복사 금지, 논문 기반 클린룸 재구현 + 출처 명기 |
-| 스코프 폭발 | 8 방법론 × 벤치 × 학습 | Phase별 완료 기준 엄수; Zep-graph/G-Memory는 후순위 배치 |
+| 스코프 폭발 | 9 방법론 × 벤치 × 학습 | Phase별 완료 기준 엄수; Zep-graph/G-Memory는 후순위 배치 |
 
 ## 즉시 다음 액션 (2026-07-26 갱신)
+
+> **⚠ SUPERSEDED (2026-08-19).** 이 섹션과 아래 "실험 전면 보류" 프레이밍은 이후의 측정
+> 캠페인들로 대체됐다 — 배선 검증 조건이 충족되어 보류는 해제됐고, 측정은 실제로 수행됐다:
+> LoCoMo 5-way는 `docs/18-locomo-4way.md`, ACE/FiNER는 `docs/19-ace-finer.md`,
+> LongMemEval 읽기측은 `docs/20-lme-reading.md`. 아래 내용은 당시 재개 지점의 기록으로 보존한다.
 
 > 이전 판(Phase 0 부트스트랩 3단계)은 오래 전 완료돼 삭제. 아래가 현재 재개 지점이다.
 > 브랜치: **`main` 단일**. 테스트 263 passed / 1 skipped.

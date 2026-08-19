@@ -64,7 +64,7 @@ REGISTRY = {
 | vector_store | SqliteVecStore | LanceDBVectorStore | QdrantVectorStore |
 | doc_store | SqliteDocStore | SqliteDocStore | PostgresDocStore |
 | graph_store | KuzuGraphStore | KuzuGraphStore | Neo4jGraphStore |
-| embedder | ST(multilingual-e5-small) | ST(bge-m3) | APIEmbedder(text-embedding-3-small) — 미구현, 현재 ST 강등 |
+| embedder | ST(multilingual-e5-small) | ST(bge-m3) | APIEmbedder(text-embedding-3-small) — ~~미구현, 현재 ST 강등~~ (2026-08-19 정정: `src/agmem/embed/api_embedder.py`로 구현 완료, full 프로파일 기본값) |
 | reranker | NoopReranker | LLMReranker | CrossEncoderReranker |
 | llm.extract | Qwen3-0.6B (로컬) | Qwen3-4B-AWQ | API (gpt-4o-mini급) |
 | llm.judge | API | API | API or 로컬 70B |

@@ -3,6 +3,11 @@
 > 각 축마다: 조사에서 확인된 사실 → 우리 선택 → capability 프로파일별 구성.
 > 원칙: 방법론은 전부 구현, capability로 선택 (`docs/01-capability-system.md`).
 
+> **스펙 vs 현실 (2026-08-19).** 이 문서는 역사적 스펙 문서로 본문을 보존한다. 이후 구현이 벗어난 확인된 지점 4곳:
+> 데이터 디렉토리는 `~/.agmem/data`다 (§5의 `~/.agentic_memory/{namespace}/` 아님);
+> GraphStore의 실제 표면은 `src/agmem/stores/base.py`의 계약이다 (§2의 `run_named_query` 스케치는 구현되지 않음);
+> `FalkorDBGraphStore`는 끝내 만들어지지 않았다; async write는 인메모리 스레드+큐다 (`memory.py`의 background worker — §3의 SQLite/Redis 큐 아님).
+
 ## 1. Retrieval & Rerank
 
 ### 1.1 조사에서 확인된 사실

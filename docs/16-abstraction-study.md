@@ -3,6 +3,7 @@
 목적: 방법론이 8종+로 늘어나며 "초기에 생각한 논문 구현 형태와 거리가 생겼는가"를 검증한다.
 방식: 우리 기존 기록(docs/08~15, research/*)을 **경유하지 않고**, 논문 원문(arXiv HTML)·
 upstream 클론(`~/.agmem/upstream/`)·우리 코드를 세션마다 직접 읽어 대조한다.
+(2026-08-19 주기: 이 스터디는 Mem0 구현·측정 이전에 수행됐다 — upstream 클론 9벌 기준이며 Mem0 세션은 없다.)
 각 세션은 ① 논문의 자기 명명(verbatim) ② 3자 대조표 ③ 발견 ④ 추상화 평가 순서.
 
 거리가 생기는 방식은 세 종류로 분류한다:
@@ -81,7 +82,7 @@ upstream은 5벌 체제(pypi/chromadb/mcp/playground/eval). 대응: `ShortTermMe
 1. **논문 상수 ≠ 논문 수치의 상수** (1차 소스 확정): 논문 α=β=γ=1·μ=1e7 / pypi (1,1,1)+24h 감쇠
    (`RECENCY_TAU_HOURS=24`) / eval 하네스 (0.8, 0.8, 0.0001)+stored recency. LoCoMo 표는 eval
    상수의 산물. 우리 프리셋 2종이 이 갈림을 보존.
-2. **[결함·미수정] 우리 `MEMORYOS_PRESETS`가 존재하지 않는 퇴출 정책 차이를 기록**:
+2. **[결함 — 2026-08-19 확인: 수정 완료, §D 첫 항목의 조치대로 반영됨 (현 `memoryos/organizer.py` 두 프리셋 모두 `eviction="lfu"`)] 우리 `MEMORYOS_PRESETS`가 존재하지 않는 퇴출 정책 차이를 기록**:
    pypi=`"lowest_heat"` / eval=`"lfu"`로 두 계보가 다르다고 주장하나, 실측 결과 **양쪽 모두
    `evict_lfu`** (pypi `mid_term.py:177`, eval `mid_term_memory.py:120`; access_frequency 최소
    세션 삭제). "lowest heat 퇴출"은 논문 문장에만 존재. 즉 우리 pypi 프리셋은 논문 정책을
