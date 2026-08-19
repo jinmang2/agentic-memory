@@ -653,3 +653,92 @@ teams running identical code would differ on by simply batching differently.
 
 Reproduce: `lme_c4_analysis.py --arms gpt-4o-mini_lme_s_con_k50
 gpt-4o-mini_lme_s_con_k50_batched` → `results/repro/lme_embed_jitter_paired.json`.
+
+---
+
+## `_m` — the regime we had never measured (2026-08-19)
+
+The rule this executes was fixed in "Pre-registration II" above, before the
+numbers existed. Both arms are batched (`embed_batch=128`), so they are compared
+to their own kind; the per-turn `_s` arm is not in this table.
+
+| `× mini × con × k50`, same 500 questions | task-avg | overall |
+|---|---|---|
+| `_s` — 48 sessions, 494 turns, 114K tokens | **81.41** | **81.40** |
+| `_m` — 476 sessions, 4,894 turns, 1.11M tokens | **72.56** | **72.80** |
+| **paired Δ (`_s` − `_m`)** | **+8.84 [+4.59, +13.10]** | **+8.60 [+5.00, +12.20]** |
+
+**McNemar 68/25, discordant 93, p = 9e-06.** Both intervals exclude zero by a
+wide margin and the disagreement runs one way.
+
+⇒ **The pre-registered verdict is the third row: ≥ 5 pp, "real decay, and C6
+acquires a boundary."** Retrieval's advantage is not constant in corpus length.
+Some of C6's +21.20 pp was a property of a haystack that fits.
+
+What has NOT changed: retrieval is still the only thing that can read `_m` at
+all. There is no full-context arm here to lose to — the median instance is 8.8x
+a 128k window. The precise statement the campaign can now make is
+
+> retrieval makes a corpus readable that does not fit in any context window, and
+> **its score is not constant in the size of that corpus** — 9.9x the haystack
+> costs 8.60 pp with the read path otherwise untouched.
+
+### The decay is not spread evenly, and that is the interesting part
+
+| type | n | `_s` | `_m` | Δ |
+|---|---|---|---|---|
+| single-session-preference | 30 | 56.67 | **36.67** | **+20.00** |
+| temporal-reasoning | 133 | 79.70 | **63.91** | **+15.79** |
+| single-session-user | 70 | 98.57 | 88.57 | +10.00 |
+| multi-session | 133 | 70.68 | 63.91 | +6.77 |
+| single-session-assistant | 56 | 98.21 | 96.43 | +1.78 |
+| **knowledge-update** | 78 | 84.62 | **85.90** | **−1.28** |
+| abstention (cross-cut) | 30 | 76.67 | 76.67 | 0.00 |
+
+Read against the earlier `_s` results in this document:
+
+1. **The types that survive are the ones that need one session found.**
+   single-session-assistant loses 1.78 pp at ten times the distractors, and
+   knowledge-update does not lose at all. Whatever 10x dilution does, it is not
+   uniformly "the retriever stops finding things".
+2. **The types that collapse are the ones C4 already identified as reader work,
+   not memory work** (§9.3: multi-session, temporal-reasoning and preference
+   carried C4's whole 12.57 pp spread under *perfect* retrieval). The same three
+   carry the loss here.
+3. **preference has now been measured in three regimes and moves in both
+   directions**: 63.33 (oracle) → 3.33 (`_s` full context) → 56.67 (`_s`
+   retrieval) → 36.67 (`_m` retrieval). It is the most regime-sensitive type on
+   this benchmark and the one Zep reports its largest relative gain on (§5.2).
+   Any preference number quoted without its haystack length is uninterpretable.
+4. **abstention did not move at all** (76.67 both). Refusing to answer is
+   apparently unaffected by how much there is to refuse over.
+
+### What this arm cannot say, and it was said in advance
+
+The pre-registration named the gap: rows record retrieved **episode** ids, not
+the session ids behind them, so **"did the evidence session survive top-50" is
+not recoverable from these artifacts**. The 8.60 pp therefore cannot be split
+into retrieval failure and reader failure. The per-type pattern above is
+suggestive — the reader-work types are the ones that fall — but suggestive is the
+strongest word available, and closing it needs a capture change and a re-run,
+not a re-analysis.
+
+Also unchanged: one arm, one seed, one reader (§9.4.1), and this measures
+retrieval rather than any memory system (§9.4.5) — a gap that is *wider* on `_m`,
+where an organizer arm costs $500-700 against this arm's ~$12.
+
+### Run facts
+
+500/500 judged, zero row failures, `embed_batch=128`, `workers=6`. The arm took
+three passes across a session restart and a machine reboot caused by an unrelated
+job; `resume_rows` recovered a torn records line (931 NUL bytes, the shape a kill
+leaves) without losing a paid row. ~2.5 h wall clock against ~20 h for the
+per-turn path.
+
+Two operational numbers worth keeping: at `workers=8` the run logged **563
+rate-limit waits and 9 lost rows**; at `workers=6`, **195 waits and 0 lost rows**.
+The org TPM ceiling is hit by burstiness, not by average throughput, so more
+workers buy contention rather than speed.
+
+Reproduce: `lme_c4_analysis.py --arms gpt-4o-mini_lme_s_con_k50_batched
+gpt-4o-mini_lme_m_con_k50_batched` → `results/repro/lme_m_paired.json`.

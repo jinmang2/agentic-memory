@@ -1,0 +1,2086 @@
+{
+  "stamp": {
+    "dataset": "m",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_m_cleaned.json",
+    "data_sha256": "9d79e5524794a2e6900a3aa9cb7d9152c5a3e8319c9a87c25494ba1eacee495f",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 500,
+    "n_answered": 500,
+    "n_judged": 500,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 6,
+    "full_context": false,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "passthrough"
+    ],
+    "read_path": "retrieval_top50",
+    "retrieval_k": 50,
+    "budget_tokens": 20000,
+    "embed_batch": 128,
+    "history_format": "json",
+    "embedder": "text-embedding-3-small",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "29563e8d97ef090185741f2fe79da7eee9a2b76a",
+    "utc_started": "2026-08-19T03:49:02.967500+00:00",
+    "utc_finished": "2026-08-19T04:25:08.622741+00:00",
+    "dry_run": false,
+    "resumed_from_records": 359,
+    "max_spend_usd": 14.0,
+    "prior_spend_usd": 1.048941
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 88.57,
+        "n": 70
+      },
+      "single-session-preference": {
+        "acc": 36.67,
+        "n": 30
+      },
+      "single-session-assistant": {
+        "acc": 96.43,
+        "n": 56
+      },
+      "multi-session": {
+        "acc": 63.91,
+        "n": 133
+      },
+      "temporal-reasoning": {
+        "acc": 63.91,
+        "n": 133
+      },
+      "knowledge-update": {
+        "acc": 85.9,
+        "n": 78
+      }
+    },
+    "task_averaged": 72.56,
+    "overall": 72.8,
+    "abstention": {
+      "acc": 76.67,
+      "n": 30
+    },
+    "n": 500
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "generate": {
+      "calls": 141,
+      "tokens_in": 1658532,
+      "tokens_out": 50142,
+      "latency_ms_avg": 7185.1,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 141,
+      "tokens_in": 72451,
+      "tokens_out": 246,
+      "latency_ms_avg": 712.2,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 5607,
+      "tokens_in": 155172016,
+      "tokens_out": 0,
+      "latency_ms_avg": 1525.0,
+      "errors": 203,
+      "input_truncations": 19
+    }
+  },
+  "llm_budget_by_row": {
+    "generate|a1cc6108": {
+      "calls": 1,
+      "tokens_in": 8737,
+      "tokens_out": 274,
+      "latency_ms_avg": 5764.0,
+      "errors": 0
+    },
+    "generate|a96c20ee": {
+      "calls": 1,
+      "tokens_in": 12909,
+      "tokens_out": 111,
+      "latency_ms_avg": 2400.5,
+      "errors": 0
+    },
+    "judge|a1cc6108": {
+      "calls": 1,
+      "tokens_in": 393,
+      "tokens_out": 2,
+      "latency_ms_avg": 686.6,
+      "errors": 0
+    },
+    "judge|a96c20ee": {
+      "calls": 1,
+      "tokens_in": 234,
+      "tokens_out": 2,
+      "latency_ms_avg": 713.5,
+      "errors": 0
+    },
+    "generate|92a0aa75": {
+      "calls": 1,
+      "tokens_in": 8710,
+      "tokens_out": 190,
+      "latency_ms_avg": 4736.4,
+      "errors": 0
+    },
+    "judge|92a0aa75": {
+      "calls": 1,
+      "tokens_in": 316,
+      "tokens_out": 2,
+      "latency_ms_avg": 852.8,
+      "errors": 0
+    },
+    "generate|720133ac": {
+      "calls": 1,
+      "tokens_in": 12802,
+      "tokens_out": 234,
+      "latency_ms_avg": 4243.9,
+      "errors": 0
+    },
+    "generate|gpt4_4929293b": {
+      "calls": 1,
+      "tokens_in": 7180,
+      "tokens_out": 262,
+      "latency_ms_avg": 3452.0,
+      "errors": 0
+    },
+    "judge|gpt4_4929293b": {
+      "calls": 1,
+      "tokens_in": 457,
+      "tokens_out": 2,
+      "latency_ms_avg": 542.0,
+      "errors": 0
+    },
+    "judge|720133ac": {
+      "calls": 1,
+      "tokens_in": 358,
+      "tokens_out": 1,
+      "latency_ms_avg": 1443.8,
+      "errors": 0
+    },
+    "generate|gpt4_f420262d": {
+      "calls": 1,
+      "tokens_in": 9483,
+      "tokens_out": 311,
+      "latency_ms_avg": 4693.2,
+      "errors": 0
+    },
+    "judge|gpt4_f420262d": {
+      "calls": 1,
+      "tokens_in": 498,
+      "tokens_out": 1,
+      "latency_ms_avg": 684.5,
+      "errors": 0
+    },
+    "generate|gpt4_4edbafa2": {
+      "calls": 1,
+      "tokens_in": 10029,
+      "tokens_out": 157,
+      "latency_ms_avg": 2906.1,
+      "errors": 0
+    },
+    "generate|bbf86515": {
+      "calls": 1,
+      "tokens_in": 12883,
+      "tokens_out": 180,
+      "latency_ms_avg": 2603.9,
+      "errors": 0
+    },
+    "judge|bbf86515": {
+      "calls": 1,
+      "tokens_in": 376,
+      "tokens_out": 2,
+      "latency_ms_avg": 524.5,
+      "errors": 0
+    },
+    "judge|gpt4_4edbafa2": {
+      "calls": 1,
+      "tokens_in": 348,
+      "tokens_out": 1,
+      "latency_ms_avg": 584.0,
+      "errors": 0
+    },
+    "generate|c8090214": {
+      "calls": 1,
+      "tokens_in": 11789,
+      "tokens_out": 250,
+      "latency_ms_avg": 2996.4,
+      "errors": 0
+    },
+    "generate|b9cfe692": {
+      "calls": 1,
+      "tokens_in": 12000,
+      "tokens_out": 505,
+      "latency_ms_avg": 5457.8,
+      "errors": 0
+    },
+    "judge|c8090214": {
+      "calls": 1,
+      "tokens_in": 457,
+      "tokens_out": 2,
+      "latency_ms_avg": 589.7,
+      "errors": 0
+    },
+    "judge|b9cfe692": {
+      "calls": 1,
+      "tokens_in": 706,
+      "tokens_out": 1,
+      "latency_ms_avg": 488.0,
+      "errors": 0
+    },
+    "generate|08f4fc43": {
+      "calls": 1,
+      "tokens_in": 12210,
+      "tokens_out": 244,
+      "latency_ms_avg": 2889.7,
+      "errors": 0
+    },
+    "judge|08f4fc43": {
+      "calls": 1,
+      "tokens_in": 455,
+      "tokens_out": 2,
+      "latency_ms_avg": 780.9,
+      "errors": 0
+    },
+    "generate|gpt4_2487a7cb": {
+      "calls": 1,
+      "tokens_in": 16264,
+      "tokens_out": 322,
+      "latency_ms_avg": 12438.0,
+      "errors": 0
+    },
+    "judge|gpt4_2487a7cb": {
+      "calls": 1,
+      "tokens_in": 525,
+      "tokens_out": 2,
+      "latency_ms_avg": 552.1,
+      "errors": 0
+    },
+    "generate|e4e14d04": {
+      "calls": 1,
+      "tokens_in": 8759,
+      "tokens_out": 309,
+      "latency_ms_avg": 3527.5,
+      "errors": 0
+    },
+    "judge|e4e14d04": {
+      "calls": 1,
+      "tokens_in": 502,
+      "tokens_out": 2,
+      "latency_ms_avg": 474.7,
+      "errors": 0
+    },
+    "generate|c9f37c46": {
+      "calls": 1,
+      "tokens_in": 13115,
+      "tokens_out": 226,
+      "latency_ms_avg": 5717.9,
+      "errors": 0
+    },
+    "judge|c9f37c46": {
+      "calls": 1,
+      "tokens_in": 425,
+      "tokens_out": 1,
+      "latency_ms_avg": 461.7,
+      "errors": 0
+    },
+    "generate|gpt4_2c50253f": {
+      "calls": 1,
+      "tokens_in": 13167,
+      "tokens_out": 209,
+      "latency_ms_avg": 2527.3,
+      "errors": 0
+    },
+    "judge|gpt4_2c50253f": {
+      "calls": 1,
+      "tokens_in": 397,
+      "tokens_out": 1,
+      "latency_ms_avg": 592.3,
+      "errors": 0
+    },
+    "generate|gpt4_483dd43c": {
+      "calls": 1,
+      "tokens_in": 12571,
+      "tokens_out": 230,
+      "latency_ms_avg": 7689.7,
+      "errors": 0
+    },
+    "generate|dcfa8644": {
+      "calls": 1,
+      "tokens_in": 10682,
+      "tokens_out": 350,
+      "latency_ms_avg": 4227.0,
+      "errors": 0
+    },
+    "judge|gpt4_483dd43c": {
+      "calls": 1,
+      "tokens_in": 425,
+      "tokens_out": 2,
+      "latency_ms_avg": 741.4,
+      "errors": 0
+    },
+    "judge|dcfa8644": {
+      "calls": 1,
+      "tokens_in": 567,
+      "tokens_out": 2,
+      "latency_ms_avg": 940.0,
+      "errors": 0
+    },
+    "generate|gpt4_b4a80587": {
+      "calls": 1,
+      "tokens_in": 13875,
+      "tokens_out": 287,
+      "latency_ms_avg": 4359.9,
+      "errors": 0
+    },
+    "judge|gpt4_b4a80587": {
+      "calls": 1,
+      "tokens_in": 486,
+      "tokens_out": 1,
+      "latency_ms_avg": 661.7,
+      "errors": 0
+    },
+    "generate|gpt4_9a159967": {
+      "calls": 1,
+      "tokens_in": 10942,
+      "tokens_out": 449,
+      "latency_ms_avg": 6028.8,
+      "errors": 0
+    },
+    "generate|cc6d1ec1": {
+      "calls": 1,
+      "tokens_in": 13778,
+      "tokens_out": 296,
+      "latency_ms_avg": 3817.3,
+      "errors": 0
+    },
+    "judge|gpt4_9a159967": {
+      "calls": 1,
+      "tokens_in": 636,
+      "tokens_out": 1,
+      "latency_ms_avg": 549.8,
+      "errors": 0
+    },
+    "judge|cc6d1ec1": {
+      "calls": 1,
+      "tokens_in": 485,
+      "tokens_out": 2,
+      "latency_ms_avg": 790.1,
+      "errors": 0
+    },
+    "generate|gpt4_7de946e7": {
+      "calls": 1,
+      "tokens_in": 14061,
+      "tokens_out": 276,
+      "latency_ms_avg": 4528.0,
+      "errors": 0
+    },
+    "judge|gpt4_7de946e7": {
+      "calls": 1,
+      "tokens_in": 468,
+      "tokens_out": 1,
+      "latency_ms_avg": 1285.9,
+      "errors": 0
+    },
+    "generate|gpt4_8c8961ae": {
+      "calls": 1,
+      "tokens_in": 12854,
+      "tokens_out": 184,
+      "latency_ms_avg": 5268.7,
+      "errors": 0
+    },
+    "generate|gpt4_d9af6064": {
+      "calls": 1,
+      "tokens_in": 15608,
+      "tokens_out": 181,
+      "latency_ms_avg": 2641.0,
+      "errors": 0
+    },
+    "judge|gpt4_8c8961ae": {
+      "calls": 1,
+      "tokens_in": 381,
+      "tokens_out": 1,
+      "latency_ms_avg": 1198.9,
+      "errors": 0
+    },
+    "judge|gpt4_d9af6064": {
+      "calls": 1,
+      "tokens_in": 371,
+      "tokens_out": 1,
+      "latency_ms_avg": 883.9,
+      "errors": 0
+    },
+    "generate|d01c6aa8": {
+      "calls": 1,
+      "tokens_in": 10727,
+      "tokens_out": 217,
+      "latency_ms_avg": 11278.3,
+      "errors": 0
+    },
+    "judge|d01c6aa8": {
+      "calls": 1,
+      "tokens_in": 403,
+      "tokens_out": 2,
+      "latency_ms_avg": 656.1,
+      "errors": 0
+    },
+    "generate|gpt4_cd90e484": {
+      "calls": 1,
+      "tokens_in": 10881,
+      "tokens_out": 298,
+      "latency_ms_avg": 5401.3,
+      "errors": 0
+    },
+    "judge|gpt4_cd90e484": {
+      "calls": 1,
+      "tokens_in": 494,
+      "tokens_out": 2,
+      "latency_ms_avg": 538.6,
+      "errors": 0
+    },
+    "generate|a3045048": {
+      "calls": 1,
+      "tokens_in": 10252,
+      "tokens_out": 316,
+      "latency_ms_avg": 3173.5,
+      "errors": 0
+    },
+    "judge|a3045048": {
+      "calls": 1,
+      "tokens_in": 519,
+      "tokens_out": 2,
+      "latency_ms_avg": 549.1,
+      "errors": 0
+    },
+    "generate|gpt4_88806d6e": {
+      "calls": 1,
+      "tokens_in": 13541,
+      "tokens_out": 212,
+      "latency_ms_avg": 2744.8,
+      "errors": 0
+    },
+    "judge|gpt4_88806d6e": {
+      "calls": 1,
+      "tokens_in": 397,
+      "tokens_out": 1,
+      "latency_ms_avg": 460.9,
+      "errors": 0
+    },
+    "generate|gpt4_d31cdae3": {
+      "calls": 1,
+      "tokens_in": 11478,
+      "tokens_out": 301,
+      "latency_ms_avg": 5915.3,
+      "errors": 0
+    },
+    "judge|gpt4_d31cdae3": {
+      "calls": 1,
+      "tokens_in": 504,
+      "tokens_out": 1,
+      "latency_ms_avg": 488.3,
+      "errors": 0
+    },
+    "generate|993da5e2": {
+      "calls": 1,
+      "tokens_in": 10486,
+      "tokens_out": 207,
+      "latency_ms_avg": 15235.2,
+      "errors": 0
+    },
+    "judge|993da5e2": {
+      "calls": 1,
+      "tokens_in": 414,
+      "tokens_out": 2,
+      "latency_ms_avg": 479.8,
+      "errors": 0
+    },
+    "generate|gpt4_4cd9eba1": {
+      "calls": 1,
+      "tokens_in": 13059,
+      "tokens_out": 425,
+      "latency_ms_avg": 13725.6,
+      "errors": 0
+    },
+    "judge|gpt4_4cd9eba1": {
+      "calls": 1,
+      "tokens_in": 622,
+      "tokens_out": 2,
+      "latency_ms_avg": 592.2,
+      "errors": 0
+    },
+    "generate|b29f3365": {
+      "calls": 1,
+      "tokens_in": 10953,
+      "tokens_out": 200,
+      "latency_ms_avg": 3184.3,
+      "errors": 0
+    },
+    "judge|b29f3365": {
+      "calls": 1,
+      "tokens_in": 390,
+      "tokens_out": 2,
+      "latency_ms_avg": 500.4,
+      "errors": 0
+    },
+    "generate|gpt4_93f6379c": {
+      "calls": 1,
+      "tokens_in": 16043,
+      "tokens_out": 221,
+      "latency_ms_avg": 3130.5,
+      "errors": 0
+    },
+    "judge|gpt4_93f6379c": {
+      "calls": 1,
+      "tokens_in": 414,
+      "tokens_out": 1,
+      "latency_ms_avg": 506.3,
+      "errors": 0
+    },
+    "generate|6613b389": {
+      "calls": 1,
+      "tokens_in": 12615,
+      "tokens_out": 282,
+      "latency_ms_avg": 3558.9,
+      "errors": 0
+    },
+    "judge|6613b389": {
+      "calls": 1,
+      "tokens_in": 467,
+      "tokens_out": 2,
+      "latency_ms_avg": 554.4,
+      "errors": 0
+    },
+    "generate|gpt4_2f56ae70": {
+      "calls": 1,
+      "tokens_in": 12757,
+      "tokens_out": 250,
+      "latency_ms_avg": 3873.0,
+      "errors": 0
+    },
+    "judge|gpt4_2f56ae70": {
+      "calls": 1,
+      "tokens_in": 433,
+      "tokens_out": 1,
+      "latency_ms_avg": 487.3,
+      "errors": 0
+    },
+    "generate|gpt4_78cf46a3": {
+      "calls": 1,
+      "tokens_in": 14411,
+      "tokens_out": 367,
+      "latency_ms_avg": 4357.1,
+      "errors": 0
+    },
+    "judge|gpt4_78cf46a3": {
+      "calls": 1,
+      "tokens_in": 564,
+      "tokens_out": 2,
+      "latency_ms_avg": 545.0,
+      "errors": 0
+    },
+    "generate|gpt4_0a05b494": {
+      "calls": 1,
+      "tokens_in": 15081,
+      "tokens_out": 275,
+      "latency_ms_avg": 9829.5,
+      "errors": 0
+    },
+    "judge|gpt4_0a05b494": {
+      "calls": 1,
+      "tokens_in": 477,
+      "tokens_out": 2,
+      "latency_ms_avg": 574.2,
+      "errors": 0
+    },
+    "generate|gpt4_213fd887": {
+      "calls": 1,
+      "tokens_in": 14176,
+      "tokens_out": 184,
+      "latency_ms_avg": 5250.3,
+      "errors": 0
+    },
+    "judge|gpt4_213fd887": {
+      "calls": 1,
+      "tokens_in": 385,
+      "tokens_out": 2,
+      "latency_ms_avg": 509.6,
+      "errors": 0
+    },
+    "generate|gpt4_1a1dc16d": {
+      "calls": 1,
+      "tokens_in": 10908,
+      "tokens_out": 173,
+      "latency_ms_avg": 9014.4,
+      "errors": 0
+    },
+    "generate|gpt4_2f584639": {
+      "calls": 1,
+      "tokens_in": 12472,
+      "tokens_out": 263,
+      "latency_ms_avg": 4859.5,
+      "errors": 0
+    },
+    "judge|gpt4_1a1dc16d": {
+      "calls": 1,
+      "tokens_in": 363,
+      "tokens_out": 1,
+      "latency_ms_avg": 502.3,
+      "errors": 0
+    },
+    "judge|gpt4_2f584639": {
+      "calls": 1,
+      "tokens_in": 461,
+      "tokens_out": 2,
+      "latency_ms_avg": 555.6,
+      "errors": 0
+    },
+    "generate|gpt4_5438fa52": {
+      "calls": 1,
+      "tokens_in": 10796,
+      "tokens_out": 282,
+      "latency_ms_avg": 9976.7,
+      "errors": 0
+    },
+    "judge|gpt4_5438fa52": {
+      "calls": 1,
+      "tokens_in": 475,
+      "tokens_out": 2,
+      "latency_ms_avg": 550.4,
+      "errors": 0
+    },
+    "generate|gpt4_c27434e8": {
+      "calls": 1,
+      "tokens_in": 14106,
+      "tokens_out": 278,
+      "latency_ms_avg": 4131.8,
+      "errors": 0
+    },
+    "judge|gpt4_c27434e8": {
+      "calls": 1,
+      "tokens_in": 473,
+      "tokens_out": 2,
+      "latency_ms_avg": 555.5,
+      "errors": 0
+    },
+    "generate|gpt4_fe651585": {
+      "calls": 1,
+      "tokens_in": 9503,
+      "tokens_out": 296,
+      "latency_ms_avg": 3745.5,
+      "errors": 0
+    },
+    "judge|gpt4_fe651585": {
+      "calls": 1,
+      "tokens_in": 479,
+      "tokens_out": 1,
+      "latency_ms_avg": 549.8,
+      "errors": 0
+    },
+    "generate|8c18457d": {
+      "calls": 1,
+      "tokens_in": 10118,
+      "tokens_out": 187,
+      "latency_ms_avg": 4107.3,
+      "errors": 0
+    },
+    "judge|8c18457d": {
+      "calls": 1,
+      "tokens_in": 406,
+      "tokens_out": 2,
+      "latency_ms_avg": 728.5,
+      "errors": 0
+    },
+    "generate|gpt4_93159ced_abs": {
+      "calls": 1,
+      "tokens_in": 8669,
+      "tokens_out": 296,
+      "latency_ms_avg": 6040.7,
+      "errors": 0
+    },
+    "judge|gpt4_93159ced_abs": {
+      "calls": 1,
+      "tokens_in": 421,
+      "tokens_out": 2,
+      "latency_ms_avg": 640.2,
+      "errors": 0
+    },
+    "generate|gpt4_70e84552_abs": {
+      "calls": 1,
+      "tokens_in": 11391,
+      "tokens_out": 349,
+      "latency_ms_avg": 5004.3,
+      "errors": 0
+    },
+    "judge|gpt4_70e84552_abs": {
+      "calls": 1,
+      "tokens_in": 477,
+      "tokens_out": 2,
+      "latency_ms_avg": 570.9,
+      "errors": 0
+    },
+    "generate|c8090214_abs": {
+      "calls": 1,
+      "tokens_in": 14031,
+      "tokens_out": 342,
+      "latency_ms_avg": 14711.8,
+      "errors": 0
+    },
+    "judge|c8090214_abs": {
+      "calls": 1,
+      "tokens_in": 479,
+      "tokens_out": 1,
+      "latency_ms_avg": 617.5,
+      "errors": 0
+    },
+    "generate|gpt4_c27434e8_abs": {
+      "calls": 1,
+      "tokens_in": 15362,
+      "tokens_out": 225,
+      "latency_ms_avg": 6209.7,
+      "errors": 0
+    },
+    "judge|gpt4_c27434e8_abs": {
+      "calls": 1,
+      "tokens_in": 354,
+      "tokens_out": 1,
+      "latency_ms_avg": 561.5,
+      "errors": 0
+    },
+    "generate|982b5123_abs": {
+      "calls": 1,
+      "tokens_in": 9100,
+      "tokens_out": 252,
+      "latency_ms_avg": 36908.8,
+      "errors": 0
+    },
+    "judge|982b5123_abs": {
+      "calls": 1,
+      "tokens_in": 367,
+      "tokens_out": 1,
+      "latency_ms_avg": 2090.0,
+      "errors": 0
+    },
+    "generate|gpt4_fe651585_abs": {
+      "calls": 1,
+      "tokens_in": 10707,
+      "tokens_out": 235,
+      "latency_ms_avg": 12046.5,
+      "errors": 0
+    },
+    "judge|gpt4_fe651585_abs": {
+      "calls": 1,
+      "tokens_in": 359,
+      "tokens_out": 1,
+      "latency_ms_avg": 570.3,
+      "errors": 0
+    },
+    "generate|8a2466db": {
+      "calls": 1,
+      "tokens_in": 13541,
+      "tokens_out": 702,
+      "latency_ms_avg": 9626.8,
+      "errors": 0
+    },
+    "judge|8a2466db": {
+      "calls": 1,
+      "tokens_in": 852,
+      "tokens_out": 2,
+      "latency_ms_avg": 549.3,
+      "errors": 0
+    },
+    "generate|06878be2": {
+      "calls": 1,
+      "tokens_in": 11968,
+      "tokens_out": 757,
+      "latency_ms_avg": 9819.0,
+      "errors": 0
+    },
+    "judge|06878be2": {
+      "calls": 1,
+      "tokens_in": 901,
+      "tokens_out": 2,
+      "latency_ms_avg": 769.0,
+      "errors": 0
+    },
+    "generate|75832dbd": {
+      "calls": 1,
+      "tokens_in": 8960,
+      "tokens_out": 701,
+      "latency_ms_avg": 7093.4,
+      "errors": 0
+    },
+    "judge|75832dbd": {
+      "calls": 1,
+      "tokens_in": 859,
+      "tokens_out": 1,
+      "latency_ms_avg": 945.5,
+      "errors": 0
+    },
+    "generate|0edc2aef": {
+      "calls": 1,
+      "tokens_in": 10841,
+      "tokens_out": 576,
+      "latency_ms_avg": 11684.6,
+      "errors": 0
+    },
+    "judge|0edc2aef": {
+      "calls": 1,
+      "tokens_in": 737,
+      "tokens_out": 2,
+      "latency_ms_avg": 699.5,
+      "errors": 0
+    },
+    "generate|35a27287": {
+      "calls": 1,
+      "tokens_in": 9894,
+      "tokens_out": 559,
+      "latency_ms_avg": 7060.1,
+      "errors": 0
+    },
+    "judge|35a27287": {
+      "calls": 1,
+      "tokens_in": 721,
+      "tokens_out": 2,
+      "latency_ms_avg": 738.4,
+      "errors": 0
+    },
+    "generate|195a1a1b": {
+      "calls": 1,
+      "tokens_in": 7223,
+      "tokens_out": 693,
+      "latency_ms_avg": 7981.2,
+      "errors": 0
+    },
+    "judge|195a1a1b": {
+      "calls": 1,
+      "tokens_in": 850,
+      "tokens_out": 2,
+      "latency_ms_avg": 695.6,
+      "errors": 0
+    },
+    "generate|afdc33df": {
+      "calls": 1,
+      "tokens_in": 14482,
+      "tokens_out": 645,
+      "latency_ms_avg": 8445.2,
+      "errors": 0
+    },
+    "judge|afdc33df": {
+      "calls": 1,
+      "tokens_in": 852,
+      "tokens_out": 2,
+      "latency_ms_avg": 625.0,
+      "errors": 0
+    },
+    "generate|32260d93": {
+      "calls": 1,
+      "tokens_in": 12000,
+      "tokens_out": 591,
+      "latency_ms_avg": 26797.4,
+      "errors": 0
+    },
+    "judge|32260d93": {
+      "calls": 1,
+      "tokens_in": 732,
+      "tokens_out": 2,
+      "latency_ms_avg": 694.3,
+      "errors": 0
+    },
+    "generate|54026fce": {
+      "calls": 1,
+      "tokens_in": 6821,
+      "tokens_out": 579,
+      "latency_ms_avg": 6586.9,
+      "errors": 0
+    },
+    "judge|54026fce": {
+      "calls": 1,
+      "tokens_in": 767,
+      "tokens_out": 2,
+      "latency_ms_avg": 695.1,
+      "errors": 0
+    },
+    "generate|caf03d32": {
+      "calls": 1,
+      "tokens_in": 8402,
+      "tokens_out": 712,
+      "latency_ms_avg": 13223.2,
+      "errors": 0
+    },
+    "judge|caf03d32": {
+      "calls": 1,
+      "tokens_in": 876,
+      "tokens_out": 2,
+      "latency_ms_avg": 623.8,
+      "errors": 0
+    },
+    "generate|06f04340": {
+      "calls": 1,
+      "tokens_in": 15054,
+      "tokens_out": 619,
+      "latency_ms_avg": 18028.6,
+      "errors": 0
+    },
+    "judge|06f04340": {
+      "calls": 1,
+      "tokens_in": 779,
+      "tokens_out": 2,
+      "latency_ms_avg": 768.8,
+      "errors": 0
+    },
+    "generate|6b7dfb22": {
+      "calls": 1,
+      "tokens_in": 5564,
+      "tokens_out": 695,
+      "latency_ms_avg": 7722.4,
+      "errors": 0
+    },
+    "judge|6b7dfb22": {
+      "calls": 1,
+      "tokens_in": 889,
+      "tokens_out": 2,
+      "latency_ms_avg": 679.2,
+      "errors": 0
+    },
+    "generate|09d032c9": {
+      "calls": 1,
+      "tokens_in": 6114,
+      "tokens_out": 626,
+      "latency_ms_avg": 8010.5,
+      "errors": 0
+    },
+    "judge|09d032c9": {
+      "calls": 1,
+      "tokens_in": 801,
+      "tokens_out": 2,
+      "latency_ms_avg": 1123.5,
+      "errors": 0
+    },
+    "generate|1a1907b4": {
+      "calls": 1,
+      "tokens_in": 6274,
+      "tokens_out": 639,
+      "latency_ms_avg": 13277.7,
+      "errors": 0
+    },
+    "judge|1a1907b4": {
+      "calls": 1,
+      "tokens_in": 844,
+      "tokens_out": 2,
+      "latency_ms_avg": 498.0,
+      "errors": 0
+    },
+    "generate|38146c39": {
+      "calls": 1,
+      "tokens_in": 9439,
+      "tokens_out": 675,
+      "latency_ms_avg": 8031.7,
+      "errors": 0
+    },
+    "judge|38146c39": {
+      "calls": 1,
+      "tokens_in": 836,
+      "tokens_out": 2,
+      "latency_ms_avg": 504.9,
+      "errors": 0
+    },
+    "generate|d24813b1": {
+      "calls": 1,
+      "tokens_in": 6776,
+      "tokens_out": 581,
+      "latency_ms_avg": 6341.8,
+      "errors": 0
+    },
+    "judge|d24813b1": {
+      "calls": 1,
+      "tokens_in": 770,
+      "tokens_out": 2,
+      "latency_ms_avg": 604.8,
+      "errors": 0
+    },
+    "generate|57f827a0": {
+      "calls": 1,
+      "tokens_in": 7082,
+      "tokens_out": 783,
+      "latency_ms_avg": 9263.6,
+      "errors": 0
+    },
+    "judge|57f827a0": {
+      "calls": 1,
+      "tokens_in": 956,
+      "tokens_out": 2,
+      "latency_ms_avg": 878.2,
+      "errors": 0
+    },
+    "generate|505af2f5": {
+      "calls": 1,
+      "tokens_in": 6754,
+      "tokens_out": 671,
+      "latency_ms_avg": 8022.2,
+      "errors": 0
+    },
+    "judge|505af2f5": {
+      "calls": 1,
+      "tokens_in": 840,
+      "tokens_out": 2,
+      "latency_ms_avg": 575.3,
+      "errors": 0
+    },
+    "generate|75f70248": {
+      "calls": 1,
+      "tokens_in": 4976,
+      "tokens_out": 505,
+      "latency_ms_avg": 6063.8,
+      "errors": 0
+    },
+    "judge|75f70248": {
+      "calls": 1,
+      "tokens_in": 688,
+      "tokens_out": 2,
+      "latency_ms_avg": 663.0,
+      "errors": 0
+    },
+    "generate|d6233ab6": {
+      "calls": 1,
+      "tokens_in": 4783,
+      "tokens_out": 417,
+      "latency_ms_avg": 4698.3,
+      "errors": 0
+    },
+    "judge|d6233ab6": {
+      "calls": 1,
+      "tokens_in": 620,
+      "tokens_out": 2,
+      "latency_ms_avg": 594.9,
+      "errors": 0
+    },
+    "generate|1da05512": {
+      "calls": 1,
+      "tokens_in": 8291,
+      "tokens_out": 553,
+      "latency_ms_avg": 5764.1,
+      "errors": 0
+    },
+    "judge|1da05512": {
+      "calls": 1,
+      "tokens_in": 747,
+      "tokens_out": 2,
+      "latency_ms_avg": 879.7,
+      "errors": 0
+    },
+    "generate|95228167": {
+      "calls": 1,
+      "tokens_in": 12763,
+      "tokens_out": 680,
+      "latency_ms_avg": 9023.4,
+      "errors": 0
+    },
+    "judge|95228167": {
+      "calls": 1,
+      "tokens_in": 861,
+      "tokens_out": 2,
+      "latency_ms_avg": 675.1,
+      "errors": 0
+    },
+    "generate|fca70973": {
+      "calls": 1,
+      "tokens_in": 10155,
+      "tokens_out": 741,
+      "latency_ms_avg": 6630.4,
+      "errors": 0
+    },
+    "judge|fca70973": {
+      "calls": 1,
+      "tokens_in": 954,
+      "tokens_out": 2,
+      "latency_ms_avg": 1024.9,
+      "errors": 0
+    },
+    "generate|b6025781": {
+      "calls": 1,
+      "tokens_in": 9881,
+      "tokens_out": 800,
+      "latency_ms_avg": 13136.8,
+      "errors": 0
+    },
+    "judge|b6025781": {
+      "calls": 1,
+      "tokens_in": 993,
+      "tokens_out": 2,
+      "latency_ms_avg": 715.4,
+      "errors": 0
+    },
+    "generate|b0479f84": {
+      "calls": 1,
+      "tokens_in": 8851,
+      "tokens_out": 604,
+      "latency_ms_avg": 7960.0,
+      "errors": 0
+    },
+    "judge|b0479f84": {
+      "calls": 1,
+      "tokens_in": 782,
+      "tokens_out": 2,
+      "latency_ms_avg": 590.1,
+      "errors": 0
+    },
+    "generate|1d4e3b97": {
+      "calls": 1,
+      "tokens_in": 11089,
+      "tokens_out": 425,
+      "latency_ms_avg": 6988.3,
+      "errors": 0
+    },
+    "judge|1d4e3b97": {
+      "calls": 1,
+      "tokens_in": 619,
+      "tokens_out": 2,
+      "latency_ms_avg": 552.9,
+      "errors": 0
+    },
+    "generate|07b6f563": {
+      "calls": 1,
+      "tokens_in": 9059,
+      "tokens_out": 772,
+      "latency_ms_avg": 11009.8,
+      "errors": 0
+    },
+    "generate|a89d7624": {
+      "calls": 1,
+      "tokens_in": 6856,
+      "tokens_out": 701,
+      "latency_ms_avg": 22302.8,
+      "errors": 0
+    },
+    "judge|07b6f563": {
+      "calls": 1,
+      "tokens_in": 941,
+      "tokens_out": 2,
+      "latency_ms_avg": 637.0,
+      "errors": 0
+    },
+    "judge|a89d7624": {
+      "calls": 1,
+      "tokens_in": 886,
+      "tokens_out": 2,
+      "latency_ms_avg": 725.0,
+      "errors": 0
+    },
+    "generate|1c0ddc50": {
+      "calls": 1,
+      "tokens_in": 9484,
+      "tokens_out": 641,
+      "latency_ms_avg": 6426.7,
+      "errors": 0
+    },
+    "judge|1c0ddc50": {
+      "calls": 1,
+      "tokens_in": 830,
+      "tokens_out": 2,
+      "latency_ms_avg": 714.7,
+      "errors": 0
+    },
+    "generate|6d550036": {
+      "calls": 1,
+      "tokens_in": 10633,
+      "tokens_out": 319,
+      "latency_ms_avg": 5064.6,
+      "errors": 0
+    },
+    "judge|6d550036": {
+      "calls": 1,
+      "tokens_in": 440,
+      "tokens_out": 2,
+      "latency_ms_avg": 656.9,
+      "errors": 0
+    },
+    "generate|0a995998": {
+      "calls": 1,
+      "tokens_in": 17223,
+      "tokens_out": 309,
+      "latency_ms_avg": 4475.6,
+      "errors": 0
+    },
+    "judge|0a995998": {
+      "calls": 1,
+      "tokens_in": 436,
+      "tokens_out": 2,
+      "latency_ms_avg": 620.9,
+      "errors": 0
+    },
+    "generate|b5ef892d": {
+      "calls": 1,
+      "tokens_in": 12573,
+      "tokens_out": 174,
+      "latency_ms_avg": 6397.7,
+      "errors": 0
+    },
+    "judge|b5ef892d": {
+      "calls": 1,
+      "tokens_in": 301,
+      "tokens_out": 2,
+      "latency_ms_avg": 482.8,
+      "errors": 0
+    },
+    "generate|0a34ad58": {
+      "calls": 1,
+      "tokens_in": 8686,
+      "tokens_out": 651,
+      "latency_ms_avg": 11053.3,
+      "errors": 0
+    },
+    "judge|0a34ad58": {
+      "calls": 1,
+      "tokens_in": 814,
+      "tokens_out": 2,
+      "latency_ms_avg": 789.9,
+      "errors": 0
+    },
+    "generate|gpt4_59c863d7": {
+      "calls": 1,
+      "tokens_in": 13916,
+      "tokens_out": 509,
+      "latency_ms_avg": 7738.1,
+      "errors": 0
+    },
+    "judge|gpt4_59c863d7": {
+      "calls": 1,
+      "tokens_in": 699,
+      "tokens_out": 2,
+      "latency_ms_avg": 627.1,
+      "errors": 0
+    },
+    "generate|e831120c": {
+      "calls": 1,
+      "tokens_in": 12351,
+      "tokens_out": 347,
+      "latency_ms_avg": 5338.0,
+      "errors": 0
+    },
+    "judge|e831120c": {
+      "calls": 1,
+      "tokens_in": 483,
+      "tokens_out": 2,
+      "latency_ms_avg": 600.1,
+      "errors": 0
+    },
+    "generate|gpt4_d84a3211": {
+      "calls": 1,
+      "tokens_in": 13662,
+      "tokens_out": 240,
+      "latency_ms_avg": 6208.0,
+      "errors": 0
+    },
+    "judge|gpt4_d84a3211": {
+      "calls": 1,
+      "tokens_in": 368,
+      "tokens_out": 2,
+      "latency_ms_avg": 534.8,
+      "errors": 0
+    },
+    "generate|3a704032": {
+      "calls": 1,
+      "tokens_in": 12914,
+      "tokens_out": 366,
+      "latency_ms_avg": 7364.3,
+      "errors": 0
+    },
+    "judge|3a704032": {
+      "calls": 1,
+      "tokens_in": 487,
+      "tokens_out": 2,
+      "latency_ms_avg": 968.6,
+      "errors": 0
+    },
+    "generate|aae3761f": {
+      "calls": 1,
+      "tokens_in": 12728,
+      "tokens_out": 362,
+      "latency_ms_avg": 4686.0,
+      "errors": 0
+    },
+    "judge|aae3761f": {
+      "calls": 1,
+      "tokens_in": 505,
+      "tokens_out": 2,
+      "latency_ms_avg": 681.3,
+      "errors": 0
+    },
+    "generate|gpt4_f2262a51": {
+      "calls": 1,
+      "tokens_in": 9883,
+      "tokens_out": 231,
+      "latency_ms_avg": 4986.5,
+      "errors": 0
+    },
+    "judge|gpt4_f2262a51": {
+      "calls": 1,
+      "tokens_in": 365,
+      "tokens_out": 2,
+      "latency_ms_avg": 641.7,
+      "errors": 0
+    },
+    "generate|dd2973ad": {
+      "calls": 1,
+      "tokens_in": 11512,
+      "tokens_out": 307,
+      "latency_ms_avg": 8658.6,
+      "errors": 0
+    },
+    "judge|dd2973ad": {
+      "calls": 1,
+      "tokens_in": 435,
+      "tokens_out": 2,
+      "latency_ms_avg": 736.5,
+      "errors": 0
+    },
+    "generate|c4a1ceb8": {
+      "calls": 1,
+      "tokens_in": 14354,
+      "tokens_out": 264,
+      "latency_ms_avg": 4017.6,
+      "errors": 0
+    },
+    "judge|c4a1ceb8": {
+      "calls": 1,
+      "tokens_in": 389,
+      "tokens_out": 2,
+      "latency_ms_avg": 530.4,
+      "errors": 0
+    },
+    "generate|6cb6f249": {
+      "calls": 1,
+      "tokens_in": 14671,
+      "tokens_out": 222,
+      "latency_ms_avg": 3910.5,
+      "errors": 0
+    },
+    "judge|6cb6f249": {
+      "calls": 1,
+      "tokens_in": 345,
+      "tokens_out": 2,
+      "latency_ms_avg": 799.8,
+      "errors": 0
+    },
+    "generate|gpt4_a56e767c": {
+      "calls": 1,
+      "tokens_in": 13569,
+      "tokens_out": 180,
+      "latency_ms_avg": 5614.8,
+      "errors": 0
+    },
+    "judge|gpt4_a56e767c": {
+      "calls": 1,
+      "tokens_in": 301,
+      "tokens_out": 1,
+      "latency_ms_avg": 732.9,
+      "errors": 0
+    },
+    "generate|28dc39ac": {
+      "calls": 1,
+      "tokens_in": 12152,
+      "tokens_out": 451,
+      "latency_ms_avg": 7086.0,
+      "errors": 0
+    },
+    "judge|28dc39ac": {
+      "calls": 1,
+      "tokens_in": 573,
+      "tokens_out": 2,
+      "latency_ms_avg": 719.7,
+      "errors": 0
+    },
+    "generate|46a3abf7": {
+      "calls": 1,
+      "tokens_in": 11557,
+      "tokens_out": 234,
+      "latency_ms_avg": 4877.9,
+      "errors": 0
+    },
+    "judge|46a3abf7": {
+      "calls": 1,
+      "tokens_in": 363,
+      "tokens_out": 2,
+      "latency_ms_avg": 690.6,
+      "errors": 0
+    },
+    "generate|36b9f61e": {
+      "calls": 1,
+      "tokens_in": 16261,
+      "tokens_out": 335,
+      "latency_ms_avg": 5716.7,
+      "errors": 0
+    },
+    "judge|36b9f61e": {
+      "calls": 1,
+      "tokens_in": 463,
+      "tokens_out": 2,
+      "latency_ms_avg": 685.0,
+      "errors": 0
+    },
+    "generate|gpt4_2f8be40d": {
+      "calls": 1,
+      "tokens_in": 9879,
+      "tokens_out": 207,
+      "latency_ms_avg": 4310.1,
+      "errors": 0
+    },
+    "judge|gpt4_2f8be40d": {
+      "calls": 1,
+      "tokens_in": 345,
+      "tokens_out": 1,
+      "latency_ms_avg": 645.7,
+      "errors": 0
+    },
+    "generate|2e6d26dc": {
+      "calls": 1,
+      "tokens_in": 13773,
+      "tokens_out": 308,
+      "latency_ms_avg": 5532.0,
+      "errors": 0
+    },
+    "judge|2e6d26dc": {
+      "calls": 1,
+      "tokens_in": 434,
+      "tokens_out": 1,
+      "latency_ms_avg": 716.2,
+      "errors": 0
+    },
+    "generate|gpt4_15e38248": {
+      "calls": 1,
+      "tokens_in": 13498,
+      "tokens_out": 406,
+      "latency_ms_avg": 4645.8,
+      "errors": 0
+    },
+    "judge|gpt4_15e38248": {
+      "calls": 1,
+      "tokens_in": 537,
+      "tokens_out": 2,
+      "latency_ms_avg": 694.9,
+      "errors": 0
+    },
+    "generate|88432d0a": {
+      "calls": 1,
+      "tokens_in": 10280,
+      "tokens_out": 280,
+      "latency_ms_avg": 4927.8,
+      "errors": 0
+    },
+    "generate|80ec1f4f": {
+      "calls": 1,
+      "tokens_in": 10293,
+      "tokens_out": 266,
+      "latency_ms_avg": 5175.1,
+      "errors": 0
+    },
+    "judge|88432d0a": {
+      "calls": 1,
+      "tokens_in": 403,
+      "tokens_out": 2,
+      "latency_ms_avg": 689.6,
+      "errors": 0
+    },
+    "judge|80ec1f4f": {
+      "calls": 1,
+      "tokens_in": 391,
+      "tokens_out": 2,
+      "latency_ms_avg": 603.7,
+      "errors": 0
+    },
+    "generate|d23cf73b": {
+      "calls": 1,
+      "tokens_in": 10771,
+      "tokens_out": 454,
+      "latency_ms_avg": 6499.7,
+      "errors": 0
+    },
+    "judge|d23cf73b": {
+      "calls": 1,
+      "tokens_in": 582,
+      "tokens_out": 1,
+      "latency_ms_avg": 581.3,
+      "errors": 0
+    },
+    "generate|gpt4_7fce9456": {
+      "calls": 1,
+      "tokens_in": 15864,
+      "tokens_out": 225,
+      "latency_ms_avg": 4954.2,
+      "errors": 0
+    },
+    "judge|gpt4_7fce9456": {
+      "calls": 1,
+      "tokens_in": 433,
+      "tokens_out": 2,
+      "latency_ms_avg": 915.9,
+      "errors": 0
+    },
+    "generate|d682f1a2": {
+      "calls": 1,
+      "tokens_in": 13804,
+      "tokens_out": 314,
+      "latency_ms_avg": 4008.8,
+      "errors": 0
+    },
+    "judge|d682f1a2": {
+      "calls": 1,
+      "tokens_in": 437,
+      "tokens_out": 2,
+      "latency_ms_avg": 858.5,
+      "errors": 0
+    },
+    "generate|7024f17c": {
+      "calls": 1,
+      "tokens_in": 14136,
+      "tokens_out": 425,
+      "latency_ms_avg": 14040.4,
+      "errors": 0
+    },
+    "generate|gpt4_5501fe77": {
+      "calls": 1,
+      "tokens_in": 16139,
+      "tokens_out": 316,
+      "latency_ms_avg": 4968.2,
+      "errors": 0
+    },
+    "judge|gpt4_5501fe77": {
+      "calls": 1,
+      "tokens_in": 442,
+      "tokens_out": 2,
+      "latency_ms_avg": 763.8,
+      "errors": 0
+    },
+    "judge|7024f17c": {
+      "calls": 1,
+      "tokens_in": 551,
+      "tokens_out": 2,
+      "latency_ms_avg": 1214.4,
+      "errors": 0
+    },
+    "generate|2318644b": {
+      "calls": 1,
+      "tokens_in": 14305,
+      "tokens_out": 224,
+      "latency_ms_avg": 2749.8,
+      "errors": 0
+    },
+    "judge|2318644b": {
+      "calls": 1,
+      "tokens_in": 350,
+      "tokens_out": 2,
+      "latency_ms_avg": 613.9,
+      "errors": 0
+    },
+    "generate|gpt4_2ba83207": {
+      "calls": 1,
+      "tokens_in": 11581,
+      "tokens_out": 326,
+      "latency_ms_avg": 6142.5,
+      "errors": 0
+    },
+    "judge|gpt4_2ba83207": {
+      "calls": 1,
+      "tokens_in": 451,
+      "tokens_out": 2,
+      "latency_ms_avg": 845.5,
+      "errors": 0
+    },
+    "generate|2ce6a0f2": {
+      "calls": 1,
+      "tokens_in": 12492,
+      "tokens_out": 258,
+      "latency_ms_avg": 5689.4,
+      "errors": 0
+    },
+    "judge|2ce6a0f2": {
+      "calls": 1,
+      "tokens_in": 382,
+      "tokens_out": 2,
+      "latency_ms_avg": 653.2,
+      "errors": 0
+    },
+    "generate|gpt4_d12ceb0e": {
+      "calls": 1,
+      "tokens_in": 11827,
+      "tokens_out": 369,
+      "latency_ms_avg": 5429.6,
+      "errors": 0
+    },
+    "judge|gpt4_d12ceb0e": {
+      "calls": 1,
+      "tokens_in": 496,
+      "tokens_out": 2,
+      "latency_ms_avg": 537.8,
+      "errors": 0
+    },
+    "generate|00ca467f": {
+      "calls": 1,
+      "tokens_in": 8095,
+      "tokens_out": 237,
+      "latency_ms_avg": 4520.0,
+      "errors": 0
+    },
+    "judge|00ca467f": {
+      "calls": 1,
+      "tokens_in": 358,
+      "tokens_out": 2,
+      "latency_ms_avg": 629.2,
+      "errors": 0
+    },
+    "generate|b3c15d39": {
+      "calls": 1,
+      "tokens_in": 11396,
+      "tokens_out": 169,
+      "latency_ms_avg": 17156.6,
+      "errors": 0
+    },
+    "judge|b3c15d39": {
+      "calls": 1,
+      "tokens_in": 313,
+      "tokens_out": 2,
+      "latency_ms_avg": 728.7,
+      "errors": 0
+    },
+    "generate|gpt4_31ff4165": {
+      "calls": 1,
+      "tokens_in": 16653,
+      "tokens_out": 286,
+      "latency_ms_avg": 14474.4,
+      "errors": 0
+    },
+    "judge|gpt4_31ff4165": {
+      "calls": 1,
+      "tokens_in": 408,
+      "tokens_out": 2,
+      "latency_ms_avg": 631.8,
+      "errors": 0
+    },
+    "generate|eeda8a6d": {
+      "calls": 1,
+      "tokens_in": 15101,
+      "tokens_out": 304,
+      "latency_ms_avg": 22873.8,
+      "errors": 0
+    },
+    "judge|eeda8a6d": {
+      "calls": 1,
+      "tokens_in": 429,
+      "tokens_out": 2,
+      "latency_ms_avg": 814.7,
+      "errors": 0
+    },
+    "generate|2788b940": {
+      "calls": 1,
+      "tokens_in": 14379,
+      "tokens_out": 207,
+      "latency_ms_avg": 4489.9,
+      "errors": 0
+    },
+    "judge|2788b940": {
+      "calls": 1,
+      "tokens_in": 329,
+      "tokens_out": 2,
+      "latency_ms_avg": 682.9,
+      "errors": 0
+    },
+    "generate|60bf93ed": {
+      "calls": 1,
+      "tokens_in": 15369,
+      "tokens_out": 164,
+      "latency_ms_avg": 3129.4,
+      "errors": 0
+    },
+    "judge|60bf93ed": {
+      "calls": 1,
+      "tokens_in": 305,
+      "tokens_out": 2,
+      "latency_ms_avg": 733.7,
+      "errors": 0
+    },
+    "generate|9d25d4e0": {
+      "calls": 1,
+      "tokens_in": 13578,
+      "tokens_out": 273,
+      "latency_ms_avg": 3671.4,
+      "errors": 0
+    },
+    "judge|9d25d4e0": {
+      "calls": 1,
+      "tokens_in": 397,
+      "tokens_out": 2,
+      "latency_ms_avg": 558.3,
+      "errors": 0
+    },
+    "generate|129d1232": {
+      "calls": 1,
+      "tokens_in": 15156,
+      "tokens_out": 345,
+      "latency_ms_avg": 6577.1,
+      "errors": 0
+    },
+    "judge|129d1232": {
+      "calls": 1,
+      "tokens_in": 474,
+      "tokens_out": 2,
+      "latency_ms_avg": 702.3,
+      "errors": 0
+    },
+    "generate|gpt4_194be4b3": {
+      "calls": 1,
+      "tokens_in": 14788,
+      "tokens_out": 289,
+      "latency_ms_avg": 5311.6,
+      "errors": 0
+    },
+    "judge|gpt4_194be4b3": {
+      "calls": 1,
+      "tokens_in": 465,
+      "tokens_out": 2,
+      "latency_ms_avg": 646.2,
+      "errors": 0
+    },
+    "generate|60472f9c": {
+      "calls": 1,
+      "tokens_in": 12375,
+      "tokens_out": 312,
+      "latency_ms_avg": 7320.2,
+      "errors": 0
+    },
+    "judge|60472f9c": {
+      "calls": 1,
+      "tokens_in": 436,
+      "tokens_out": 1,
+      "latency_ms_avg": 719.6,
+      "errors": 0
+    },
+    "generate|a9f6b44c": {
+      "calls": 1,
+      "tokens_in": 11700,
+      "tokens_out": 329,
+      "latency_ms_avg": 5040.4,
+      "errors": 0
+    },
+    "judge|a9f6b44c": {
+      "calls": 1,
+      "tokens_in": 452,
+      "tokens_out": 2,
+      "latency_ms_avg": 737.8,
+      "errors": 0
+    },
+    "generate|d851d5ba": {
+      "calls": 1,
+      "tokens_in": 15062,
+      "tokens_out": 263,
+      "latency_ms_avg": 16649.1,
+      "errors": 0
+    },
+    "judge|d851d5ba": {
+      "calls": 1,
+      "tokens_in": 386,
+      "tokens_out": 2,
+      "latency_ms_avg": 875.8,
+      "errors": 0
+    },
+    "generate|gpt4_ab202e7f": {
+      "calls": 1,
+      "tokens_in": 12005,
+      "tokens_out": 251,
+      "latency_ms_avg": 3023.6,
+      "errors": 0
+    },
+    "judge|gpt4_ab202e7f": {
+      "calls": 1,
+      "tokens_in": 395,
+      "tokens_out": 2,
+      "latency_ms_avg": 906.8,
+      "errors": 0
+    },
+    "generate|gpt4_e05b82a6": {
+      "calls": 1,
+      "tokens_in": 11262,
+      "tokens_out": 287,
+      "latency_ms_avg": 5038.5,
+      "errors": 0
+    },
+    "judge|gpt4_e05b82a6": {
+      "calls": 1,
+      "tokens_in": 418,
+      "tokens_out": 1,
+      "latency_ms_avg": 606.1,
+      "errors": 0
+    },
+    "generate|5a7937c8": {
+      "calls": 1,
+      "tokens_in": 14147,
+      "tokens_out": 253,
+      "latency_ms_avg": 16352.8,
+      "errors": 0
+    },
+    "judge|5a7937c8": {
+      "calls": 1,
+      "tokens_in": 378,
+      "tokens_out": 2,
+      "latency_ms_avg": 641.0,
+      "errors": 0
+    },
+    "generate|gpt4_731e37d7": {
+      "calls": 1,
+      "tokens_in": 12650,
+      "tokens_out": 288,
+      "latency_ms_avg": 3666.9,
+      "errors": 0
+    },
+    "judge|gpt4_731e37d7": {
+      "calls": 1,
+      "tokens_in": 414,
+      "tokens_out": 2,
+      "latency_ms_avg": 693.8,
+      "errors": 0
+    },
+    "generate|edced276": {
+      "calls": 1,
+      "tokens_in": 14027,
+      "tokens_out": 290,
+      "latency_ms_avg": 5055.6,
+      "errors": 0
+    },
+    "judge|edced276": {
+      "calls": 1,
+      "tokens_in": 418,
+      "tokens_out": 2,
+      "latency_ms_avg": 748.0,
+      "errors": 0
+    },
+    "generate|10d9b85a": {
+      "calls": 1,
+      "tokens_in": 9581,
+      "tokens_out": 291,
+      "latency_ms_avg": 5199.7,
+      "errors": 0
+    },
+    "judge|10d9b85a": {
+      "calls": 1,
+      "tokens_in": 418,
+      "tokens_out": 1,
+      "latency_ms_avg": 1346.3,
+      "errors": 0
+    },
+    "generate|2b8f3739": {
+      "calls": 1,
+      "tokens_in": 13741,
+      "tokens_out": 292,
+      "latency_ms_avg": 3714.6,
+      "errors": 0
+    },
+    "judge|2b8f3739": {
+      "calls": 1,
+      "tokens_in": 419,
+      "tokens_out": 1,
+      "latency_ms_avg": 518.5,
+      "errors": 0
+    },
+    "generate|e3038f8c": {
+      "calls": 1,
+      "tokens_in": 12746,
+      "tokens_out": 214,
+      "latency_ms_avg": 2855.3,
+      "errors": 0
+    },
+    "judge|e3038f8c": {
+      "calls": 1,
+      "tokens_in": 334,
+      "tokens_out": 1,
+      "latency_ms_avg": 684.4,
+      "errors": 0
+    },
+    "generate|c2ac3c61": {
+      "calls": 1,
+      "tokens_in": 15256,
+      "tokens_out": 222,
+      "latency_ms_avg": 4292.6,
+      "errors": 0
+    },
+    "judge|c2ac3c61": {
+      "calls": 1,
+      "tokens_in": 342,
+      "tokens_out": 2,
+      "latency_ms_avg": 939.2,
+      "errors": 0
+    },
+    "generate|1a8a66a6": {
+      "calls": 1,
+      "tokens_in": 9986,
+      "tokens_out": 152,
+      "latency_ms_avg": 3385.5,
+      "errors": 0
+    },
+    "judge|1a8a66a6": {
+      "calls": 1,
+      "tokens_in": 271,
+      "tokens_out": 2,
+      "latency_ms_avg": 643.1,
+      "errors": 0
+    },
+    "generate|bf659f65": {
+      "calls": 1,
+      "tokens_in": 12017,
+      "tokens_out": 384,
+      "latency_ms_avg": 5863.3,
+      "errors": 0
+    },
+    "judge|bf659f65": {
+      "calls": 1,
+      "tokens_in": 507,
+      "tokens_out": 2,
+      "latency_ms_avg": 681.6,
+      "errors": 0
+    },
+    "generate|gpt4_372c3eed": {
+      "calls": 1,
+      "tokens_in": 11423,
+      "tokens_out": 231,
+      "latency_ms_avg": 2737.1,
+      "errors": 0
+    },
+    "judge|gpt4_372c3eed": {
+      "calls": 1,
+      "tokens_in": 364,
+      "tokens_out": 2,
+      "latency_ms_avg": 1522.8,
+      "errors": 0
+    },
+    "generate|81507db6": {
+      "calls": 1,
+      "tokens_in": 7332,
+      "tokens_out": 363,
+      "latency_ms_avg": 8163.1,
+      "errors": 0
+    },
+    "judge|81507db6": {
+      "calls": 1,
+      "tokens_in": 486,
+      "tokens_out": 1,
+      "latency_ms_avg": 510.4,
+      "errors": 0
+    },
+    "generate|gpt4_2f91af09": {
+      "calls": 1,
+      "tokens_in": 16923,
+      "tokens_out": 306,
+      "latency_ms_avg": 16950.6,
+      "errors": 0
+    },
+    "generate|80ec1f4f_abs": {
+      "calls": 1,
+      "tokens_in": 14280,
+      "tokens_out": 229,
+      "latency_ms_avg": 3833.3,
+      "errors": 0
+    },
+    "judge|80ec1f4f_abs": {
+      "calls": 1,
+      "tokens_in": 345,
+      "tokens_out": 1,
+      "latency_ms_avg": 819.9,
+      "errors": 0
+    },
+    "judge|gpt4_2f91af09": {
+      "calls": 1,
+      "tokens_in": 447,
+      "tokens_out": 2,
+      "latency_ms_avg": 1938.5,
+      "errors": 0
+    },
+    "generate|88432d0a_abs": {
+      "calls": 1,
+      "tokens_in": 10927,
+      "tokens_out": 235,
+      "latency_ms_avg": 12712.9,
+      "errors": 0
+    },
+    "judge|88432d0a_abs": {
+      "calls": 1,
+      "tokens_in": 356,
+      "tokens_out": 1,
+      "latency_ms_avg": 660.4,
+      "errors": 0
+    },
+    "generate|eeda8a6d_abs": {
+      "calls": 1,
+      "tokens_in": 13587,
+      "tokens_out": 231,
+      "latency_ms_avg": 4070.5,
+      "errors": 0
+    },
+    "judge|eeda8a6d_abs": {
+      "calls": 1,
+      "tokens_in": 355,
+      "tokens_out": 2,
+      "latency_ms_avg": 593.6,
+      "errors": 0
+    },
+    "generate|60bf93ed_abs": {
+      "calls": 1,
+      "tokens_in": 11358,
+      "tokens_out": 287,
+      "latency_ms_avg": 4288.1,
+      "errors": 0
+    },
+    "judge|60bf93ed_abs": {
+      "calls": 1,
+      "tokens_in": 412,
+      "tokens_out": 1,
+      "latency_ms_avg": 644.0,
+      "errors": 0
+    },
+    "generate|edced276_abs": {
+      "calls": 1,
+      "tokens_in": 10171,
+      "tokens_out": 366,
+      "latency_ms_avg": 4840.4,
+      "errors": 0
+    },
+    "judge|edced276_abs": {
+      "calls": 1,
+      "tokens_in": 499,
+      "tokens_out": 2,
+      "latency_ms_avg": 835.0,
+      "errors": 0
+    },
+    "generate|gpt4_372c3eed_abs": {
+      "calls": 1,
+      "tokens_in": 12766,
+      "tokens_out": 300,
+      "latency_ms_avg": 4229.2,
+      "errors": 0
+    },
+    "judge|gpt4_372c3eed_abs": {
+      "calls": 1,
+      "tokens_in": 474,
+      "tokens_out": 1,
+      "latency_ms_avg": 798.2,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 2202.6
+  },
+  "records_file": "gpt-4o-mini_lme_m_con_k50_batched.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_m_con_k50_batched.llm-trace.jsonl.gz",
+  "cost_usd": 4.614834,
+  "cost_usd_this_process": 3.565893
+}

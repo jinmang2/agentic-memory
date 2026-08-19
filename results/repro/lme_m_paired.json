@@ -1,0 +1,81 @@
+{
+  "arms": [
+    "gpt-4o-mini_lme_s_con_k50_batched",
+    "gpt-4o-mini_lme_m_con_k50_batched"
+  ],
+  "n_questions": 500,
+  "per_arm": {
+    "gpt-4o-mini_lme_s_con_k50_batched": {
+      "task_averaged": 81.41,
+      "overall": 81.4,
+      "by_type": {
+        "single-session-user": 98.57,
+        "single-session-preference": 56.67,
+        "single-session-assistant": 98.21,
+        "multi-session": 70.68,
+        "temporal-reasoning": 79.7,
+        "knowledge-update": 84.62
+      },
+      "abstention": 76.67,
+      "n": 500
+    },
+    "gpt-4o-mini_lme_m_con_k50_batched": {
+      "task_averaged": 72.56,
+      "overall": 72.8,
+      "by_type": {
+        "single-session-user": 88.57,
+        "single-session-preference": 36.67,
+        "single-session-assistant": 96.43,
+        "multi-session": 63.91,
+        "temporal-reasoning": 63.91,
+        "knowledge-update": 85.9
+      },
+      "abstention": 76.67,
+      "n": 500
+    }
+  },
+  "spreads": {
+    "task_averaged": {
+      "max": 81.41,
+      "min": 72.56,
+      "spread_pp": 8.85,
+      "argmax": "gpt-4o-mini_lme_s_con_k50_batched",
+      "argmin": "gpt-4o-mini_lme_m_con_k50_batched",
+      "verdict": "holds"
+    },
+    "overall": {
+      "max": 81.4,
+      "min": 72.8,
+      "spread_pp": 8.6,
+      "argmax": "gpt-4o-mini_lme_s_con_k50_batched",
+      "argmin": "gpt-4o-mini_lme_m_con_k50_batched",
+      "verdict": "holds"
+    }
+  },
+  "pairs": {
+    "gpt-4o-mini_lme_s_con_k50_batched - gpt-4o-mini_lme_m_con_k50_batched": {
+      "task_averaged": {
+        "delta_pp": 8.8433,
+        "lo": 4.5918,
+        "hi": 13.1023,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "overall": {
+        "delta_pp": 8.6,
+        "lo": 5.0,
+        "hi": 12.2,
+        "p_boot": 0.0,
+        "excludes_zero": true
+      },
+      "mcnemar": {
+        "a_only": 68,
+        "b_only": 25,
+        "discordant": 93,
+        "p_exact": 9e-06
+      }
+    }
+  },
+  "n_boot": 10000,
+  "seed": 0
+}
