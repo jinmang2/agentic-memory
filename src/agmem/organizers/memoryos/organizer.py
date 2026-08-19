@@ -152,11 +152,15 @@ PROFILE_ITEM_ID = "memoryos:user_profile"
 #     received. `memoryos-pypi` does not have this. NOT reproduced: it credits
 #     heat to a segment that holds none of the content, which would corrupt the
 #     promotion order rather than reproduce it.
-# E2. R_recency is dead. `compute_segment_heat` reads a STORED `R_recency`
-#     (initialised 1.0, refreshed only on a retrieval hit) and weights it
-#     gamma=1e-4 — four orders of magnitude under one interaction, so it cannot
-#     change any comparison. Reproduced: it IS the published operating point,
-#     and `recency="stored"` makes the deadness visible instead of assumed.
+# E2. R_recency is dead — twice over. `compute_segment_heat` reads a STORED
+#     `R_recency` (initialised 1.0, refreshed only on a retrieval hit) and
+#     weights it gamma=1e-4 — four orders of magnitude under one interaction,
+#     so it cannot change any comparison. And the refresh itself is vacuous:
+#     `mid_term_memory.py:236-238` stamps `last_visit_time` to now BEFORE
+#     computing the decay from it, so the stored value is re-set to 1.0 on
+#     every hit and never once decays. Reproduced (see `on_retrieval`): it IS
+#     the published operating point, and `recency="stored"` makes the deadness
+#     visible instead of assumed.
 # E3. Page embeddings differ by code path. `add_session` embeds
 #     `f"User: {user_input} Assiant: {agent_response}"` (typo upstream's), while
 #     the merge branch embeds `f"用户: {user_input}"` — different language prefix
@@ -763,11 +767,18 @@ class MemoryOSOrganizer(Organizer):
                 h = self._heat[segment_id]
                 h["n_visit"] += 1
                 h["last_access"] = now
-                # eval lineage stores R rather than recomputing it, and this
-                # hit is the only moment it ever moves (module docstring E2)
-                h["recency"] = math.exp(
-                    -(now - h["last_access"]).total_seconds() / 3600 / self.recency_tau_hours
-                )
+                # Pinned at 1.0 by upstream's own construction, mirrored
+                # deliberately: eval `mid_term_memory.py:236-238` stamps
+                # `last_visit_time = get_timestamp()` FIRST and then computes
+                # `compute_time_decay(session["last_visit_time"], get_timestamp())`
+                # — zero elapsed time, so the stored R never leaves its initial
+                # 1.0. This line used to transcribe that order literally
+                # (`exp(-(now - last_access))` with `last_access` just set to
+                # `now`), which computed the same constant while looking like a
+                # decay; written as the constant it is so the mirrored defect is
+                # visible. Module docstring E2 already prices the field as dead
+                # (gamma=1e-4); `recency="live"` is the variant that decays.
+                h["recency"] = 1.0
                 # `access_frequency`, the LFU counter — never reset by promotion.
                 # Keyed on the SEGMENT, like the heat entry beside it: eviction
                 # picks a segment, so a page id here would build a counter no
@@ -1174,10 +1185,15 @@ class MemoryOSOrganizer(Organizer):
                 # segment's summary, summary_embedding and summary_keywords
                 # untouched on merge — only details/L change — so a segment's
                 # matching identity is frozen at creation. Hence no content
-                # append, no re-embed (embedding_text stays absent from the
-                # payload, so the stored vector never moves) and no keyword
-                # union here; the merged theme's summary/keywords are simply
-                # discarded, as upstream discards them.
+                # append and no keyword union here, and ``embedding_text`` stays
+                # out of the payload so the vector VALUE never moves. The
+                # embedder CALL is still paid, though: ``_apply_one`` merges the
+                # stored item back under the UPDATE, finds the original
+                # ``embedding_text`` there, and re-embeds it to write back an
+                # identical vector — one embedder call per merge, a real cost
+                # (Zep's provenance-append UPDATEs pay the same way). The merged
+                # theme's summary/keywords are simply discarded, as upstream
+                # discards them.
                 if segment_id in pending:
                     # target was created earlier in this flush — extend its ADD
                     # op in place rather than emitting an UPDATE the store

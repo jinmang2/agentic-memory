@@ -2,11 +2,11 @@
 
 A strong teacher (API model via the 'distill' role) runs the organizers'
 extraction prompts over real conversations (LoCoMo histories); the
-(prompt, teacher_json) pairs become SFT data for a 0.5B student. Tasks:
+(prompt, teacher_json) pairs become SFT data for a 0.5B student. Tasks
+(the keys of ``TASKS`` below — nothing else is wired):
   boundary  — Nemori boundary detection
   note      — A-Mem note construction (keywords/context/tags)
   episode   — Nemori title+narrative generation (temporal anchoring)
-  strategy  — ReasoningBank item extraction
 
 Usage:
     uv run python -m agmem.train.distill_data --task note \

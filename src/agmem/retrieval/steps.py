@@ -121,9 +121,9 @@ class LinkExpansion(ReadStep):
     here**: upstream's read has no dedup, so a duplicate link serves the same
     neighbor twice AND burns a slot per occurrence, while our seen-set skips it
     before the budget check. Reproducing that would not survive the pipeline
-    anyway — ``RetrievalPipeline._assemble`` dedups on ``(memory_type, id)``
-    before anything reaches the bundle, an invariant every methodology depends
-    on. So the duplicate half of this deviation is disclosed, not priced; only
+    anyway — ``RetrievalPipeline.search`` dedups on ``(memory_type, id)`` in
+    its served-set before anything reaches the bundle, an invariant every
+    methodology depends on. So the duplicate half of this deviation is disclosed, not priced; only
     the cap shape is ablatable, via ``per_hit``. Keep both in result caveats
     when comparing multi-hop."""
 
