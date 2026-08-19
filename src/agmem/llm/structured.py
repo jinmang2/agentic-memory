@@ -56,6 +56,17 @@ def coerce_to_schema(parsed: Any, schema: dict[str, Any]) -> dict[str, Any] | No
     return None
 
 
+def _rejects_guided_json(exc: Exception) -> bool:
+    """Whether the endpoint said it does not understand `guided_json`.
+
+    Matched on the message rather than the status, because a 400 has many
+    causes and only this one is a permanent statement about the endpoint. The
+    OpenAI API answers `extra_body={"guided_json": ...}` with
+    "Unrecognized request argument supplied: guided_json"."""
+    text = str(exc).lower()
+    return "guided_json" in text and ("unrecognized" in text or "unknown" in text)
+
+
 class StructuredCaller:
     """Wraps `LLMClient` with the retry/repair/drop defense chain described
     in the module docstring; `call()` is the only public entry point."""
@@ -110,6 +121,13 @@ class StructuredCaller:
         # was lost — but a run over a degrading link should be able to say so
         # rather than look pristine.
         self.transport_recoveries: dict[str, int] = {}
+        # Latched once the endpoint says it does not know `guided_json`. The
+        # retry-without-it below has always existed, but it re-learned the same
+        # refusal on EVERY call: a Nemori smoke against OpenAI logged 2,056
+        # rejected round trips in 25 minutes — 32% of the wall clock and half the
+        # calls — to be told the same thing 2,056 times. One 400 is a discovery;
+        # the second is a bug.
+        self._guided_json_rejected = False
         self._lock = threading.Lock()
 
     def _drop(self, role: str, prompt: str, last_output: str) -> None:
@@ -151,7 +169,7 @@ class StructuredCaller:
             {"role": "user", "content": prompt},
         ]
         overrides: dict[str, Any] = {}
-        if self.use_guided_json:
+        if self.use_guided_json and not self._guided_json_rejected:
             overrides["extra_body"] = {"guided_json": schema}
         budget_key = f"{role}/{phase}" if phase else None
 
@@ -167,6 +185,19 @@ class StructuredCaller:
                     # The endpoint may be rejecting guided_json rather than being
                     # unreachable. Try once without it before spending a
                     # transport retry, as this has always done.
+                    if _rejects_guided_json(exc):
+                        # It said so in words: stop asking. Latched only on that
+                        # message, never on a bare failure — a timeout on a vLLM
+                        # endpoint must not permanently disable the schema layer
+                        # that endpoint does support.
+                        with self._lock:
+                            if not self._guided_json_rejected:
+                                self._guided_json_rejected = True
+                                logger.info(
+                                    "endpoint rejected guided_json — not sending it again "
+                                    "on this caller (role=%s)",
+                                    role,
+                                )
                     overrides = {}
                     continue
                 if transport_left > 0:

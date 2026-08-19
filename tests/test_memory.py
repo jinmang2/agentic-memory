@@ -561,3 +561,46 @@ def test_bulk_ingest_of_nothing_makes_no_request():
         assert emb.requests == 0
     finally:
         m.close()
+
+
+# ---------------- attach_llm: the wiring an organizer actually reads ----------------
+
+
+class _RecordingClient:
+    def __init__(self, reply="{}"):
+        self.reply = reply
+        self.calls = []
+
+    def has_role(self, role):
+        return True
+
+    def chat(self, role, messages, budget_key=None, **overrides):
+        self.calls.append({"role": role, "overrides": overrides})
+        return self.reply
+
+
+def test_attach_llm_reaches_the_organizer_context_not_just_the_attribute():
+    """`OrganizerContext` captures `structured` when it is BUILT. Setting
+    `mem.llm`, or even `mem.structured`, afterwards leaves `ctx.llm` holding the
+    None from construction — and an organizer reads `ctx.llm`. Nemori answers a
+    None by turning distillation off and logging it, so a paid arm comes out
+    looking like a memory system that added nothing when it never ran."""
+    m = AgenticMemory(namespace="attach", organizers=["passthrough"], embedder=FakeEmbedder(dim=32))
+    try:
+        assert m.organizers_have_llm() is False
+        m.llm = _RecordingClient()
+        assert m.organizers_have_llm() is False, "the attribute alone is not the wiring"
+        m.attach_llm(_RecordingClient())
+        assert m.organizers_have_llm() is True
+        assert m._ctx.llm is m.structured
+    finally:
+        m.close()
+
+
+def test_attach_llm_can_turn_off_guided_json_for_an_openai_endpoint():
+    m = AgenticMemory(namespace="gj", organizers=["passthrough"], embedder=FakeEmbedder(dim=32))
+    try:
+        m.attach_llm(_RecordingClient(), use_guided_json=False)
+        assert m.structured.use_guided_json is False
+    finally:
+        m.close()

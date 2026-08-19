@@ -455,6 +455,13 @@ def main() -> None:
         default="text-embedding-3-small",
         help="only used with --retrieval; the full-context path never queries a vector",
     )
+    ap.add_argument(
+        "--organizers",
+        default="passthrough",
+        help="comma-separated organizer names for the WRITE path (default passthrough, "
+        "which writes nothing and is what every arm through 2026-08-19 ran). Anything "
+        "else spends LLM calls per instance during ingest — quote it first.",
+    )
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument(
         "--embed-batch",
@@ -595,6 +602,7 @@ def main() -> None:
         client: Any = DryRunLLM(roles)
     else:
         client = LLMClient(roles, budget=budget, trace_path=trace_path)
+    organizers = [o.strip() for o in args.organizers.split(",") if o.strip()]
     caps = detect()  # once: 500 memories, one capability probe
 
     # A fake embedder is correct for the full-context path (nothing is ever
@@ -613,13 +621,43 @@ def main() -> None:
         # worker per instance would be 500 threads).
         mem = AgenticMemory(
             namespace=f"lme-{qid}",
-            organizers=["passthrough"],
+            organizers=organizers,
             embedder=embedder,
             config=AgmemConfig(profile="lite", data_dir=None, sync_write=True),
             caps=caps,
         )
-        mem.llm = client
+        # `attach_llm`, not `mem.llm = client`: organizers read `ctx.llm`, which is
+        # the StructuredCaller captured when the context was built, so setting the
+        # attribute alone leaves every write hook looking at a None it will quietly
+        # degrade around. All 500 memories share ONE client on purpose — a client
+        # per memory is a budget per memory, and a spend cap that binds nothing.
+        # `use_guided_json=False` matches exp_amem_repro, exp_locomo_conv0,
+        # exp_ace_finer and quote.py: `guided_json` is a vLLM extra_body extension
+        # and the OpenAI endpoint this campaign runs on answers it with
+        # "Unrecognized request argument supplied: guided_json". The caller
+        # recovers by retrying without it, so leaving it on is not wrong — it is
+        # a 400 and a wasted round trip on every structured call, which a Nemori
+        # smoke measured at 2,056 rejections and 32% of its wall clock.
+        mem.attach_llm(client, use_guided_json=False)
         return mem
+
+    # Refusal #7. An organizer whose `ctx.llm` is None does not fail — Nemori
+    # turns off boundary detection and distillation and logs it, then behaves
+    # like passthrough. Paid for at organizer prices, that arm reads as "the
+    # memory system added nothing" when the memory system never ran. It is
+    # cheaper to find out here, before the first call.
+    if organizers != ["passthrough"]:
+        probe = build_mem("wiring-probe")
+        try:
+            if not probe.organizers_have_llm():
+                raise SystemExit(
+                    f"organizers {organizers} were requested but no LLM reaches "
+                    "`ctx.llm` — the write path would silently degrade to passthrough "
+                    "and the arm would be priced as if it had run."
+                )
+        finally:
+            probe.close()
+        log.info("write path: %s, LLM reachable from ctx", ",".join(organizers))
 
     prior_spend = 0.0
     over_budget = None
@@ -733,7 +771,7 @@ def main() -> None:
             "haystack_sorted_by_date": True,
             "max_sessions": None,
             "max_history_tokens": None,
-            "organizers": ["passthrough"],
+            "organizers": organizers,
             "read_path": "full_context"
             if args.retrieval is None
             else f"retrieval_top{args.retrieval}",

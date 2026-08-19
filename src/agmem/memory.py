@@ -375,6 +375,40 @@ class AgenticMemory:
         self._dispatch(lambda: self._apply_from_all(lambda org: org.on_message(episode, self._ctx)))
         return episode
 
+    def attach_llm(self, client: Any, use_guided_json: bool | None = None) -> None:
+        """Give an already-built memory an LLM, wiring every place that needs it.
+
+        `AgenticMemory` builds `llm`, `structured` and the `OrganizerContext`
+        together in `__init__` when `config.llm_roles` is set. A driver that wants
+        500 memories to SHARE one client cannot use that path — a client per
+        memory means a budget per memory, and a spend cap that binds nothing — so
+        it assigns afterwards. Assigning `self.llm` alone leaves `structured`
+        None; assigning both leaves `_ctx.llm` holding the None captured at
+        construction, and an organizer reads `ctx.llm`.
+
+        That third one is the reason this method exists rather than two
+        attributes. Nemori answers a None `ctx.llm` by degrading — boundary
+        detection and distillation off, messages bypassing the buffer — and says
+        so in a warning. In a 500-row run that warning scrolls past, and the arm
+        comes out looking like a memory system that added nothing, when what
+        actually happened is that it never ran.
+        """
+        self.llm = client
+        self.structured = StructuredCaller(
+            client,
+            self.config.use_guided_json if use_guided_json is None else use_guided_json,
+            reply_retries=self.config.structured_reply_retries,
+        )
+        self._ctx.llm = self.structured
+
+    def organizers_have_llm(self) -> bool:
+        """Whether an organizer asking `ctx.llm` would find one.
+
+        A caller that pays for a write path can assert on this before spending;
+        the alternative is reading a degradation warning out of a log after the
+        bill."""
+        return self._ctx.llm is not None
+
     def _make_episode(
         self, content: str, role: str, timestamp: Any = None, meta: dict | None = None
     ) -> Episode:
