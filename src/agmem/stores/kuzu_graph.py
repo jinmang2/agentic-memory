@@ -134,8 +134,12 @@ class KuzuGraphStore:
         content: str,
         valid_at: str | None = None,
     ) -> None:
-        """Merge by `edge_id`: idempotent re-upsert refreshes predicate/content/valid_at
-        but never touches `invalid_at`/`expired_at` — those are `invalidate_edge`'s job."""
+        """Merge by `edge_id`: re-upsert refreshes predicate/content/valid_at AND resets
+        `invalid_at`/`expired_at` to unset — the protocol's revalidation semantics
+        (`GraphStore.upsert_edge`), which sqlite's INSERT OR REPLACE always had. This
+        docstring used to declare the opposite (never touch the temporal stamps), and the
+        MERGE matched it; latent for every stored measurement — `_apply_graph` re-stamps
+        an invalidated fact right after each upsert, so no replayed state differed."""
         with self._lock:
             self._conn.execute(
                 "MATCH (a:Entity {id: $src}), (b:Entity {id: $dst})"
@@ -143,7 +147,7 @@ class KuzuGraphStore:
                 " ON CREATE SET e.namespace=$ns, e.predicate=$pred,"
                 "  e.content=$content, e.valid_at=$valid, e.created_at=$now"
                 " ON MATCH SET e.predicate=$pred, e.content=$content,"
-                "  e.valid_at=$valid",
+                "  e.valid_at=$valid, e.invalid_at=NULL, e.expired_at=NULL",
                 {
                     "src": src,
                     "dst": dst,
@@ -160,8 +164,8 @@ class KuzuGraphStore:
         self, src: str, dst: str, namespace: str, active_only: bool = True
     ) -> list[dict]:
         """Undirected match between `src` and `dst`; `active_only=True` (default)
-        excludes edges with a non-null `invalid_at`."""
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        keeps ACTIVE edges only (`invalid_at`/`expired_at` both unset, per `GraphStore`)."""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         with self._lock:
             res = self._conn.execute(
                 "MATCH (a:Entity)-[e:RELATES]-(b:Entity)"
@@ -191,7 +195,7 @@ class KuzuGraphStore:
         (deduped); `active_only` filters as in `edges_between`."""
         if not node_ids:
             return []
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         with self._lock:
             res = self._conn.execute(
                 "MATCH (a:Entity)-[e:RELATES]->(b:Entity)"
@@ -253,7 +257,7 @@ class KuzuGraphStore:
         ones with an empty map). ``active_only=False`` matches upstream's
         unfiltered projection query; see ``SqliteGraphStore.entity_projection``
         for why that differs from what recall wants."""
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         with self._lock:
             res = self._conn.execute(
                 "MATCH (n:Entity) WHERE n.namespace=$ns RETURN n.id", {"ns": namespace}

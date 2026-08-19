@@ -190,7 +190,17 @@ class PostgresDocStore:
     def put_item(
         self, item_id: str, memory_type: str, namespace: str, data: dict[str, Any]
     ) -> None:
-        content = "" if data.get("deleted") else str(data.get("content") or "")
+        # ``lexical_text`` overrides what the tsvector channel indexes, same as
+        # ``SqliteDocStore.put_item``'s FTS5 override (rationale there: Graphiti
+        # indexes community nodes on the name alone while rendering
+        # name + summary). This backend used to ignore it and index ``content``
+        # unconditionally, so a Postgres-backed Zep run BM25-matched community
+        # summary text that the sqlite backend — and upstream — never index.
+        content = (
+            ""
+            if data.get("deleted")
+            else str(data.get("lexical_text") or data.get("content") or "")
+        )
         with self._lock, self._conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO items (id, memory_type, namespace, data, content)"

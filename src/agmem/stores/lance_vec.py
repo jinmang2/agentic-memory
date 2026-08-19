@@ -35,7 +35,12 @@ class LanceDBVectorStore:
         Path(root).mkdir(parents=True, exist_ok=True)
         self._db = lancedb.connect(root)
 
-        if _TABLE in self._db.table_names():
+        # lancedb >= 0.34 deprecates `table_names()` in favor of `list_tables()`,
+        # which returns a ListTablesResponse whose names sit in `.tables` (older
+        # releases return the plain name list, from either method).
+        list_tables = getattr(self._db, "list_tables", self._db.table_names)
+        listing = list_tables()
+        if _TABLE in getattr(listing, "tables", listing):
             self._tbl = self._db.open_table(_TABLE)
             stored = self._tbl.schema.field("vector").type.list_size
             if stored != dim:

@@ -15,7 +15,10 @@ much later by a demo trying to read one.
 
 The check is deliberately STATIC — `hasattr` on classes, no instances, no servers, no network. A live
 conformance test would skip on any machine without Postgres, Qdrant or Neo4j running, which is every
-machine this suite must pass on, and skipping is precisely how the gap survived.
+machine this suite must pass on, and skipping is precisely how the gap survived. One scoped exception
+sits at the bottom: `GraphStore`'s edge temporal semantics drifted BEHAVIORALLY while every signature
+matched, so those are exercised on the embedded engines (sqlite always, Kuzu when installed) and only
+the server-bound Neo4j case is gated.
 
 **The rosters below are explicit, and a completeness guard keeps them honest.** Deriving them from
 class names looked tidy and was wrong: `SqliteVecStore` does not end in `VectorStore`, so a name
@@ -27,6 +30,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import os
 import pkgutil
 
 import pytest
@@ -153,3 +157,61 @@ def test_the_conformance_check_fails_on_a_planted_gap():
 
     gaps = [name for name in required if not hasattr(HalfDocStore, name)]
     assert gaps == required, "a class with no methods must be reported as missing all of them"
+
+
+def test_doc_store_protocol_still_requires_search_lexical_items():
+    """Same shape as the `list_episodes` pin above: `retrieval/pipeline.py` calls it unguarded on
+    every Zep lexical recipe, both backends implement it, and the protocol said nothing — the
+    omission this file exists to make impossible."""
+    assert "search_lexical_items" in _protocol_methods(base.DocStore)
+
+
+# ---- GraphStore edge temporal semantics (behavioral) -------------------------------------------
+# A scoped exception to the static-only rule in the module docstring: `upsert_edge`'s revalidation
+# semantics and the ACTIVE filter cannot be seen in a signature, and they did drift — Kuzu/Neo4j
+# preserved `invalid_at`/`expired_at` on re-upsert (docstrings declaring that was the contract)
+# while sqlite's INSERT OR REPLACE reset them, and both filtered active_only on `invalid_at` alone
+# where sqlite's _ACTIVE checks both stamps. Latent for stored measurements (the two stamps are
+# only ever set together, and `_apply_graph` re-stamps an invalidated fact after each upsert), but
+# three copies of one contract had two meanings. Embedded engines run everywhere; Neo4j needs a
+# live server and is gated the way Postgres is in test_stores.py.
+
+
+def _edge_semantics(store):
+    store.upsert_node("n1", "t", "Alice")
+    store.upsert_node("n2", "t", "Bob")
+    store.upsert_edge("e1", "t", "n1", "n2", "knows", "Alice knows Bob")
+    store.invalidate_edge("e1", "2026-01-01T00:00:00Z")
+    # ACTIVE = invalid_at IS NULL AND expired_at IS NULL; invalidation stamps both
+    assert store.edges_between("n1", "n2", "t") == []
+    stamped = store.edges_between("n1", "n2", "t", active_only=False)
+    assert [e["id"] for e in stamped] == ["e1"]
+    assert stamped[0]["invalid_at"] and stamped[0]["expired_at"]
+    # re-upserting the id REVALIDATES: full-row replace resets both stamps
+    store.upsert_edge("e1", "t", "n1", "n2", "knows", "Alice knows Bob")
+    active = store.edges_between("n1", "n2", "t")
+    assert [e["id"] for e in active] == ["e1"]
+    assert not active[0]["invalid_at"] and not active[0]["expired_at"]
+
+
+def test_edge_revalidation_and_active_filter_sqlite():
+    from agmem.stores.sqlite_graph import SqliteGraphStore
+
+    _edge_semantics(SqliteGraphStore())
+
+
+def test_edge_revalidation_and_active_filter_kuzu():
+    pytest.importorskip("kuzu")
+    from agmem.stores.kuzu_graph import KuzuGraphStore
+
+    _edge_semantics(KuzuGraphStore())
+
+
+@pytest.mark.skipif(
+    not os.environ.get("AGMEM_TEST_NEO4J"),
+    reason="needs a live Neo4j at AGMEM_NEO4J_URI; set AGMEM_TEST_NEO4J=1 to include",
+)
+def test_edge_revalidation_and_active_filter_neo4j():
+    from agmem.stores.neo4j_graph import Neo4jGraphStore
+
+    _edge_semantics(Neo4jGraphStore())

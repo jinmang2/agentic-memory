@@ -791,6 +791,9 @@ class AgenticMemory:
                 self.doc_store.put_item(op.target_id, op.target_type, self.namespace, data)
                 if op.target_type not in BITEMPORAL_TYPES:
                     # 서빙 제외 보장 — ghost-hit 방지(X1 계열, spec §1.3); doc/로그엔 남음
+                    # Bare-id delete: vector rows carry no memory_type key, so an id
+                    # shared across two types would drop the OTHER type's vector too.
+                    # Deferred deliberately — see `stores.base.VectorStore`.
                     self.vector_store.delete([op.target_id])
                 if op.target_type == "facts" and self.graph_store is not None:
                     self.graph_store.invalidate_edge(op.target_id, str(data["invalid_at"]))
@@ -819,7 +822,8 @@ class AgenticMemory:
             # physical delete is reserved for capacity eviction (MemoryOS
             # heat eviction, G-Memory REMOVE); the log keeps the audit trail.
             # The vector MUST go too — round-5 X1: a surviving vector made
-            # deleted items resurface as empty ghost hits.
+            # deleted items resurface as empty ghost hits. Bare-id delete, same
+            # cross-type caveat as the INVALIDATE branch (`stores.base.VectorStore`).
             self.doc_store.put_item(
                 op.target_id,
                 op.target_type,

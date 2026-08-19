@@ -230,6 +230,21 @@ def test_postgres_doc_store_roundtrip():
         assert s.search_lexical("hiking", namespace="t")[0][0] == episode.id
         s.put_item("i1", "facts", "t", {"id": "i1", "content": "Alice lives in Paris"})
         assert s.search_lexical_items("Paris", "facts", namespace="t")[0][0] == "i1"
+        # `lexical_text` override, same pin as the sqlite test below: index the
+        # override, never the render-only `content` (this backend ignored it
+        # until 2026-08-19)
+        s.put_item(
+            "c1",
+            "communities",
+            "t",
+            {
+                "id": "c1",
+                "content": "Hiking Club: members share alpine trip reports",
+                "lexical_text": "Hiking Club",
+            },
+        )
+        assert s.search_lexical_items("Hiking", "communities", namespace="t")[0][0] == "c1"
+        assert s.search_lexical_items("alpine", "communities", namespace="t") == []
         s.append(
             [MemoryOp(op=OpType.ADD, target_type="facts", target_id="i1", payload={}, actor="test")]
         )
@@ -250,3 +265,26 @@ def test_memory_types_covers_every_organizer_output():
 
     declared = {t for cls in ORGANIZERS.values() for t in cls.produces}
     assert declared - set(MEMORY_TYPES) == set()
+
+
+def test_put_item_lexical_text_overrides_the_bm25_channel(doc):
+    """`lexical_text` decouples what the lexical channel indexes from what
+    `content` renders — Graphiti indexes community nodes on the name alone
+    while rendering name + summary (see `SqliteDocStore.put_item`). Postgres
+    ignored the override until 2026-08-19 and indexed `content`
+    unconditionally, so the two backends BM25-matched different text for the
+    same item; pinned here on sqlite and inside the gated Postgres roundtrip
+    below."""
+    doc.put_item(
+        "c1",
+        "communities",
+        "t",
+        {
+            "id": "c1",
+            "content": "Hiking Club: members share alpine trip reports",
+            "lexical_text": "Hiking Club",
+        },
+    )
+    assert doc.search_lexical_items("Hiking", "communities", namespace="t")[0][0] == "c1"
+    # render-only text must NOT be lexically reachable once overridden
+    assert doc.search_lexical_items("alpine", "communities", namespace="t") == []

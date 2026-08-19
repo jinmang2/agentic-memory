@@ -93,13 +93,18 @@ class Neo4jGraphStore:
         content: str,
         valid_at: str | None = None,
     ) -> None:
-        """Merge by `edge_id`: idempotent re-upsert refreshes predicate/content/valid_at
-        but never touches `invalid_at`/`expired_at` — those are `invalidate_edge`'s job."""
+        """Merge by `edge_id`: re-upsert refreshes predicate/content/valid_at AND resets
+        `invalid_at`/`expired_at` to unset — the protocol's revalidation semantics
+        (`GraphStore.upsert_edge`), which sqlite's INSERT OR REPLACE always had. This
+        docstring used to declare the opposite (never touch the temporal stamps), and the
+        query matched it; latent for every stored measurement — `_apply_graph` re-stamps
+        an invalidated fact right after each upsert, so no replayed state differed."""
         self._run(
             "MATCH (a:Entity {id: $src}), (b:Entity {id: $dst})"
             " MERGE (a)-[e:RELATES {id: $eid}]->(b)"
             " ON CREATE SET e.namespace=$ns, e.created_at=$now"
-            " SET e.predicate=$pred, e.content=$content, e.valid_at=$valid",
+            " SET e.predicate=$pred, e.content=$content, e.valid_at=$valid,"
+            " e.invalid_at=null, e.expired_at=null",
             src=src,
             dst=dst,
             eid=edge_id,
@@ -122,8 +127,8 @@ class Neo4jGraphStore:
         self, src: str, dst: str, namespace: str, active_only: bool = True
     ) -> list[dict]:
         """Undirected match between `src` and `dst`; `active_only=True` (default)
-        excludes edges with a non-null `invalid_at`."""
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        keeps ACTIVE edges only (`invalid_at`/`expired_at` both unset, per `GraphStore`)."""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         return self._run(
             "MATCH (a:Entity)-[e:RELATES]-(b:Entity)"
             " WHERE e.namespace=$ns AND a.id=$src AND b.id=$dst" + active + self._EDGE_RETURN,
@@ -151,7 +156,7 @@ class Neo4jGraphStore:
         `active_only` filters as in `edges_between`."""
         if not node_ids:
             return []
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         return self._run(
             "MATCH (a:Entity)-[e:RELATES]->(b:Entity)"
             " WHERE e.namespace=$ns AND (a.id IN $ids OR b.id IN $ids)"
@@ -175,7 +180,7 @@ class Neo4jGraphStore:
         return self._run(
             f"MATCH p = (a:Entity {{id: $id}})-[:RELATES*1..{int(hops)}]{arrow}(n:Entity)"
             " WHERE all(r IN relationships(p) WHERE r.invalid_at IS NULL"
-            " AND r.namespace=$ns)"
+            " AND r.expired_at IS NULL AND r.namespace=$ns)"
             " RETURN DISTINCT n.id AS id, n.namespace AS namespace,"
             " n.name AS name, n.summary AS summary,"
             " n.entity_type AS entity_type, n.created_at AS created_at",
@@ -191,7 +196,7 @@ class Neo4jGraphStore:
         """node id -> {neighbor id: edge count}, isolated nodes included with an
         empty map. ``active_only=False`` matches upstream's unfiltered
         projection query (see ``SqliteGraphStore.entity_projection``)."""
-        active = " AND e.invalid_at IS NULL" if active_only else ""
+        active = " AND e.invalid_at IS NULL AND e.expired_at IS NULL" if active_only else ""
         projection: dict[str, dict[str, int]] = {
             str(r["id"]): {}
             for r in self._run(

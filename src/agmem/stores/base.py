@@ -40,6 +40,17 @@ class DocStore(Protocol):
         caller always sees higher = more relevant, matching `VectorStore.search`."""
         ...
 
+    def search_lexical_items(
+        self, query: str, memory_type: str, k: int = 10, namespace: str | None = None
+    ) -> list[tuple[str, float]]:
+        """(item_id, score) over derived items of one ``memory_type``, highest-relevance-first,
+        with the same normalized score convention as ``search_lexical``. The lexical channel of
+        every Zep hybrid recipe: ``retrieval/pipeline.py`` calls it unguarded for each type in
+        ``lexical_types``. Declared for the same reason as ``list_episodes`` — both backends
+        implement it, and an undeclared method a pipeline calls is exactly the gap that cost a
+        Postgres run its transcript."""
+        ...
+
     def put_item(
         self, item_id: str, memory_type: str, namespace: str, data: dict[str, Any]
     ) -> None: ...
@@ -74,7 +85,18 @@ class DocStore(Protocol):
 
 @runtime_checkable
 class VectorStore(Protocol):
-    """Embedding index. ``score`` is cosine similarity (higher = closer)."""
+    """Embedding index. ``score`` is cosine similarity (higher = closer).
+
+    Rows are keyed by the BARE item id, in all five backends — while the doc stores key items
+    on ``(id, memory_type)`` (the invariant `retrieval/pipeline.py`'s bundle dedup states: the
+    same id under two types is two distinct items). An id shared across two memory types would
+    therefore silently overwrite the other type's vector on ``add``, and the facade's
+    INVALIDATE/DELETE paths (`memory.py`) delete by bare id and would take both. Deferred
+    deliberately rather than rekeyed: every embedded id is a uuid4 (collision-free in
+    practice), the only fixed non-uuid id (MemoryOS's ``memoryos:user_profile``) is
+    doc-store-only via explicitly-null ``embedding_text`` and never gets a vector row, and
+    rekeying to ``(id, memory_type)`` would orphan every vector store already persisted on
+    disk."""
 
     dim: int
 
@@ -121,11 +143,15 @@ class GraphStore(Protocol):
 
     Two invariants that the method list alone does not convey:
 
-    - **Edges are invalidated, never deleted.** `invalidate_edge` stamps `invalid_at`, and `counts`
-      reports edges INCLUDING invalidated ones. Zep's temporal claim is this behaviour, and a
-      backend that deleted instead would still pass every signature check while erasing the
+    - **Edges are invalidated, never deleted.** `invalidate_edge` stamps `invalid_at` AND
+      `expired_at` (bi-temporal: when the fact stopped holding / when the system learned it), and
+      `counts` reports edges INCLUDING invalidated ones. Zep's temporal claim is this behaviour,
+      and a backend that deleted instead would still pass every signature check while erasing the
       mechanism — so `active_only` defaults differ on purpose per method and are part of the
-      contract, not per-engine taste.
+      contract, not per-engine taste. ACTIVE means `invalid_at IS NULL AND expired_at IS NULL`:
+      the two are only ever stamped together, so a backend filtering on `invalid_at` alone read
+      identically on every stored measurement — but the one-field filter and the one-field reset
+      were still two copies of the semantics drifting from this contract, unified 2026-08-19.
     - **Communities are derived state, so `remove_community` is a hard delete** — membership
       included. That asymmetry with edges is deliberate: a community can be recomputed from the
       graph, an edge's history cannot be recovered once dropped.
@@ -156,7 +182,8 @@ class GraphStore(Protocol):
         content: str,
         valid_at: str | None = None,
     ) -> None:
-        """Full-row replace by ``edge_id``; reusing an id RESETS ``invalid_at``."""
+        """Full-row replace by ``edge_id``; reusing an id RESETS ``invalid_at``/``expired_at``
+        (revalidation) — call ``invalidate_edge`` afterward if that is not intended."""
         ...
 
     def edges_between(
