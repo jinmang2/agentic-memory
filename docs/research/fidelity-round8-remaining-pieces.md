@@ -391,6 +391,10 @@ Found 7 errors   (scripts/)                  ← 동일
 
 # 재측정 대상 갱신
 
+> **(2026-08-19 후기)** 여기서 예고한 재측정은 일어나지 않았고, 일어나지 않은 것이 결정이다:
+> Phase-2 rescope가 MemoryOS를 유료 캠페인(docs/18 4-way)에 선정하지 않아 conv0 아티팩트는
+> 은퇴했고, 그 산출물이 떠받치던 비용 결론은 docs/09 결론 3 정정·원장 C-3으로 철회됐다.
+
 `results/locomo-conv0-memoryos.json`은 이제 **두 세대 낡았다**: 6차 B1/C1(page 단위·LPM
 재구현)에 이어 8차 M1~M4가 write 경로와 read 컨텍스트를 모두 바꿨다. 비교 가능한 재현을
 원하면 `dialogue_chain=False` + `flush_stm_on_drain=True`로 구 배선을 재구성해야 한다.

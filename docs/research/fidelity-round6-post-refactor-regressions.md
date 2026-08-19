@@ -625,6 +625,14 @@ src/agmem/retrieval/pipeline.py             B2 기록
 
 # 다음
 
+> **(2026-08-19 후기)** 이 목록은 역사가 됐다. ①의 "MemoryOS 재측정"은 8차 M1~M4가 write 경로를
+> 다시 바꾸며 두 세대 낡은 스펙이 됐고(8차 "재측정 대상 갱신"), 이후 Phase-2 rescope가 MemoryOS를
+> 유료 캠페인(docs/18 4-way)에 선정하지 않아 conv0 아티팩트는 재측정 대신 **은퇴**했다 — 그것이
+> 떠받치던 저비용 결론은 docs/09 결론 3 정정과 원장 C-3으로 공식 철회됐다. ②의 Zep은 7차에서
+> community가 구현되고 docs/18에서 실측됐다. ③의 잔여는 각자 종결됐다: MemoryOS STM 롤링은 8차
+> M1, RB MaTTS는 릴리스 실행 불가 판정(원장 A-5), G-Memory MAS 채널은 측정 불가 판정
+> (`gmemory-reread-2026-08-17.md`).
+
 1. **MemoryOS 재측정** — B1으로 write 경로가 바뀌었다. `results/locomo-conv0-memoryos.json`은
    구 배선(메시지 단위) 산출물이므로 승격 횟수·프로필 수·F1 전부 재산출 대상
 2. **Zep 재등급 검토** — B3으로 "골격(○)" 근거 중 감사 추적성 항목이 해소됐다. 남은 해금
@@ -694,6 +702,10 @@ analyzed 마킹도 없었고, 승격 대상은 "방금 쓴 세그먼트"였다.
 STM recency 주입(round-5 N2 — 배치 flush로 QA 시점 STM이 비어 있음), dialogue chain
 `meta_info`, Retriever의 assistant-knowledge 채널, eval-core 상수 계보
 (heat 0.8/0.8/1e-4·Dice keyword·STM cap=1), agent persona.
+
+> **(2026-08-19 후기)** 이 갭 목록은 8차에서 전부 소화됐다 — STM 롤링은 M1, dialogue chain
+> `meta_info`는 M2, QA 시점 STM 주입(round-5 N2)은 M3, assistant-knowledge 채널은 M4, eval 계보
+> 프로필 갱신은 M5, agent persona는 M6(기본 off). 8차 문서 서두 표와 "변경 파일" 절 참조.
 
 ## C2. MemoryOS 계보 프리셋 (`fidelity="pypi"|"eval"`)
 
