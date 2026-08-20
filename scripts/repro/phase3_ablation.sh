@@ -9,9 +9,14 @@
 # The switch is ADD-only, not the "ADD + LINK" this banner once sketched: upstream
 # decides links INSIDE the evolve call (the "strengthen" action — there is no
 # link-only prompt to keep), so skipping evolution skips links with it, which is
-# exactly what Table 3's w/o-evolution ablation removes. The arm is gated
-# run_ready=False until a one-conv pilot survives (`--allow-unverified-config`).
-# Cost (Full arm only): ~$1.6 on gpt-4o-mini. With the ablation arm added: ~$3.2.
+# exactly what Table 3's w/o-evolution ablation removes.
+#
+# 2026-08-20: both arms below now run. The conv0 pilot survived and lifted
+# run_ready (configs.py), and the 10-conv arm landed at F1 33.80 / BLEU-1 28.58
+# for $0.7043 against the evolution-on seeds' 34.84 / 31.86 for $2.752 — half the
+# write calls, a quarter of the cost, an F1 delta inside the seed spread and a
+# BLEU-1 delta outside it (docs/14 §rung-3 for the full table and its caveat).
+# Cost: Full arm ~$2.75 (ingest $2.32 + eval $0.43), ablation arm ~$0.70.
 # Prereq: repo-root .env.local with OPENAI_API_KEY; embedder downloaded.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
@@ -35,8 +40,14 @@ uv run python scripts/exp_amem_repro.py \
     --expand-links off \
     --workers "$WORKERS"
 
-# w/o-evolution arm — switch implemented 2026-08-19; still spend-gated (approval +
-# a one-conv pilot to lift run_ready=False). When approved:
-# uv run python scripts/exp_amem_repro.py --conv all --k 10 \
-#     --eval-mode wujiang --expand-links off \
-#     --config amem_noevolve --allow-unverified-config
+# w/o-evolution arm — switch implemented 2026-08-19, gate lifted by the conv0
+# pilot 2026-08-20. `--max-spend-usd` caps BETWEEN conversations (the runner has
+# no mid-conversation cut point that leaves a resumable store).
+uv run python scripts/exp_amem_repro.py \
+    --conv all \
+    --k 10 \
+    --eval-mode wujiang \
+    --expand-links off \
+    --workers "$WORKERS" \
+    --config amem_noevolve \
+    --max-spend-usd 2.5

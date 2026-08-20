@@ -206,7 +206,7 @@ bash scripts/repro/phase2.sh           # rung 2: full, our-production (ours+judg
 bash scripts/repro/phase1b_headline.sh # rung 1b HEADLINE: K=3 독립 ingest → mean±std (~$4.8)
 bash scripts/repro/phase2_headline.sh  # rung 2 HEADLINE: K=3 (seed store 공유 시 eval만 ~$2.3)
 bash scripts/repro/phase3_ksweep.sh    # rung 3: k∈{10,20,30,40,50}, ingest-once + eval-sweep
-bash scripts/repro/phase3_ablation.sh  # rung 3: Full vs w/o-evolution (아래 주의)
+bash scripts/repro/phase3_ablation.sh  # rung 3: Full vs w/o-evolution (둘 다 실행됨, 아래 표)
 # scripts/repro/phase1a_upstream.sh    # rung 1a: 업스트림 자기 코드 (문서 전용, 실행 X)
 ```
 
@@ -236,6 +236,7 @@ bash scripts/repro/phase3_ablation.sh  # rung 3: Full vs w/o-evolution (아래 �
 > ablation을 하려면 (1) evolution 비활성 시 `EVOLVE_PROMPT` 콜을 건너뛰고 ADD+LINK만
 > emit하는 스위치를 추가하고, (2) `exp_amem_repro.py`에 `--no-evolution` 플래그를 배선해야
 > 한다. `phase3_ablation.sh`는 현재 Full arm만 돌리고 이 gap을 명시한다 → **follow-up 필요**.
+> *(이 문단은 2026-08-19 이전 상태의 기록이다. 아래 두 갱신이 (1)·(2)를 모두 닫았다.)*
 >
 > **(2026-08-19) 스위치 구현 완료** — `AMemOrganizer(evolve=False)`가 Ps1 노트 구성 뒤의
 > 배치 Ps2+Ps3 `EVOLVE_PROMPT` 콜을 통째로 건너뛴다(메시지당 write 콜 2→1; neighbor
@@ -245,8 +246,34 @@ bash scripts/repro/phase3_ablation.sh  # rung 3: Full vs w/o-evolution (아래 �
 > 생성도 함께 꺼진다 → **ADD만 emit** (근거 전문은 `AMemOrganizer.__init__` 주석). (2)는
 > `--no-evolution` 플래그 대신 configs.py의 arm 패턴을 따라 **`--config amem_noevolve`**로
 > 배선했다(run_ready=False — 캠페인 전 `--allow-unverified-config`로 conv0 pilot 필요).
-> 기본값 `evolve=True`는 프롬프트·콜·op 전부 스위치 이전과 바이트 동일. **ablation 자체는
-> 여전히 미실행**(지출 승인 별도).
+> 기본값 `evolve=True`는 프롬프트·콜·op 전부 스위치 이전과 바이트 동일.
+>
+> **(2026-08-20) ablation 실행 완료** — conv0 파일럿($0.0616) 후 10-conv 본런
+> (`gpt-4o-mini_amem_noevolve_all_k10_wujiang_expand-off_run1.json`, commit cd2de38,
+> $0.7043 / cap $2.5, `spend_capped=false`, 1,986문항). op 로그는 설계대로 **ADD 전용**
+> (ADD:notes 5,882 + ADD:episodic 5,882, UPDATE/LINK/NOOP **0건**).
+>
+> | | evolution ON (seed1/2/3) | evolution OFF | Δ |
+> |---|---|---|---|
+> | F1 | 34.29 / 35.05 / 35.19 (평균 34.84) | **33.80** | **−1.04** (시드 폭 0.90과 동급) |
+> | BLEU-1 | 31.33 / 31.93 / 32.33 (평균 31.86) | **28.58** | **−3.28** (시드 폭 1.00 바깥) |
+> | write 콜 | 11,753 (extract 5,882 + distill 5,871) | **5,882** | **정확히 절반** |
+> | 총비용 | $2.752 (ingest 2.3227 + eval 0.4292) | **$0.7043** | **−74.4%** |
+>
+> 읽는 법: **evolution은 A-Mem write 예산의 정확히 절반이자 비용의 3/4을 쓰고, F1으로는
+> 시드 노이즈와 구별되지 않는다.** 효과가 분명한 쪽은 BLEU-1 — 세 시드 어느 것보다도
+> 2.75pt 아래로, 시드 폭 바깥이다. 즉 evolution이 사는 곳은 "정답 토큰을 더 맞히는 것"이
+> 아니라 "답변 표현이 정답 문구에 더 붙는 것"에 가깝다.
+>
+> 두 아암이 노트 구성 단계까지 동일함을 확인하는 교차검증: note-construction(`extract`)
+> 출력 토큰이 OFF 375,108 vs ON 375,310(= ingest 345,664 + eval 29,646)으로 **0.05%**
+> 차이다. 두 아암은 `distill`(EVOLVE_PROMPT) 콜의 유무로만 갈린다.
+>
+> **비교가능성 한계(고지)**: evolution-ON 대조군 세 시드는 stamp 이전 세대 아티팩트다
+> (`config=None`, `commit=None`). 프로토콜 지문(embedder MiniLM · k=10 · wujiang ·
+> expand-off · 콜 회계)은 일치하지만, 그 사이 라운드12 충실성 교정이 ON 쪽 수치를
+> 움직였을 가능성은 이 실행으로 배제되지 않는다. **동일 커밋 ON 대조군 재실행 견적
+> $2.75(ingest $2.32 + eval $0.43)** — 미승인, 별건.
 
 ### 산출물 & 영속성 (Artifacts & persistence) — 재현성 계약
 
@@ -315,7 +342,7 @@ QA만 재실행한다. eval-only는 ingest·consolidate를 **건너뛰고** 영�
 | rung 2 (full, ours+judge+expand) | ~$3.2 |
 | rung 1–2 합계 | **~$3.2** (1b는 2에 포함되는 write를 공유하지 않으므로 별도면 ~$4.8) |
 | + k-sweep(ingest 1회 + 5×answer) | ~$5.4 |
-| + ablation | ~$3.2 |
+| + ablation (w/o-evolution arm) | **$0.70 실측** (2026-08-20; Full arm은 위 rung 1b와 동일 write) |
 | **합계 + 버퍼** | **$10–15 권장** |
 
 숫자는 1,986 QA 기준 write(Ps1+Ps3 2콜/노트) + answer(1콜/QA) + keyword rewrite(1콜/QA)
