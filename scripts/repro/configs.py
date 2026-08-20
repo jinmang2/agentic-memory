@@ -279,8 +279,12 @@ CONFIGS: dict[str, RunnerConfig] = {
         # run_ready=False: this write path has never survived a real ingest (it
         # is a strict subset of amem's, but the gate attests runs, not
         # reasoning) — pilot one conv with --allow-unverified-config first.
+        # run_ready flipped 2026-08-20: the conv0 pilot survived intact —
+        # gpt-4o-mini_amem_noevolve_conv0_k10_wujiang_expand-off_run1.json,
+        # $0.0616/817 calls, spend_capped=False, op log ADD-only (419 episodic +
+        # 419 notes, zero UPDATE/LINK), F1 33.70 vs the evolve-on conv0 35.39.
         RunnerConfig(
-            "amem_noevolve", lambda: [AMemOrganizer(evolve=False)], ("notes",), run_ready=False
+            "amem_noevolve", lambda: [AMemOrganizer(evolve=False)], ("notes",), run_ready=True
         ),
         # Track 3. The study read upstream prose as "at least 4-6 LLM calls per
         # episode", which at 5,882 turns would be 23.5k-35.3k write calls. The

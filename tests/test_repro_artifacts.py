@@ -1217,8 +1217,9 @@ def test_amem_noevolve_arm_differs_from_amem_in_the_switch_alone_and_stays_gated
     """The Table 3 w/o-evolution ablation arm (docs/14 "evolution ablation 주의"
     follow-up). Interpretable only if the switch is the ONLY difference from
     `amem` — same read path, temps, k and store, so any measured gap belongs to
-    the skipped evolution call. And it must stay behind the run-ready gate: its
-    write path has never survived a real ingest, and the gate attests runs."""
+    the skipped evolution call. run_ready flipped True on 2026-08-20: the gate
+    attests runs, and the conv0 pilot survived intact (ADD-only op log,
+    spend_capped=False — see the configs.py comment for the artifact)."""
     cfgmod = _load_configs()
     base = cfgmod.get_config("amem")
     arm = cfgmod.get_config("amem_noevolve")
@@ -1227,7 +1228,7 @@ def test_amem_noevolve_arm_differs_from_amem_in_the_switch_alone_and_stays_gated
     assert (base_org.evolve, arm_org.evolve) == (True, False)
     for field in ("memory_types", "role_temps", "per_type_k", "store", "keyword_queries"):
         assert getattr(base, field) == getattr(arm, field), field
-    assert arm.run_ready is False
+    assert arm.run_ready is True
 
 
 def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
