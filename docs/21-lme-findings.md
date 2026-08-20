@@ -318,8 +318,9 @@ $500~700 대 검색 arm $12.47이라(`docs/20` Pre-registration II), **write 경
    `_s`에서 +21.20pp, 그 +21.20의 일부는 `_m`이 보인 대로 haystack 길이의 몫이다. 길이 없는
    문장은 이 캠페인 규약상 결함이다.
 4. **단일 시드 · 리더 둘 · 벤치 하나.** 노이즈 바닥은 쟀지만(±2pp, §3.1) C6·C7은 각 1회
-   실행이고 reader는 mini/luna 둘뿐이다. `_s` × luna(P8 직접 시험)와 `_s` × direct(CoN 부호
-   역전의 나머지 절반, §1.3)는 미측정·미승인이다.
+   실행이고 reader는 mini/luna 둘뿐이다. `_s` × luna는 2026-08-20에 실측됐다(task-avg 86.19 /
+   overall 89.20, $11.73 — luna의 full-context 벌금 −5.40pp vs mini −23.20pp, P8 확정, docs/20 R4).
+   `_s` × direct(CoN 부호 역전의 나머지 절반, §1.3)는 여전히 미측정·미승인이다.
 5. **C1·C2의 cross-arm 상관은 n=5라 유의하지 않다** (§2). 예시 이상으로 쓰면 안 된다.
 6. **우리 검색 절대값은 upstream 검색 baseline과 비교 불가** (§3b — 인덱싱 범위가 다르고,
    그 차이가 upstream 쪽 결함이다).

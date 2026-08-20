@@ -1,0 +1,13 @@
+2026-08-20 10:37:17,603 INFO agmem.repro.lme: dataset=longmemeval_s_cleaned.json n=500 sha256=d6f21ea9d60a reader=gpt-5.6-luna reading=con judge=gpt-4o-2024-08-06
+2026-08-20 10:37:17,613 INFO agmem.repro.lme: 4 earlier rows carry no verdict — they will be re-answered
+2026-08-20 10:37:17,613 INFO agmem.repro.lme: resuming: 496/500 questions already answered
+2026-08-20 10:37:19,920 INFO agmem.repro.lme: earlier processes of this run spent $11.6382 (from the trace)
+2026-08-20 10:37:34,442 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:34,903 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:35,259 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:35,769 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:38,575 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:39,334 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:41,204 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:41,841 INFO httpx: HTTP Request: POST https://api.openai.com/v1/chat/completions "HTTP/1.1 200 OK"
+2026-08-20 10:37:41,864 INFO agmem.repro.lme: [done] task_averaged=86.19 overall=89.2 abstention=83.33 n=500 -> /home/jinmang2/agentic_memory/results/repro/gpt-5.6-luna_lme_s_con.json

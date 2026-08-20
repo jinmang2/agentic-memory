@@ -294,6 +294,18 @@ ingest.** Only embeddings, $1.12 of them. **[실측]**
 | prompt, median | 517,430 chars | **55,108 chars** | ~27,000 |
 | cost | $9.07 | **$2.62** | $1.05 |
 
+**R4 (2026-08-20) — `_s` × gpt-5.6-luna × CoN, full context: the P8 direct test.**
+Same 500 questions, same 517,430-char median prompt, judge pin unchanged; only the
+reader swapped. **task-averaged 86.19 / overall 89.20** (abstention 83.33, n=500,
+$11.73, one transport-killed pass resumed for its last 4 rows). Read against the
+table above: mini pays **−23.20pp** for reading the full haystack instead of its
+oracle; luna pays **−5.40** (94.60 → 89.20). The long-context penalty is a property
+of the reader, not of the corpus — which is P8 stated as a measurement: for a
+128K-window 2026 reader, `_s` is mostly a reading problem, and luna reading
+EVERYTHING (89.20) clears mini's best retrieval arm (81.60) without retrieving
+at all. Single run, no paired CI yet; per-type rows live in the summary artifact
+(`gpt-5.6-luna_lme_s_con.json`), weakest type again preference (53.33).
+
 ```
 retrieval-top50  -  full-context     task_avg +22.42 [+17.66, +27.23]
                                      overall  +21.20 [+16.60, +25.60]
