@@ -2245,3 +2245,23 @@ def test_run_status_shows_a_finished_arms_summary_total_when_the_trace_is_embed_
         json.dumps({"stamp": {"complete": True, "n_samples": 1}, "cost_usd": 4.61})
     )
     assert rs.describe(tag)["usd"] == 4.61
+
+
+def test_max_spend_usd_caps_between_conversations_and_prices_like_cost_usd():
+    """The LoCoMo runner's cap prices the merged budget exactly as the final
+    cost_usd will (registry rates, judge split, embedder fold) and only ever
+    fires between conversations — no cap configured means it never fires."""
+    R = _load_repro()
+
+    class FreeEmbedder:  # no budget_row -> fold_embed_budget no-ops, like MiniLM
+        pass
+
+    emb = FreeEmbedder()
+    budget = {"generate": {"calls": 10, "tokens_in": 1_000_000, "tokens_out": 100_000}}
+    args = SimpleNamespace(max_spend_usd=None, model="gpt-4o-mini", judge_model=None)
+    assert R._spend_cap_reached(args, budget, emb) is False
+    # gpt-4o-mini list rates: $0.15/M in + $0.60/M out -> this budget is $0.21.
+    args.max_spend_usd = 0.5
+    assert R._spend_cap_reached(args, budget, emb) is False
+    args.max_spend_usd = 0.2
+    assert R._spend_cap_reached(args, budget, emb) is True

@@ -718,8 +718,11 @@ def eval_conversations(
     # missing when its numbers are questioned.
     op_path = memory_path.with_suffix(".ops.jsonl") if memory_path else None
     op_file = op_path.open("w", encoding="utf-8") if op_path else None
+    spend_capped = False
     try:
         for idx in conv_indices:
+            if spend_capped:
+                break
             sample = samples[idx]
             mem = build_memory(args, embedder, idx, roles, trace_path=trace_path)
             try:
@@ -742,6 +745,7 @@ def eval_conversations(
                     )
                     per_conv.append({"conv": idx, "n_turns": n_turns})
                     _merge_budget(merged_budget, merged_drops, mem)
+                    spend_capped = _spend_cap_reached(args, merged_budget, embedder)
                     continue
                 questions = locomo.select_questions(sample)
                 total_questions += len(questions)
@@ -777,6 +781,7 @@ def eval_conversations(
                 for rec in res.get("records", []):
                     all_records.append({"conv": idx, **rec})
                 _merge_budget(merged_budget, merged_drops, mem)
+                spend_capped = _spend_cap_reached(args, merged_budget, embedder)
             finally:
                 mem.close()
     finally:
@@ -805,6 +810,8 @@ def eval_conversations(
             "ingest_s": round(ingest_s, 1),
             "memory_capacity": memory_capacity,
             "op_counts": op_counts or None,
+            "spend_capped": spend_capped,
+            "completed_convs": [p["conv"] for p in per_conv],
         }
 
     combined = micro_average([r for r in per_conv if "overall" in r])
@@ -824,10 +831,35 @@ def eval_conversations(
     # the memory ENDED as, and what the write path DID to get there. The second
     # is the only one that can show an UPDATE, a DELETE, or a NOOP.
     combined["op_counts"] = op_counts or None
+    combined["spend_capped"] = spend_capped
+    combined["completed_convs"] = [p["conv"] for p in per_conv]
     # carried internally to the sidecar writer in main(); NOT inlined into the
     # summary JSON (which selects a lean set of keys).
     combined["records"] = all_records
     return combined
+
+
+def _spend_cap_reached(args, merged_budget: dict, embedder) -> bool:
+    """--max-spend-usd, priced exactly as the final ``cost_usd`` will be: the
+    merged budget with the embedder's spend folded in (on a copy — folding is
+    additive and the real fold happens once, at summary time). Checked between
+    conversations, so a fired cap loses at most one conversation of overshoot —
+    the same semantics the LME driver documents for its own cap."""
+    if args.max_spend_usd is None:
+        return False
+    snap = json.loads(json.dumps(merged_budget))
+    fold_embed_budget(snap, embedder)
+    spent = cost_usd(
+        snap, args.model, judge_model=args.judge_model, embed_model=embed_model_name(embedder)
+    )
+    if spent < args.max_spend_usd:
+        return False
+    print(
+        f"[cap] ${spent:.4f} >= --max-spend-usd {args.max_spend_usd}: stopping before "
+        "the next conversation; completed conversations keep their artifacts",
+        flush=True,
+    )
+    return True
 
 
 def _merge_budget(merged_budget: dict, merged_drops: dict, mem: AgenticMemory) -> None:
@@ -975,6 +1007,14 @@ def main() -> None:
     )
     ap.add_argument("--runs", type=int, default=1, help="repeat QA for mean±std")
     ap.add_argument(
+        "--max-spend-usd",
+        type=float,
+        default=None,
+        help="hard ceiling for this run, priced from the merged budget exactly as the "
+        "final cost_usd will be. Checked BETWEEN conversations (the LME driver's "
+        "between-window rule), so it can overshoot by at most one conversation.",
+    )
+    ap.add_argument(
         "--workers",
         type=int,
         default=1,
@@ -1116,6 +1156,8 @@ def main() -> None:
             "timing": {"ingest_s": combined.get("ingest_s"), "total_s": combined.get("ingest_s")},
             "memory_capacity": combined.get("memory_capacity"),
             "op_counts": combined.get("op_counts"),
+            "max_spend_usd": args.max_spend_usd,
+            "spend_capped": combined.get("spend_capped", False),
             "llm_trace_file": trace_path.name,
             "memory_file": memory_path.name,
             "op_log_file": memory_path.with_suffix(".ops.jsonl").name,
@@ -1127,8 +1169,13 @@ def main() -> None:
         # sentinel instead, so per-conv workers skip it to avoid clobbering.
         sentinel = None
         if not args.no_sentinel:
+            # A capped run is a PARTIAL run: the sentinel attests only the
+            # conversations that actually finished, so a later --eval-only can
+            # never trust a store the cap cut short (same invariant as a crash,
+            # which never reaches this line at all).
+            done_convs = combined.get("completed_convs") or conv_indices
             sentinel = write_ingest_sentinel(
-                args.data_dir, conv_indices, combined.get("per_conv") or [], sha
+                args.data_dir, done_convs, combined.get("per_conv") or [], sha
             )
         out_path = OUT / f"{tag}.json"
         out_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=json_safe))
@@ -1228,6 +1275,8 @@ def main() -> None:
         },
         "memory_capacity": first.get("memory_capacity"),
         "op_counts": first.get("op_counts"),
+        "max_spend_usd": args.max_spend_usd,
+        "spend_capped": any(bool(r.get("spend_capped")) for r in runs_out),
         "run_summary": run_summary,
         "runs": [
             {
