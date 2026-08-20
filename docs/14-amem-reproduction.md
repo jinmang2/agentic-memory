@@ -294,6 +294,14 @@ capacity, all of it, down to the smallest thing". 한 실행은 **다섯 가지 
 추가로 `--data-dir`로 실행하면 **영속 store**가 `results/repro/stores/<store>/<namespace>/`
 (SQLite/vector/graph DB dir)에 남는다 — 이것도 durable-on-disk(gitignored).
 
+> **(2026-08-20) stamp에 `data_dir` 추가** — 그 store가 **어느 실행의 것인지**를 아티팩트가
+> 스스로 말하지 못했다: `eval_only: true`는 "영속 store를 다시 읽었다"만 말하고 *어느*
+> store인지 침묵하며, ingest sentinel도 config를 기록하지 않는다. 그래서 X2가 아암→store
+> 링크를 **디렉터리 이름 관례**로 복원해야 했다(사람이 보증해야 하는 링크 = 증거 아님).
+> 이제 stamp가 `data_dir`을 싣는다. 기존 아티팩트는 `scripts/repro/x2_oracle_surgery.py`의
+> 방식으로 되짚는다 — 스냅샷의 모든 id가 그 store에 실재하는지 대조(런 이후 재빌드된
+> store까지 잡힌다).
+
 **git 정책(명시)**: 작은 것(요약 `.json`·`.records.jsonl`·`logs/`)은 **커밋**한다. 무거운
 것(`*.llm-trace.jsonl`·`*.memory.jsonl`·`stores/`)은 full run에서 거대해질 수 있어 **커밋하지
 않되 실디스크에 durable하게 남긴다**(사라지지 않음 — 단지 repo bloat 방지). 규칙은

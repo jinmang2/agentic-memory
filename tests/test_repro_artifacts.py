@@ -1256,6 +1256,7 @@ def test_stamp_k_temps_reflect_the_selected_configs_actual_values():
             workers=1,
             config=config,
             eval_only=False,
+            data_dir=None,
         )
 
     amem_stamp = repro._stamp(_args("amem"), spec, None, "t0", "t1", 5)

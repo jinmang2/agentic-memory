@@ -1400,6 +1400,17 @@ def _stamp(
         link_expansion_cap=cfg_entry.link_expansion_cap,
         link_expansion_per_hit=cfg_entry.link_expansion_per_hit,
         eval_only=args.eval_only,
+        # Which store the run read (or wrote). Added 2026-08-20 because X2 needed
+        # exactly this and no artifact had it: `eval_only: true` says a persisted
+        # store was reloaded and says nothing about WHICH, and the ingest
+        # sentinel records no config either — so the link between an arm's
+        # published number and the store dir behind it existed only as a
+        # directory-naming convention that a human had to vouch for.
+        # `scripts/repro/x2_oracle_surgery.py` re-derives it by matching every
+        # snapshot id against the store's contents; that check stays (it also
+        # catches a store rebuilt after its run), but new artifacts no longer
+        # need it to know where they came from.
+        data_dir=args.data_dir,
         git_sha=sha,
         utc_started=utc_started,
         utc_finished=utc_finished,

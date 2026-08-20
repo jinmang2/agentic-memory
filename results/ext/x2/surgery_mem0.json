@@ -1,0 +1,227 @@
+{
+ "arm": "mem0",
+ "source_store": "results/repro/stores/mem0-e3s",
+ "dest_store": "results/repro/stores/x2-mem0",
+ "config": "mem0_v0194",
+ "servable_types": [
+  "semantic"
+ ],
+ "keep_items": 2738,
+ "delete_items": 2689,
+ "links_from_survivors": 0,
+ "links_from_survivors_to_deleted": 0,
+ "per_conv": {
+  "0": {
+   "match": {
+    "semantic": {
+     "snapshot": 424,
+     "store": 424,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 192,
+    "by_type": {
+     "semantic": 192
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "1": {
+   "match": {
+    "semantic": {
+     "snapshot": 314,
+     "store": 314,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 163,
+    "by_type": {
+     "semantic": 163
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "2": {
+   "match": {
+    "semantic": {
+     "snapshot": 580,
+     "store": 580,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 333,
+    "by_type": {
+     "semantic": 333
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "3": {
+   "match": {
+    "semantic": {
+     "snapshot": 517,
+     "store": 517,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 247,
+    "by_type": {
+     "semantic": 247
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "4": {
+   "match": {
+    "semantic": {
+     "snapshot": 699,
+     "store": 699,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 312,
+    "by_type": {
+     "semantic": 312
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "5": {
+   "match": {
+    "semantic": {
+     "snapshot": 616,
+     "store": 616,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 308,
+    "by_type": {
+     "semantic": 308
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "6": {
+   "match": {
+    "semantic": {
+     "snapshot": 628,
+     "store": 628,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 316,
+    "by_type": {
+     "semantic": 316
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "7": {
+   "match": {
+    "semantic": {
+     "snapshot": 614,
+     "store": 614,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 338,
+    "by_type": {
+     "semantic": 338
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "8": {
+   "match": {
+    "semantic": {
+     "snapshot": 436,
+     "store": 436,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 180,
+    "by_type": {
+     "semantic": 180
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "9": {
+   "match": {
+    "semantic": {
+     "snapshot": 599,
+     "store": 599,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 300,
+    "by_type": {
+     "semantic": 300
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  }
+ },
+ "verify_only": false,
+ "total_ghost_hits": 0
+}

@@ -1,0 +1,288 @@
+{
+ "arm": "nemori_b",
+ "source_store": "results/repro/stores/nemori-armB-e3s",
+ "dest_store": "results/repro/stores/x2-nemori_b",
+ "config": "nemori_merge085",
+ "servable_types": [
+  "episodes",
+  "semantic"
+ ],
+ "keep_items": 2418,
+ "delete_items": 112,
+ "links_from_survivors": 0,
+ "links_from_survivors_to_deleted": 0,
+ "per_conv": {
+  "0": {
+   "match": {
+    "episodes": {
+     "snapshot": 53,
+     "store": 53,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 150,
+     "store": 150,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 8,
+    "by_type": {
+     "semantic": 6,
+     "episodes": 2
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "1": {
+   "match": {
+    "episodes": {
+     "snapshot": 41,
+     "store": 41,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 99,
+     "store": 99,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 14,
+    "by_type": {
+     "semantic": 2,
+     "episodes": 12
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "2": {
+   "match": {
+    "episodes": {
+     "snapshot": 90,
+     "store": 90,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 169,
+     "store": 169,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 12,
+    "by_type": {
+     "semantic": 5,
+     "episodes": 7
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "3": {
+   "match": {
+    "episodes": {
+     "snapshot": 85,
+     "store": 85,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 189,
+     "store": 189,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 11,
+    "by_type": {
+     "semantic": 6,
+     "episodes": 5
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "4": {
+   "match": {
+    "episodes": {
+     "snapshot": 87,
+     "store": 87,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 184,
+     "store": 184,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 11,
+    "by_type": {
+     "semantic": 7,
+     "episodes": 4
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "5": {
+   "match": {
+    "episodes": {
+     "snapshot": 79,
+     "store": 79,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 184,
+     "store": 184,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 14,
+    "by_type": {
+     "semantic": 7,
+     "episodes": 7
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "6": {
+   "match": {
+    "episodes": {
+     "snapshot": 106,
+     "store": 106,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 218,
+     "store": 218,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 15,
+    "by_type": {
+     "semantic": 9,
+     "episodes": 6
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "7": {
+   "match": {
+    "episodes": {
+     "snapshot": 91,
+     "store": 91,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 219,
+     "store": 219,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 11,
+    "by_type": {
+     "semantic": 5,
+     "episodes": 6
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "8": {
+   "match": {
+    "episodes": {
+     "snapshot": 71,
+     "store": 71,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 161,
+     "store": 161,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 7,
+    "by_type": {
+     "semantic": 3,
+     "episodes": 4
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "9": {
+   "match": {
+    "episodes": {
+     "snapshot": 82,
+     "store": 82,
+     "missing": 0
+    },
+    "semantic": {
+     "snapshot": 172,
+     "store": 172,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 9,
+    "by_type": {
+     "semantic": 4,
+     "episodes": 5
+    },
+    "graph_edges_invalidated": 0
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  }
+ },
+ "verify_only": false,
+ "total_ghost_hits": 0
+}
