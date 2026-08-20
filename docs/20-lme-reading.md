@@ -933,3 +933,49 @@ The 2 pp floor is this harness's measured noise (same-arm rerun +0.40 pp
   whose write budgets are larger and whose LoCoMo J is lower.
 - If the run does reach 500, the full-release numbers supersede this prefix
   entirely and the prefix is kept only as the record of what was registered.
+
+### Addendum, same day, still before any accuracy — the truncation check ran, and the asymmetry reversed
+
+Secondary check ③ above was executed on the 67 rows then on disk, against the
+comparator's same 67 `question_id`s. No `label` field was aggregated; this is a
+prompt-size comparison only, which is why it can be recorded here rather than in
+the results.
+
+| | organizer (nemori) | passthrough | |
+|---|---|---|---|
+| candidates served | 50.0 / row | 50.0 / row | `--k-scope total` holds exactly |
+| by type | episodic 586 · episodes 1,395 · semantic 1,369 | episodic 3,350 | |
+| candidates cut by the render budget | **0** | 0 | every served item reached the prompt |
+| mean prompt | **43,333 chars** | **49,340 chars** | **−12.2%** |
+
+**The old wiring gave the organizer 1.14–1.54x more context; the aligned wiring
+gives it 12.2% less.** The cap equalises *items*, and an organizer's items are
+shorter than raw turns — a nemori episode or semantic statement is a compression
+of several turns, so fifty of them carry fewer characters than fifty turns. Item
+parity and character parity are not the same alignment, and this campaign has
+only ever measured the second one mattering.
+
+Three consequences, registered now rather than argued later:
+
+1. The residual gap is **above** the ~10% bar check ③ set, so by the rule as
+   written the contrast is compromised. It is not discarded, because the
+   direction matters: the organizer is now the arm with **less** context. A
+   positive result under that handicap is stronger than the pre-registered
+   reading; a null is weaker, because part of any shortfall is 12% less material
+   rather than the write path.
+2. Every statement of this arm's result carries the −12.2% in the same sentence.
+   The campaign's own rule (§9.4.0, "never quote a retrieval number without the
+   regime it was measured in") applies to context volume too.
+3. The alignment this arm actually wants is a **character-budget** parity, not an
+   item-count one — cap the organizer's bundle at the passthrough arm's realised
+   `prompt_chars` distribution. That is a bench change, not an analysis one, and
+   it is not being made mid-run: changing the read budget at row 68 would split
+   the arm into two incomparable halves. It is the precondition for the *next*
+   organizer arm, and it is written down here so the next one does not rediscover
+   it after paying.
+
+A fourth observation, reported because it is free and not because it is a
+result: `evidence_recall_prompt` is 1.00 on all 67 organizer rows. Those rows are
+all `single-session-user`, the type every arm saturates, so this says the
+organizer's items keep single-session evidence reachable — not that retrieval is
+solved. The types where recall can fail begin at row 67.
