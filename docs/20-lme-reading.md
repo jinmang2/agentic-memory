@@ -837,3 +837,99 @@ not the bundle. Cheap, and pointless until an arm needs it.
 > selection — what the prompt actually contained — not on `bundle.items`. The
 > paragraph above is kept as the record of the defect as it stood when the
 > numbers in this document were produced.
+
+## Pre-registration III — the organizer arm, read at a type-complete prefix (written 2026-08-20, with 67 of 500 rows on disk)
+
+**Disclosure of timing, first, and it is the same disclosure as II.** The arm
+(`gpt-4o-mini_lme_s_nemori_k50`, launched 2026-08-19, killed at row 55 by a WSL VM
+restart, resumed 2026-08-20) has 67 answered rows on disk. **All 67 are
+`single-session-user`** — the release ships in type order, and SSU saturates at
+97–100 in every arm this campaign has ever run. The first block therefore carries
+no information about any contrast below. No accuracy has been computed on it.
+
+**Why this registration exists.** The arm needs ~44–73 more hours at its measured
+throughput and will not reach 500 rows before it is needed. The question is
+whether a prefix can be read, and the honest answer is: **only at a boundary the
+dataset's own ordering makes meaningful.** Measured type order, from the
+comparator's records:
+
+| prefix | complete types | partial |
+|---|---|---|
+| 66 | — | SSU |
+| **230** | SSU (70) · **multi-session (133)** · **preference (30)** | — |
+| 300 | the above | temporal-reasoning 67/133 |
+| **357** | the above + **temporal-reasoning (133)** | — |
+| 427 | + knowledge-update (78) | — |
+| 500 | + single-session-assistant (56) | — |
+
+**Two facts make 230 the primary cut, and both were known before any number.**
+First, `multi-session` and `single-session-preference` complete there, and those
+are exactly the types that carried C4's entire spread under perfect retrieval
+(+20.3 pp and +13.3 pp) and that C7 watched decay under dilution (−6.77, −20.00).
+If an organizer's summarisation buys anything on this benchmark, it buys it in
+the types that require combining what was found — not in the single-session
+recall types that every arm already saturates. Second, a prefix in dataset order
+is **not an outcome-dependent selection**: the driver consumes the release's
+order, the order is fixed by question type, and nothing about a row's difficulty
+enters the choice of where to stop.
+
+**The contrast.**
+
+> **`gpt-4o-mini_lme_s_nemori_k50` vs `gpt-4o-mini_lme_s_con_k50_batched`** — same
+> reader (gpt-4o-mini), same CoN prompt, same pinned judge, same `k=50`, same
+> `budget_tokens=20000`, same `embed_batch=128`, same 500-question release, same
+> `--k-scope total` read budget (the alignment above). **The only difference is
+> whether an LLM write path stood between the haystack and the index**: nemori
+> episodes + semantic items, against passthrough turns.
+
+**Primary measure.** The paired difference (organizer − passthrough) on the
+**common answered subset**, restricted to the largest type-complete prefix
+available at analysis time, reported for both official accuracies separately
+(LME-A13) plus per-type rows, with the paired bootstrap 95% CI and McNemar that
+`scripts/repro/lme_c4_analysis.py` computes by `question_id` join.
+
+| paired Δ (organizer − passthrough) | verdict |
+|---|---|
+| **≥ +5 pp**, CI excludes 0 | **The first positive write-path result of this campaign.** C6's floor is not the ceiling, and the negative half of §9.1's claim acquires its first counter-example. |
+| +2 to +5 pp, CI excludes 0 | Weak positive; reported as such, with the prefix's n and CI in the same sentence. |
+| **CI includes 0** | **Not separable.** Reported as "no separation at n=<prefix>, CI ±X pp" — never as "the organizer does not help". At n=230 the interval is roughly ±7–9 pp, so this outcome excludes only large effects, and the sentence must say which. |
+| **≤ −5 pp**, CI excludes 0 | The write path *costs* points at a matched read budget. Before publishing that, check `evidence_recall_prompt` on both arms: with the budget aligned, a loss should show as evidence that stopped reaching the reader. |
+
+The 2 pp floor is this harness's measured noise (same-arm rerun +0.40 pp
+[−1.40, +2.20]; judge swap −1.2 to −2.0 pp), and it applies here unchanged.
+
+**Secondary, pre-registered as secondary.**
+
+1. **`evidence_recall_prompt` per arm**, which exists for the first time on this
+   arm (the 2026-08-19 fix above). This is the field that separates "the
+   organizer's items never surfaced" from "they surfaced and the reader did not
+   use them" — the decomposition C7 could not do. It is secondary because the
+   passthrough comparator's rows predate the fix and carry only
+   `evidence_recall_bundle`; the cross-arm comparison is therefore *bundle vs
+   bundle*, and the prompt-based figure is read **within** the organizer arm only.
+2. **Cost per point.** The organizer arm's write path is ~984 LLM calls per
+   instance against passthrough's zero. Whatever the accuracy delta is, it is
+   reported next to the spend that bought it — this campaign's C1 is a claim about
+   that ratio, not about accuracy alone.
+3. **Truncation check.** `--k-scope total` should put both arms at a comparable
+   prompt size; the arms' `prompt_chars` distributions are compared before any
+   accuracy claim, and a residual gap above ~10% invalidates the contrast for the
+   same reason reason ① invalidated the old wiring.
+
+**What this cannot say, in advance.**
+
+- **A prefix is not the benchmark.** Neither official accuracy is defined on a
+  subset — `print_qa_metrics.py` returns `nan` when a type has no rows (LME-A16).
+  Every number from this cut is a **paired within-prefix contrast**, reported with
+  its n, and it is never quoted as a LongMemEval score or placed beside a
+  published one.
+- **Two types are absent at 230** (knowledge-update, single-session-assistant) and
+  temporal-reasoning is absent or half. KU was the one type that *improved* under
+  `_m` dilution (+1.28), so its absence removes the one place a write path might
+  plausibly have shown an advantage in the C7 pattern. That asymmetry is stated
+  wherever the prefix result is stated.
+- **One organizer, one seed, one reader.** Nemori was chosen as the cheapest
+  organizer, not the most likely to win; nothing here generalises to A-Mem or Zep,
+  whose write budgets are larger and whose LoCoMo J is lower.
+- If the run does reach 500, the full-release numbers supersede this prefix
+  entirely and the prefix is kept only as the record of what was registered.
