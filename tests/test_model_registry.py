@@ -156,6 +156,10 @@ def _stamp_args(**overrides):
         "workers": 1,
         "config": "amem",
         "eval_only": False,
+        # Joined 2026-08-20 with the stamp field of the same name: an artifact has
+        # to say which store it read or wrote, because `eval_only: true` alone
+        # never said WHICH (docs/14 §Artifacts).
+        "data_dir": None,
     }
     base.update(overrides)
     return argparse.Namespace(**base)

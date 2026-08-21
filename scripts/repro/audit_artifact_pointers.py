@@ -64,8 +64,18 @@ class Pointer:
 
     @property
     def is_misnamed(self) -> bool:
-        """The pointer does not follow the harness's own naming construction."""
-        return self.named != self.expected
+        """The pointer does not follow the harness's own naming construction.
+
+        `<stem><suffix>.gz` counts as following it. The LME driver gzips the heavy
+        artifacts on the `_s`/`_m` datasets — a single `_s` organizer run's snapshot
+        is ~17 MB compressed and its trace ~119 MB — and it records the name it
+        actually wrote, which is the `.gz` one. Treating that as a break would have
+        the audit demand a pointer at a file nobody wrote, which is the exact
+        failure mode this file exists to prevent, only inverted. The rule is
+        therefore about the STEM (the pointer must name this summary's own
+        artifact), not about the compression the writer chose.
+        """
+        return self.named not in (self.expected, self.expected + ".gz")
 
     @property
     def was_written(self) -> bool:

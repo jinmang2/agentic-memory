@@ -1,0 +1,349 @@
+{
+ "arm": "zep_cross_encoder",
+ "source_store": "results/repro/stores/zep-ce-e3s",
+ "dest_store": "results/repro/stores/x2-zep_cross_encoder",
+ "config": "zep_cross_encoder",
+ "servable_types": [
+  "communities",
+  "entities",
+  "facts"
+ ],
+ "keep_items": 6263,
+ "delete_items": 6357,
+ "links_from_survivors": 0,
+ "links_from_survivors_to_deleted": 0,
+ "per_conv": {
+  "0": {
+   "match": {
+    "communities": {
+     "snapshot": 123,
+     "store": 123,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 219,
+     "store": 219,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 750,
+     "store": 750,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 465,
+    "by_type": {
+     "facts": 392,
+     "entities": 53,
+     "communities": 20
+    },
+    "graph_edges_invalidated": 392
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "1": {
+   "match": {
+    "communities": {
+     "snapshot": 67,
+     "store": 67,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 129,
+     "store": 129,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 538,
+     "store": 538,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 352,
+    "by_type": {
+     "facts": 313,
+     "entities": 31,
+     "communities": 8
+    },
+    "graph_edges_invalidated": 313
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "2": {
+   "match": {
+    "communities": {
+     "snapshot": 135,
+     "store": 135,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 281,
+     "store": 281,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 1097,
+     "store": 1097,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 873,
+    "by_type": {
+     "facts": 740,
+     "entities": 104,
+     "communities": 29
+    },
+    "graph_edges_invalidated": 740
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "3": {
+   "match": {
+    "communities": {
+     "snapshot": 129,
+     "store": 129,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 253,
+     "store": 253,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 838,
+     "store": 838,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 527,
+    "by_type": {
+     "facts": 443,
+     "entities": 62,
+     "communities": 22
+    },
+    "graph_edges_invalidated": 443
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "4": {
+   "match": {
+    "communities": {
+     "snapshot": 157,
+     "store": 157,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 354,
+     "store": 354,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 950,
+     "store": 950,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 726,
+    "by_type": {
+     "facts": 564,
+     "entities": 130,
+     "communities": 32
+    },
+    "graph_edges_invalidated": 564
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "5": {
+   "match": {
+    "communities": {
+     "snapshot": 70,
+     "store": 70,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 244,
+     "store": 244,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 1157,
+     "store": 1157,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 939,
+    "by_type": {
+     "facts": 835,
+     "entities": 89,
+     "communities": 15
+    },
+    "graph_edges_invalidated": 835
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "6": {
+   "match": {
+    "communities": {
+     "snapshot": 185,
+     "store": 185,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 347,
+     "store": 347,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 930,
+     "store": 930,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 725,
+    "by_type": {
+     "facts": 568,
+     "entities": 115,
+     "communities": 42
+    },
+    "graph_edges_invalidated": 568
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "7": {
+   "match": {
+    "communities": {
+     "snapshot": 151,
+     "store": 151,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 309,
+     "store": 309,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 924,
+     "store": 924,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 679,
+    "by_type": {
+     "facts": 527,
+     "entities": 112,
+     "communities": 40
+    },
+    "graph_edges_invalidated": 527
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "8": {
+   "match": {
+    "communities": {
+     "snapshot": 109,
+     "store": 109,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 225,
+     "store": 225,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 668,
+     "store": 668,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 434,
+    "by_type": {
+     "facts": 351,
+     "entities": 61,
+     "communities": 22
+    },
+    "graph_edges_invalidated": 351
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  },
+  "9": {
+   "match": {
+    "communities": {
+     "snapshot": 117,
+     "store": 117,
+     "missing": 0
+    },
+    "entities": {
+     "snapshot": 238,
+     "store": 238,
+     "missing": 0
+    },
+    "facts": {
+     "snapshot": 926,
+     "store": 926,
+     "missing": 0
+    }
+   },
+   "cut": {
+    "deleted": 637,
+    "by_type": {
+     "facts": 545,
+     "entities": 68,
+     "communities": 24
+    },
+    "graph_edges_invalidated": 545
+   },
+   "probe": {
+    "queries": 25,
+    "served_slots": 750,
+    "ghost_hits": {}
+   }
+  }
+ },
+ "verify_only": false,
+ "total_ghost_hits": 0
+}

@@ -1,0 +1,201 @@
+{
+ "generated_by": "scripts/repro/x2_oracle_analysis.py",
+ "arms": [
+  {
+   "arm": "amem",
+   "before_tag": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_e3sPH",
+   "after_tag": "gpt-4o-mini_amem_perhit_all_k10_ours_expand-on_run1_x2oracle",
+   "cut_store": "results/repro/stores/x2-amem",
+   "deletion_fraction": 0.2557,
+   "delete_items": 1504,
+   "keep_items": 4378,
+   "n_judged": 1540,
+   "j_before": 61.23,
+   "j_after": 60.84,
+   "j_mcnemar": {
+    "gained": 45,
+    "lost": 51,
+    "discordant": 96,
+    "p": 0.6100682661051768
+   },
+   "j_paired": {
+    "delta": -0.39,
+    "ci_low": -1.623,
+    "ci_high": 0.844,
+    "iters": 10000
+   },
+   "f1_before": 42.92,
+   "f1_after": 42.78,
+   "cost_after_usd": 1.090247,
+   "by_category": {
+    "multi-hop": {
+     "n": 282,
+     "before": 57.45,
+     "after": 58.51
+    },
+    "open-domain": {
+     "n": 96,
+     "before": 29.17,
+     "after": 21.88
+    },
+    "single-hop": {
+     "n": 841,
+     "before": 65.64,
+     "after": 65.52
+    },
+    "temporal": {
+     "n": 321,
+     "before": 62.62,
+     "after": 62.31
+    }
+   }
+  },
+  {
+   "arm": "mem0",
+   "before_tag": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_e3sM",
+   "after_tag": "gpt-4o-mini_mem0_v0194_all_k10_ours_expand-off_run1_x2oracle",
+   "cut_store": "results/repro/stores/x2-mem0",
+   "deletion_fraction": 0.4955,
+   "delete_items": 2689,
+   "keep_items": 2738,
+   "n_judged": 1540,
+   "j_before": 31.82,
+   "j_after": 31.69,
+   "j_mcnemar": {
+    "gained": 17,
+    "lost": 19,
+    "discordant": 36,
+    "p": 0.8679394004284404
+   },
+   "j_paired": {
+    "delta": -0.13,
+    "ci_low": -0.909,
+    "ci_high": 0.649,
+    "iters": 10000
+   },
+   "f1_before": 24.71,
+   "f1_after": 23.67,
+   "cost_after_usd": 0.304803,
+   "by_category": {
+    "multi-hop": {
+     "n": 282,
+     "before": 32.27,
+     "after": 31.21
+    },
+    "open-domain": {
+     "n": 96,
+     "before": 20.83,
+     "after": 22.92
+    },
+    "single-hop": {
+     "n": 841,
+     "before": 34.96,
+     "after": 35.32
+    },
+    "temporal": {
+     "n": 321,
+     "before": 26.48,
+     "after": 25.23
+    }
+   }
+  },
+  {
+   "arm": "nemori_a",
+   "before_tag": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_e3sA",
+   "after_tag": "gpt-4o-mini_nemori_upstream_all_k10_ours_expand-off_run1_x2oracle",
+   "cut_store": "results/repro/stores/x2-nemori_a",
+   "deletion_fraction": 0.1198,
+   "delete_items": 324,
+   "keep_items": 2380,
+   "n_judged": 1540,
+   "j_before": 67.6,
+   "j_after": 67.73,
+   "j_mcnemar": {
+    "gained": 17,
+    "lost": 15,
+    "discordant": 32,
+    "p": 0.860050065908581
+   },
+   "j_paired": {
+    "delta": 0.13,
+    "ci_low": -0.584,
+    "ci_high": 0.844,
+    "iters": 10000
+   },
+   "f1_before": 46.79,
+   "f1_after": 46.6,
+   "cost_after_usd": 1.371657,
+   "by_category": {
+    "multi-hop": {
+     "n": 282,
+     "before": 69.86,
+     "after": 69.5
+    },
+    "open-domain": {
+     "n": 96,
+     "before": 29.17,
+     "after": 31.25
+    },
+    "single-hop": {
+     "n": 841,
+     "before": 75.51,
+     "after": 75.51
+    },
+    "temporal": {
+     "n": 321,
+     "before": 56.39,
+     "after": 56.7
+    }
+   }
+  },
+  {
+   "arm": "nemori_b",
+   "before_tag": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_e3sB",
+   "after_tag": "gpt-4o-mini_nemori_merge085_all_k10_ours_expand-off_run1_x2oracle",
+   "cut_store": "results/repro/stores/x2-nemori_b",
+   "deletion_fraction": 0.0443,
+   "delete_items": 112,
+   "keep_items": 2418,
+   "n_judged": 1540,
+   "j_before": 65.78,
+   "j_after": 65.97,
+   "j_mcnemar": {
+    "gained": 18,
+    "lost": 15,
+    "discordant": 33,
+    "p": 0.7283324808813632
+   },
+   "j_paired": {
+    "delta": 0.195,
+    "ci_low": -0.519,
+    "ci_high": 0.909,
+    "iters": 10000
+   },
+   "f1_before": 45.79,
+   "f1_after": 45.64,
+   "cost_after_usd": 1.122454,
+   "by_category": {
+    "multi-hop": {
+     "n": 282,
+     "before": 65.25,
+     "after": 65.96
+    },
+    "open-domain": {
+     "n": 96,
+     "before": 27.08,
+     "after": 28.12
+    },
+    "single-hop": {
+     "n": 841,
+     "before": 73.6,
+     "after": 73.6
+    },
+    "temporal": {
+     "n": 321,
+     "before": 57.32,
+     "after": 57.32
+    }
+   }
+  }
+ ]
+}
