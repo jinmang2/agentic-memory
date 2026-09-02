@@ -127,14 +127,32 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 ### 2.2 전송/배포
 
 - **stdio** (Claude Desktop/Code, Cursor) + **streamable HTTP** (`:8765/mcp`) 겸용 — FastMCP로 구현.
-- namespace = Graphiti `group_id` 패턴 (기본 `"main"`), 클라이언트별 격리.
+- namespace = Graphiti `group_id` 패턴 (기본 `"main"`). **2026-09-02부터 모든 도구가 선택 인자
+  `namespace`를 받는다** — 생략하면 서버가 기동한 기본 namespace. 서버 하나가 namespace를 지연
+  개방해 프로세스 수명 동안 유지하며, 두 번째부터는 첫 번째의 임베더를 공유한다(핸드셰이크 ~10초 중
+  ~4초가 모델 생성이므로 namespace 추가 비용은 스토어 3개 여는 ~1초). 그 전에는 namespace가 기동
+  플래그뿐이라 데몬 하나 = 메모리 한 통이었고, 프로젝트를 나누려면 데몬을 여러 개 띄워야 했다
+  (issue #2). namespace는 데이터 디렉터리 아래 경로 한 조각이 되므로 들어오는 자리에서 검증한다
+  (`agmem.env.validate_namespace`: `/`·`..`·선행 `.`·공백 거부).
 - `agmem.toml`이 읽는 테이블에 `[llm_options]`(`guided_json`)가 포함된다 — 코드는 읽고 있었지만
   문서 목록·`load_config` docstring·예시 파일 어디에도 없어 발견 불가능한 스위치였다. 두 실험
   스크립트가 Python에서 `use_guided_json=False`로 도는데 TOML 경로엔 맞출 방법이 없었다.
-- 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` (Graphiti와 동일 규칙). 이 규칙이 실제로
-  적용되는 곳은 `mcp/server.py::main`이다 — `--config`를 주면 `--profile`이 통째로 무시돼
+- 설정 우선순위: CLI 인자 > 환경변수 > `agmem.toml` > 기본값 (Graphiti와 동일 규칙). 이 규칙이
+  실제로 적용되는 곳은 `mcp/server.py::main`이다 — `--config`를 주면 `--profile`이 통째로 무시돼
   TOML의 profile로 뜨면서 로그엔 플래그 값을 찍고 있었다(규칙의 정반대). 이제 `--profile`이
   주어지면 로드한 config의 profile을 덮어쓰고 그 사실을 로그에 남긴다.
+- **환경변수 층은 2026-09-02까지 서버에 존재하지 않았다.** 위 규칙을 문서가 주장하는 동안
+  `server.py`는 `os.environ`을 한 번도 읽지 않았고, `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`는 훅만
+  읽었다. 지금은 세 변수를 서버와 훅이 같은 코드(`agmem.env`)로 읽는다:
+
+  | 변수 | 서버 플래그 | 뜻 | 기본값 |
+  |---|---|---|---|
+  | `AGMEM_NAMESPACE` | `--namespace` | 기본 namespace | `main` |
+  | `AGMEM_DATA_DIR` | `--data-dir` | 스토어 루트 | `[storage].data_dir`, 없으면 `~/.agmem/data` |
+  | `AGMEM_CONFIG` | `--config` | `agmem.toml` 경로 | 없음 (프로파일 기본값) |
+
+  **한 번 export하면 두 층이 같은 스토어를 연다**는 것이 이 표의 목적이다. 훅은 하네스가 인자를
+  주지 않으므로 환경변수가 유일한 경로이고, 서버는 플래그로 덮어쓸 수 있다.
 - `agmem.toml`이 읽는 테이블: `[profile]` `[storage]` `[embed]` `[override]` `[write]`
   `[retrieval]` `[llm.<role>]`. `[retrieval]`은 read-path 스텝의 노브
   (`lexical_types` / `link_expansion_cap` / `attach_sources_top_r` / `graph_expansion_cap`)를
@@ -150,14 +168,22 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
   "mcpServers": {
     "agmem": {
       "command": "/absolute/path/to/agentic_memory/.venv/bin/agmem-mcp",
-      "args": ["--profile", "lite", "--namespace", "jinmang2"]
+      "args": ["--profile", "lite"],
+      "env": { "AGMEM_NAMESPACE": "main", "AGMEM_DATA_DIR": "/home/you/.agmem/data" }
     }
   }
 }
 ```
 
-**이 블록은 2026-08-08에 실제로 stdio 위에서 구동해 확인한 형태다.** 이전 판은 두 군데가 틀려
-있었고 둘 다 조용히 틀리는 종류였다.
+**namespace는 플래그가 아니라 환경변수로 준다.** §2.4의 훅이 같은 변수를 읽으므로 두 층에 같은
+값을 두 번 쓰는 대신 한 곳(셸 프로파일, 또는 위처럼 양쪽 등록 블록)에 한 번 쓴다. 2026-09-02
+이전의 이 예시는 `--namespace jinmang2`였고 §2.4는 훅 기본값 `claude-code`를 안내했다 — **문서를
+그대로 따르면 두 층이 서로 다른 스토어를 열었다**(issue #2). 어느 쪽도 에러를 내지 않고, recall은
+그냥 빈 결과를 냈다.
+
+**이 블록은 2026-08-08에 실제로 stdio 위에서 구동해 확인한 형태다**(2026-09-02에 위와 같이 갱신,
+`scripts/smoke_product_stack.py`가 양쪽 기본값이 한 스토어에 닿는지 확인한다). 이전 판은 두 군데가
+틀려 있었고 둘 다 조용히 틀리는 종류였다.
 
 - `uvx agmem-mcp`은 **이 리포의 코드를 실행하지 않는다** — uvx는 PyPI에서 `agmem`을 받아 온다.
   로컬 설치를 가리키려면 venv의 콘솔 스크립트를 **절대경로**로 줘야 한다. MCP 클라이언트는 리포를
@@ -192,14 +218,30 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
 }
 ```
 
-- 네임스페이스·저장 위치는 `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`로 준다(기본 `claude-code`,
-  `~/.agmem/data`). 이 둘은 §2.3의 그 변수와 달리 **실제로 읽힌다**(`hooks/__init__.py`).
+- 네임스페이스·저장 위치·설정 파일은 `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`/`AGMEM_CONFIG`로 준다
+  (기본 `main`, `~/.agmem/data`, 없음). **서버와 같은 변수, 같은 기본값**(§2.2 표, `agmem.env`).
+  훅 기본 namespace는 2026-09-02까지 `claude-code`였다 — 서버의 `main`과 달라서, 둘 다 기본값으로
+  켜면 서로 못 보는 스토어 두 개가 생겼다(issue #2). 훅에는 플래그가 없다: 하네스가 인자를 주지
+  않고, 같은 것을 말하는 두 번째 방법은 어긋나는 두 번째 방법이다.
+- `AGMEM_CONFIG`는 서버의 `--config`와 같은 파일을 훅에도 적용한다(임베더·스토어 오버라이드).
+  단 **organizer는 무시하고 항상 비운다** — 훅은 키 입력마다 도는 것이라 LLM을 부르는 쓰기는
+  모델이 부르기로 결정한 MCP 쪽에서만 일어난다. 서버 기본 `--organizers nemori,reasoning_bank`와
+  훅의 빈 목록은 그래서 의도된 비대칭이고, LLM 엔드포인트가 없으면 어느 쪽도 과금되지 않는다.
+  recall은 SQLite 문서 스토어를 직접 열므로 doc_store를 다른 것으로 오버라이드한 설정은 거부한다
+  (옆에 빈 SQLite를 만들어 "기억 없음"으로 보이는 대신 로그에 남기고 exit 0).
 - **예산 실측(2026-08-08)**: recall **0.18초**(블로킹이라 `timeout` 안에 반드시 들어와야 함,
   doc store만 열기 때문에 이 값), capture **10.8초**(임베더 필요 — `async: true`가 필수인 이유).
 - 진단은 `AGMEM_HOOK_LOG=/path/to/log`. 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
   고장이 침묵으로 나타난다 — 세션을 망가뜨리지 않기 위한 설계이고, 그 대가다.
-- **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다(같은 namespace·data-dir
-  기준). 두 층이 한 스토어를 공유한다는 주장은 각 층의 테스트로는 확인되지 않아 별도로 구동해 확인했다.
+- **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다. 두 층이 한 스토어를
+  공유한다는 주장은 각 층의 테스트로는 확인되지 않아 `scripts/smoke_product_stack.py`로 구동해
+  확인한다. 2026-09-02부터 스모크는 **어느 쪽에도 namespace를 알려주지 않고** 돌려서 기본값끼리
+  같은 디렉터리에 닿는지를 판정에 포함한다 — 이전 판은 양쪽에 같은 값을 명시해서 issue #2의
+  불일치를 구조적으로 볼 수 없었다.
+- **테스트 밀폐화(2026-09-02)**: `tests/test_hooks.py`는 `AGMEM_CONFIG`로 `FakeEmbedder`를 강제한다.
+  그 전엔 훅이 lite 프로파일을 못박아 주입할 이음매가 없었고, 픽스처가 HOME을 임시 경로로 바꿔
+  HF 캐시까지 안 보였으므로 **실행마다 471MB 모델을 내려받고** 있었다(이날 120초 타임아웃으로
+  2건 ERROR). 실제 모델 경로는 스모크 스크립트가 맡는다.
 
 ## 3. 벤치 실행
 

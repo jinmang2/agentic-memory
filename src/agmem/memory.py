@@ -11,9 +11,10 @@ import inspect
 import logging
 import queue
 import threading
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Callable, Self, Sequence
+from typing import Any, Self
 
 from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
@@ -28,6 +29,7 @@ from agmem.core.types import (
 )
 from agmem.embed import EMBEDDER_CANDIDATES
 from agmem.embed.base import Embedder
+from agmem.env import DEFAULT_NAMESPACE
 from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
 from agmem.organizers import ORGANIZERS, MemoryEvent, Organizer, OrganizerContext
 from agmem.retrieval import RetrievalPipeline
@@ -59,7 +61,7 @@ class AgenticMemory:
 
     def __init__(
         self,
-        namespace: str = "main",
+        namespace: str = DEFAULT_NAMESPACE,
         organizers: Sequence[str | Organizer] = ("passthrough",),
         profile: str | None = None,
         config: AgmemConfig | str | Path | None = None,

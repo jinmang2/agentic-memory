@@ -22,8 +22,24 @@ silent because the alternative is a broken editor.
 
 COST: capture is free by default. It writes an episode and returns; organizers
 that need an LLM see no configured endpoint and skip explicitly (verified
-against the MCP server, whose no-LLM path this shares). Distillation is opt-in
-via ``--organizers``, so nobody wires a hook and discovers a bill.
+against the MCP server, whose no-LLM path this shares). The hooks never run
+organizers at all — a hook runs on somebody's keystroke, so distillation is
+the MCP server's business, where a model decided to write.
+
+WHICH STORE: namespace, data directory and config file come from the same three
+environment variables the MCP server reads (`AGMEM_NAMESPACE`, `AGMEM_DATA_DIR`,
+`AGMEM_CONFIG`), with the same defaults, resolved by `agmem.env`. Setting them
+once therefore configures both layers onto one store. The hooks used to default
+to a namespace of their own (`claude-code`, against the server's `main`), so
+wiring both as documented produced two stores that could not see each other
+(github issue #2). There is no per-hook namespace flag on purpose: the harness
+gives hooks no arguments, and a second way to say it is a second way to
+disagree.
+
+`AGMEM_CONFIG` exists so a deployment can pick the embedder and stores for the
+hooks the way it can for the server (`--config`), and so the hook tests can run
+hermetically on `FakeEmbedder` — before 2026-09-02 they could not, and each run
+downloaded the 471 MB default model into the test's throwaway HOME.
 """
 
 from __future__ import annotations
@@ -34,8 +50,23 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DEFAULT_NAMESPACE = "claude-code"
-DEFAULT_DATA_DIR = Path.home() / ".agmem/data"
+from agmem.env import (
+    DEFAULT_DATA_DIR,
+    DEFAULT_NAMESPACE,
+    resolve_config_path,
+    resolve_data_dir,
+    resolve_namespace,
+)
+
+__all__ = [
+    "DEFAULT_DATA_DIR",
+    "DEFAULT_NAMESPACE",
+    "emit_context",
+    "fail_open",
+    "open_doc_store",
+    "open_memory",
+    "read_event",
+]
 
 
 def read_event() -> dict[str, Any]:
@@ -91,10 +122,27 @@ def fail_open(exc: BaseException) -> None:
     raise SystemExit(0)
 
 
-def _resolve(namespace: str | None, data_dir: str | None) -> tuple[str, Path]:
-    ns = namespace or os.environ.get("AGMEM_NAMESPACE") or DEFAULT_NAMESPACE
-    root = Path(data_dir or os.environ.get("AGMEM_DATA_DIR") or DEFAULT_DATA_DIR).expanduser()
-    return ns, root
+def _load_config(config_path: str | Path | None):
+    """The `AgmemConfig` named by the argument or `AGMEM_CONFIG`, or None.
+
+    Imported lazily: `agmem.config` pulls in the LLM client, which the recall
+    hook must not pay for when no config is named (the common case).
+    """
+    path = resolve_config_path(config_path)
+    if path is None:
+        return None
+    from agmem.config import load_config
+
+    return load_config(path)
+
+
+def _resolve(
+    namespace: str | None, data_dir: str | None, config_path: str | Path | None = None
+) -> tuple[str, Path, Any]:
+    config = _load_config(config_path)
+    ns = resolve_namespace(namespace)
+    root = resolve_data_dir(data_dir, from_config=config.data_dir if config else None)
+    return ns, root, config
 
 
 def open_doc_store(namespace: str | None = None, data_dir: str | None = None):
@@ -113,30 +161,47 @@ def open_doc_store(namespace: str | None = None, data_dir: str | None = None):
     (70x) before that. The ratio moved and the conclusion did not, which is the
     point — 0.18 s against 9.1 s is not a margin any tuning closes.
 
-    Assumes the lite profile's `SqliteDocStore` layout (`<data_dir>/<namespace>/
-    memory.db`), which is what `open_memory` pins, so the two agree by
-    construction. A deployment that overrides the doc store slot needs the full
-    handle instead.
+    Assumes the `SqliteDocStore` layout (`<data_dir>/<namespace>/memory.db`),
+    which every profile except `full` uses and which `open_memory` produces
+    unless a config file overrides the doc store slot. That case is refused
+    rather than guessed: opening a fresh SQLite file next to somebody's
+    Postgres-backed store would present as an empty memory, not as an error.
     """
     from agmem.stores.sqlite_doc import SqliteDocStore
 
-    ns, root = _resolve(namespace, data_dir)
+    ns, root, config = _resolve(namespace, data_dir)
+    if config is not None:
+        doc_cls = config.overrides.get("doc_store") or config.slot_default("doc_store")
+        if doc_cls != "SqliteDocStore":
+            raise RuntimeError(
+                f"recall reads the doc store directly and only knows SqliteDocStore; "
+                f"the config resolves doc_store={doc_cls!r}"
+            )
     return ns, SqliteDocStore(root / ns / "memory.db")
 
 
 def open_memory(namespace: str | None = None, data_dir: str | None = None):
     """A memory handle for hook use: persistent, no LLM, no organizers.
 
-    Deliberately organizer-free. A hook runs on somebody's keystroke, so the
-    default has to be the cheap path — an episode written to the store and
-    nothing else. Anything that wants distillation configures it explicitly.
+    Deliberately organizer-free, whatever the config says. A hook runs on
+    somebody's keystroke, so the path has to be the cheap one — an episode
+    written to the store and nothing else. The MCP server is where organizers
+    run, on writes a model chose to make.
+
+    Without `AGMEM_CONFIG` this is the lite profile, which is also the server's
+    default, so the two layers resolve the same stores. With it, the config's
+    profile and overrides apply here exactly as `--config` applies them to the
+    server; `sync_write` is forced on because a hook process exits as soon as
+    `main` returns and a background worker would be killed mid-write.
     """
+    from dataclasses import replace
+
     from agmem.config import AgmemConfig
     from agmem.memory import AgenticMemory
 
-    ns, root = _resolve(namespace, data_dir)
-    return AgenticMemory(
-        namespace=ns,
-        organizers=[],
-        config=AgmemConfig(profile="lite", data_dir=root, sync_write=True),
-    )
+    ns, root, config = _resolve(namespace, data_dir)
+    if config is None:
+        config = AgmemConfig(profile="lite", data_dir=root, sync_write=True)
+    else:
+        config = replace(config, data_dir=root, sync_write=True)
+    return AgenticMemory(namespace=ns, organizers=[], config=config)

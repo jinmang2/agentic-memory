@@ -17,8 +17,14 @@ must stay runnable on a box with none of that.
 It also prints the timings the wiring documentation quotes (`docs/05` §2.3-2.4),
 so those numbers can be re-derived on a new machine instead of trusted.
 
+It tells neither side which namespace to use unless `--namespace` is given.
+The hooks and the server each resolve it from the environment and their
+defaults, and the verdict includes whether they landed on the same directory —
+the failure issue #2 reported, which the previous version of this script could
+not see because it passed one explicit namespace to both.
+
 Exit code is the verdict: 0 if a prompt captured by the hook came back from the
-server's search, 1 otherwise.
+server's search out of the same store, 1 otherwise.
 """
 
 from __future__ import annotations
@@ -60,26 +66,33 @@ def server_command() -> str:
     return str(Path(sys.executable).parent / "agmem-mcp")
 
 
-async def search_over_mcp(namespace: str, data_dir: Path, env: dict) -> tuple[float, str, set]:
+def _text(result) -> str:
+    return " ".join(getattr(c, "text", "") for c in (getattr(result, "content", None) or []))
+
+
+async def search_over_mcp(env: dict) -> tuple[float, str, set, str]:
+    """Start the server the way a registered MCP client would and search.
+
+    Deliberately passes NO --namespace and NO --data-dir: the server has to
+    find the store through the same environment the hooks used, or through
+    its defaults. That is the seam issue #2 found open — each layer used to
+    resolve the namespace on its own, with different defaults, and the old
+    smoke handed both sides the same explicit value, so it could not fail
+    the way a real registration did.
+    """
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
-    params = StdioServerParameters(
-        command=server_command(),
-        args=["--namespace", namespace, "--data-dir", str(data_dir), "--organizers", ""],
-        env=env,
-    )
+    params = StdioServerParameters(command=server_command(), args=["--organizers", ""], env=env)
     started = time.perf_counter()
     async with stdio_client(params) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             handshake = time.perf_counter() - started
             tools = {t.name for t in (await session.list_tools()).tools}
-            result = await session.call_tool("search_memory", {"query": QUERY})
-            rendered = " ".join(
-                getattr(c, "text", "") for c in (getattr(result, "content", None) or [])
-            )
-    return handshake, rendered, tools
+            rendered = _text(await session.call_tool("search_memory", {"query": QUERY}))
+            stats = json.loads(_text(await session.call_tool("memory_stats", {})))
+    return handshake, rendered, tools, stats["stats"]["namespace"]
 
 
 def main() -> int:
@@ -89,12 +102,23 @@ def main() -> int:
         default=None,
         help="where to build the throwaway store (default: a temp dir)",
     )
-    ap.add_argument("--namespace", default="smoke-product-stack")
+    ap.add_argument(
+        "--namespace",
+        default=None,
+        help="export AGMEM_NAMESPACE for both layers (default: neither side is told, "
+        "so the check is that their built-in defaults agree)",
+    )
     args = ap.parse_args()
 
     data_dir = Path(args.data_dir) if args.data_dir else Path(tempfile.mkdtemp(prefix="agmem-"))
-    env = dict(os.environ, AGMEM_DATA_DIR=str(data_dir), AGMEM_NAMESPACE=args.namespace)
+    # AGMEM_CONFIG passes through from the caller's environment on purpose: a
+    # machine that configured its embedder there should be smoked on it.
+    env = {k: v for k, v in os.environ.items() if k != "AGMEM_NAMESPACE"}
+    env["AGMEM_DATA_DIR"] = str(data_dir)
+    if args.namespace:
+        env["AGMEM_NAMESPACE"] = args.namespace
     print(f"store: {data_dir}")
+    print(f"namespace: {args.namespace or '(defaults on both sides)'}")
 
     capture_s, capture = run_hook(
         "agmem.hooks.capture",
@@ -113,19 +137,26 @@ def main() -> int:
     recalled = NEEDLE in recall.stdout
     print(f"recall hook       {recall_s:6.2f}s  exit={recall.returncode}  found={recalled}")
 
-    handshake_s, rendered, tools = asyncio.run(search_over_mcp(args.namespace, data_dir, env))
+    handshake_s, rendered, tools, server_ns = asyncio.run(search_over_mcp(env))
     searched = NEEDLE in rendered
     print(f"mcp handshake     {handshake_s:6.2f}s  tools={len(tools)}")
-    print(f"mcp search_memory         found={searched}")
+    print(f"mcp search_memory         found={searched}  namespace={server_ns}")
+
+    # The hooks wrote under `<data_dir>/<namespace>/`; the server reports the
+    # namespace it resolved. One directory, and the same name, is the proof
+    # that both layers resolved the store identically without being told.
+    written = sorted(p.name for p in data_dir.iterdir() if p.is_dir())
+    same_store = written == [server_ns]
+    print(f"store dirs        {written}  server={server_ns}  same={same_store}")
 
     # The recall hook reads the doc store and the server searches vectors, so
     # the two answer different questions about the same write: one proves the
     # episode was persisted, the other that it was embedded. A capture that
     # skipped the embedder would still satisfy the first.
-    ok = recalled and searched
+    ok = recalled and searched and same_store
     print("\nVERDICT:", "ok" if ok else "FAILED")
     if not ok:
-        print(f"  persisted={recalled} embedded_and_searchable={searched}")
+        print(f"  persisted={recalled} embedded_and_searchable={searched} same_store={same_store}")
         print(f"  search returned: {rendered[:400]}")
     return 0 if ok else 1
 
