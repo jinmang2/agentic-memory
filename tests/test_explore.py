@@ -1,0 +1,568 @@
+"""The explorer read path: a file view of the raw memory, and an agent that
+greps it.
+
+docs/research/agent-memory-axes-v1.md §6 says the honest v1 baseline is not "no
+memory" but "raw session logs plus a grep-capable agent", and §7.3 lists what
+the read path is missing for that comparison to exist: no way for a model to
+reach the transcript with a shell tool, and no per-query wall clock. These
+tests cover both halves — the materialization (deterministic, incremental) and
+the loop (path-safe, cited, refusing rather than degrading into a plain vector
+search).
+
+Nothing here spends: `FakeEmbedder` for the vectors, `StubLLM` for the loop,
+and the searches run the real `grep` on a tmp directory.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+from datetime import UTC, datetime
+from pathlib import Path
+
+import pytest
+from helpers import StubLLM
+
+from agmem import AgenticMemory
+from agmem.config import AgmemConfig
+from agmem.core.ops import MemoryOp, OpType
+from agmem.embed.fake import FakeEmbedder
+from agmem.explore import Explorer, export_workspace
+from agmem.llm.client import RoleConfig
+from agmem.sessions import SessionTrajectory, Step
+
+TS = datetime(2026, 9, 2, 1, 0, tzinfo=UTC)
+
+
+def _session(session_id: str = "sess-42", host: str = "claude-code") -> SessionTrajectory:
+    traj = SessionTrajectory(
+        id=session_id,
+        host=host,
+        source_path="x",
+        cwd="/home/u/proj",
+        started_at=TS,
+    )
+    traj.steps = [
+        Step(kind="user", text="Fix the flaky test in tests/test_daemon.py", timestamp=TS),
+        Step(kind="assistant", text="Looking.", timestamp=TS),
+        Step(
+            kind="tool_call", text='{"command": "uv run pytest -q"}', tool_name="Bash", timestamp=TS
+        ),
+        Step(
+            kind="tool_result",
+            text="1 failed: test_idle_timeout TimeoutExpired",
+            tool_name="Bash",
+            timestamp=TS,
+        ),
+        Step(kind="user", text="use --idle-timeout 2 in that test, not 30", timestamp=TS),
+    ]
+    return traj
+
+
+def _mem(**config_kwargs) -> AgenticMemory:
+    return AgenticMemory(
+        namespace="t",
+        organizers=["experience"],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(sync_write=True, **config_kwargs),
+    )
+
+
+def _add_runbook(mem: AgenticMemory, item_id: str, content: str, session_id: str) -> None:
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.ADD,
+                target_type="runbooks",
+                target_id=item_id,
+                actor="experience",
+                payload={
+                    "id": item_id,
+                    "content": content,
+                    "embedding_text": content.splitlines()[0],
+                    "session_id": session_id,
+                    "source_host": "claude-code",
+                    "step_range": [0, 4],
+                    "source_episode_ids": [],
+                },
+            )
+        ],
+        actor="experience",
+    )
+
+
+def _populated(mem: AgenticMemory) -> AgenticMemory:
+    mem.add_session(_session(), distill=False)
+    mem.add_session(_session("sess-99", host="codex"), distill=False)
+    mem.add_message("remember the release cadence", role="user", timestamp=TS)
+    _add_runbook(
+        mem,
+        "rb-1",
+        "# Task: fix the flaky daemon test\noutcome: success\n\n## Procedure\n- pass"
+        " --idle-timeout 2\n\nsource: claude-code session sess-42 steps 0-4",
+        "sess-42",
+    )
+    return mem
+
+
+# --- workspace export -------------------------------------------------------
+
+
+def test_export_writes_sessions_messages_runbooks_and_an_index(tmp_path):
+    mem = _populated(_mem())
+    stats = export_workspace(mem, tmp_path / "ws")
+    root = tmp_path / "ws"
+
+    assert (root / "sessions" / "claude-code" / "sess-42.md").exists()
+    assert (root / "sessions" / "codex" / "sess-99.md").exists()
+    assert (root / "runbooks" / "rb-1.md").read_text().startswith("# Task: fix the flaky")
+    assert (root / "messages" / "2026-09.md").exists()
+    assert stats.sessions == 2 and stats.runbooks == 1 and stats.messages == 1
+    mem.close()
+
+
+def test_a_session_file_reads_like_the_rendered_transcript(tmp_path):
+    mem = _populated(_mem())
+    export_workspace(mem, tmp_path / "ws")
+    text = (tmp_path / "ws" / "sessions" / "claude-code" / "sess-42.md").read_text()
+
+    assert "session: sess-42" in text
+    assert "host: claude-code" in text
+    assert "cwd: /home/u/proj" in text
+    # The `[i] KIND(tool)` label of SessionTrajectory.render, so the distiller's
+    # step citations and the explorer's line numbers name the same steps.
+    assert "[0] USER" in text
+    assert "[2] TOOL_CALL(Bash)" in text
+    assert "[4] USER\nuse --idle-timeout 2 in that test, not 30" in text
+    mem.close()
+
+
+def test_a_message_with_no_session_lands_in_its_month_file(tmp_path):
+    mem = _populated(_mem())
+    export_workspace(mem, tmp_path / "ws")
+    text = (tmp_path / "ws" / "messages" / "2026-09.md").read_text()
+    assert "- (2026-09-02) [user] remember the release cadence" in text
+    mem.close()
+
+
+def test_the_index_names_every_session_and_runbook(tmp_path):
+    mem = _populated(_mem())
+    export_workspace(mem, tmp_path / "ws")
+    index = (tmp_path / "ws" / "INDEX.md").read_text()
+
+    assert "claude-code" in index and "codex" in index
+    assert "sess-42" in index and "sess-99" in index
+    assert "steps=5" in index
+    assert "Fix the flaky test in tests/test_daemon.py" in index
+    assert "rb-1" in index and "# Task: fix the flaky daemon test" in index
+    mem.close()
+
+
+def test_a_second_export_writes_nothing_and_is_byte_identical(tmp_path):
+    mem = _populated(_mem())
+    root = tmp_path / "ws"
+    first = export_workspace(mem, root)
+    before = {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+    second = export_workspace(mem, root)
+    after = {p: p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()}
+
+    assert first.written > 0
+    assert second.written == 0
+    assert second.unchanged == first.written
+    assert before == after
+    mem.close()
+
+
+def test_a_retired_runbook_loses_its_file(tmp_path):
+    mem = _populated(_mem())
+    root = tmp_path / "ws"
+    export_workspace(mem, root)
+    assert (root / "runbooks" / "rb-1.md").exists()
+
+    mem._apply_ops(
+        [
+            MemoryOp(
+                op=OpType.DELETE,
+                target_type="runbooks",
+                target_id="rb-1",
+                actor="ingest",
+                payload={"reason": "re-distillation"},
+            )
+        ],
+        actor="ingest",
+    )
+    stats = export_workspace(mem, root)
+
+    assert not (root / "runbooks" / "rb-1.md").exists()
+    assert stats.removed == 1
+    mem.close()
+
+
+def test_export_leaves_files_it_did_not_write_alone(tmp_path):
+    mem = _populated(_mem())
+    root = tmp_path / "ws"
+    export_workspace(mem, root)
+    (root / "NOTES.md").write_text("mine")
+
+    export_workspace(mem, root)
+
+    assert (root / "NOTES.md").read_text() == "mine"
+    mem.close()
+
+
+# --- the explorer loop ------------------------------------------------------
+
+
+def _workspace(tmp_path) -> Path:
+    root = tmp_path / "ws"
+    (root / "sessions" / "claude-code").mkdir(parents=True)
+    (root / "sessions" / "claude-code" / "sess-42.md").write_text(
+        "session: sess-42\nhost: claude-code\n\n"
+        "[0] USER\nFix the flaky test in tests/test_daemon.py\n\n"
+        "[1] TOOL_RESULT(Bash)\n1 failed: test_idle_timeout TimeoutExpired\n\n"
+        "[2] USER\nuse --idle-timeout 2 in that test, not 30\n"
+    )
+    (root / "runbooks").mkdir()
+    (root / "runbooks" / "rb-1.md").write_text("# Task: fix the flaky daemon test\n")
+    return root
+
+
+def _final(context: str, citations: list[dict]) -> dict:
+    return {
+        "action": "final",
+        "reason": "found it",
+        "context": context,
+        "citations": citations,
+    }
+
+
+def test_the_loop_searches_reads_and_returns_a_cited_context(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "find the flag", "pattern": "idle-timeout"},
+                {
+                    "action": "read",
+                    "reason": "read around the hit",
+                    "path": "sessions/claude-code/sess-42.md",
+                    "start": 1,
+                    "end": 12,
+                },
+                _final(
+                    "The user asked for --idle-timeout 2 in the daemon test.",
+                    [{"file": "sessions/claude-code/sess-42.md", "lines": [9, 10]}],
+                ),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep").research("what idle timeout?", llm)
+
+    assert result.degraded is None
+    assert "idle-timeout 2" in result.context
+    assert result.citations == [{"file": "sessions/claude-code/sess-42.md", "lines": [9, 10]}]
+    assert [s["action"] for s in result.steps] == ["search", "read", "final"]
+    assert result.llm_calls == 3
+    assert result.search_tool == "grep"
+    assert result.latency_s >= 0.0
+    assert all(s["seconds"] >= 0.0 for s in result.steps)
+    # The search really ran: the observation carried the matching line.
+    assert result.steps[0]["observation_chars"] > 0
+
+
+def test_the_search_observation_is_the_tools_own_output(tmp_path):
+    root = _workspace(tmp_path)
+    seen: list[str] = []
+
+    class Recording(StubLLM):
+        def call(self, role, prompt, schema, required_keys=(), **kwargs):
+            seen.append(prompt)
+            return super().call(role, prompt, schema, required_keys, **kwargs)
+
+    llm = Recording(
+        {
+            "explore": [
+                {"action": "search", "reason": "find it", "pattern": "TimeoutExpired"},
+                _final("ok", []),
+            ]
+        }
+    )
+    Explorer(root, search_tool="grep").research("why did it fail?", llm)
+
+    assert "sessions/claude-code/sess-42.md" in seen[-1]
+    assert "TimeoutExpired" in seen[-1]
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
+def test_ripgrep_is_used_when_it_is_available(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "find it", "pattern": "TimeoutExpired"},
+                _final("ok", []),
+            ]
+        }
+    )
+    result = Explorer(root).research("why did it fail?", llm)
+    assert result.search_tool == "rg"
+    assert result.steps[0]["observation_chars"] > 0
+
+
+def test_listing_a_directory_is_bounded_and_relative(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "list", "reason": "see the layout", "path": "sessions"},
+                _final("ok", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep").research("what is here?", llm)
+    assert result.steps[0]["action"] == "list"
+    assert result.steps[0]["observation_chars"] > 0
+
+
+@pytest.mark.parametrize("path", ["../../etc/passwd", "/etc/passwd", "sessions/../../.."])
+def test_a_path_outside_the_root_is_an_observation_not_an_exception(tmp_path, path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "read", "reason": "peek", "path": path, "start": 1, "end": 5},
+                _final("nothing", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep").research("read the host", llm)
+
+    assert result.degraded is None
+    assert result.steps[0]["action"] == "read"
+    assert "outside" in result.steps[0]["observation"].lower()
+
+
+def test_a_citation_that_does_not_resolve_is_dropped(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                _final(
+                    "the answer",
+                    [
+                        {"file": "sessions/claude-code/sess-42.md", "lines": [1, 2]},
+                        {"file": "sessions/claude-code/sess-42.md", "lines": [900, 901]},
+                        {"file": "nope.md", "lines": [1, 2]},
+                    ],
+                )
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep").research("q", llm)
+
+    assert result.citations == [{"file": "sessions/claude-code/sess-42.md", "lines": [1, 2]}]
+    assert result.steps[-1]["dropped_citations"] == 2
+
+
+def test_the_context_is_truncated_to_the_budget(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM({"explore": [_final("x" * 5000, [])]})
+    result = Explorer(root, search_tool="grep", budget_tokens=100).research("q", llm)
+
+    assert len(result.context) <= 100 * 4 + 64
+    assert "truncated" in result.context
+
+
+def test_running_out_of_steps_forces_one_final_call(tmp_path):
+    root = _workspace(tmp_path)
+    search = {"action": "search", "reason": "again", "pattern": "USER"}
+    llm = StubLLM({"explore": [dict(search) for _ in range(2)] + [_final("late answer", [])]})
+    result = Explorer(root, max_steps=2, search_tool="grep").research("q", llm)
+
+    assert result.degraded is None
+    assert result.context == "late answer"
+    assert result.llm_calls == 3  # two explorations plus the forced one
+    assert "answer now" in llm.calls[-1][1].lower()
+
+
+def test_never_answering_degrades_instead_of_inventing_one(tmp_path):
+    root = _workspace(tmp_path)
+    search = {"action": "search", "reason": "again", "pattern": "USER"}
+    llm = StubLLM({"explore": [dict(search) for _ in range(5)]})
+    result = Explorer(root, max_steps=2, search_tool="grep").research("q", llm)
+
+    assert result.degraded == "max_steps"
+    assert result.context == ""
+
+
+def test_a_dropped_call_degrades_rather_than_falling_back_to_a_vector_search(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM({"explore": []})  # every call drops
+    result = Explorer(root, search_tool="grep").research("q", llm)
+
+    assert result.degraded == "llm_drop"
+    assert result.context == ""
+    assert result.citations == []
+
+
+def test_the_system_prompt_says_the_transcript_wins_over_a_runbook(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM({"explore": [_final("ok", [])]})
+    Explorer(root, search_tool="grep").research("q", llm)
+
+    system = llm.systems[0].lower()
+    assert "sessions/" in system and "runbook" in system
+
+
+# --- facade and latency -----------------------------------------------------
+
+
+def test_research_exports_the_workspace_before_exploring(tmp_path):
+    mem = _populated(_mem())
+    mem.structured = StubLLM({"explore": [_final("the cadence is weekly", [])]})
+    root = tmp_path / "ws"
+
+    result = mem.research("what cadence?", root=root)
+
+    assert (root / "INDEX.md").exists()
+    assert result.context == "the cadence is weekly"
+    mem.close()
+
+
+def test_research_refuses_when_no_explore_role_is_configured(tmp_path):
+    cfg = AgmemConfig(
+        sync_write=True,
+        llm_roles={"distill": RoleConfig(endpoint="http://x/v1", model="m")},
+    )
+    mem = AgenticMemory(
+        namespace="t", organizers=["experience"], embedder=FakeEmbedder(dim=128), config=cfg
+    )
+    with pytest.raises(RuntimeError, match=r"\[llm\.explore\]"):
+        mem.research("q", root=tmp_path / "ws")
+    mem.close()
+
+
+def test_research_needs_a_root_when_the_memory_has_no_data_dir():
+    mem = _mem()
+    mem.structured = StubLLM({"explore": [_final("ok", [])]})
+    with pytest.raises(ValueError, match="root"):
+        mem.research("q")
+    mem.close()
+
+
+def test_research_defaults_the_root_under_the_data_dir(tmp_path):
+    mem = _mem(data_dir=tmp_path / "data")
+    mem.structured = StubLLM({"explore": [_final("ok", [])]})
+    mem.research("q")
+    assert (tmp_path / "data" / "t" / "workspace" / "INDEX.md").exists()
+    mem.close()
+
+
+def test_search_records_its_own_wall_clock(tmp_path):
+    mem = _populated(_mem())
+    metrics: dict = {}
+    mem.search("idle timeout", metrics=metrics)
+
+    assert "latency_s" in metrics and metrics["latency_s"] >= 0.0
+    assert metrics["agent"] == "search"  # the existing accounting is still there
+    mem.close()
+
+
+def test_a_planned_search_reports_latency_too():
+    from agmem.policies.retrieval import STRATEGIES
+    from agmem.retrieval.planned import PlannedSearch
+
+    mem = _mem()
+    mem.add_message("the daemon idle timeout is 30 seconds", role="user")
+    planned = PlannedSearch(mem, STRATEGIES["direct"]())
+    metrics: dict = {}
+    planned.search("idle timeout", metrics=metrics)
+
+    assert "latency_s" in metrics and metrics["latency_s"] >= 0.0
+    mem.close()
+
+
+# --- CLI --------------------------------------------------------------------
+
+
+def _run_cli(args, tmp_path, extra_config: str = ""):
+    """`python -m agmem.explore` in its own process, against a config whose
+    embedder slot is `FakeEmbedder` — the real one would fetch weights."""
+    config = tmp_path / "agmem.toml"
+    config.write_text(
+        '[profile]\nname = "lite"\n\n'
+        f'[storage]\ndata_dir = "{tmp_path / "data"}"\n\n'
+        '[override]\nembedder = "FakeEmbedder"\n' + extra_config
+    )
+    env = dict(os.environ)
+    env["AGMEM_CONFIG"] = str(config)
+    env.pop("AGMEM_DATA_DIR", None)
+    env.pop("AGMEM_NAMESPACE", None)
+    return subprocess.run(
+        [sys.executable, "-m", "agmem.explore", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        check=False,
+    )
+
+
+def test_cli_export_materializes_the_workspace(tmp_path):
+    # The CLI resolves `FakeEmbedder` at its default dim, so the memory that
+    # seeds the store must use the same one or the vector index refuses to open.
+    mem = _populated(
+        AgenticMemory(
+            namespace="main",
+            organizers=["experience"],
+            embedder=FakeEmbedder(),
+            config=AgmemConfig(sync_write=True, data_dir=tmp_path / "data"),
+        )
+    )
+    mem.close()
+
+    proc = _run_cli(["export"], tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert (tmp_path / "data" / "main" / "workspace" / "INDEX.md").exists()
+    assert "sessions=2" in proc.stdout
+
+
+def test_cli_ask_refuses_without_an_explore_role(tmp_path):
+    proc = _run_cli(["ask", "what happened?"], tmp_path)
+    assert proc.returncode == 2
+    assert "[llm.explore]" in (proc.stderr + proc.stdout)
+
+
+def test_cli_ask_caps_the_step_count(tmp_path):
+    proc = _run_cli(["ask", "q", "--max-steps", "99"], tmp_path)
+    assert proc.returncode == 2
+    assert "--max-steps" in (proc.stderr + proc.stdout)
+
+
+# --- MCP --------------------------------------------------------------------
+
+
+def test_the_mcp_tool_returns_an_error_object_instead_of_crashing(tmp_path):
+    """The server must answer a `research_memory` call on a memory with no
+    explore role, because a crash there takes the whole stdio session down."""
+    from agmem.mcp import server
+
+    cfg = AgmemConfig(sync_write=True, data_dir=tmp_path / "data")
+    mem = AgenticMemory(
+        namespace="t", organizers=["experience"], embedder=FakeEmbedder(dim=128), config=cfg
+    )
+    server._registry._mems["t"] = mem  # the server's per-namespace cache
+    server._registry.default = "t"
+    server._registry.config = cfg
+    try:
+        payload = json.loads(server.research_memory("q", namespace="t"))
+    finally:
+        server._registry._mems.pop("t", None)
+        mem.close()
+
+    assert "[llm.explore]" in payload["error"]

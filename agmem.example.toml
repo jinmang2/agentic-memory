@@ -34,6 +34,13 @@ model = "qwen3-0.6b"
 #                      # 일부 신형 모델(gpt-5.6-luna 등)은 max_tokens를 거부하고
 #                      # max_completion_tokens를 요구 — max_tokens를 보낼 kwarg 이름
 
+# [llm.explore]                          # the explorer read path (agmem.explore, mem.research)
+# endpoint = "https://openrouter.ai/api/v1"
+# model = "qwen/qwen3.5-9b"
+# api_key = "env:OPENROUTER_API_KEY"
+# temperature = 0.0
+# max_tokens = 2048
+
 # [llm.judge]
 # endpoint = "https://api.openai.com/v1"
 # model = "gpt-4o-2024-08-06"              # LongMemEval judge pin

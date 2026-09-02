@@ -275,6 +275,39 @@ def search_memory(
 
 
 @mcp.tool()
+def research_memory(
+    query: str,
+    max_steps: int = 8,
+    budget_tokens: int = 4000,
+    namespace: str | None = None,
+) -> str:
+    """Explore memory the way a coding agent would: the raw session transcripts
+    and runbooks are written out as files and a model searches and reads them,
+    returning context with file:line citations and the wall-clock latency.
+    Slower than search_memory by design (several model calls); use it when the
+    question is about what happened in past sessions and exact strings matter.
+    Requires an [llm.explore] role in the server's config; without one this
+    returns an error object rather than a vector search."""
+    mem = get_mem(namespace)
+    try:
+        result = mem.research(query, max_steps=max_steps, budget_tokens=budget_tokens)
+    except (RuntimeError, ValueError) as exc:
+        return json.dumps({"error": str(exc), "namespace": mem.namespace})
+    return json.dumps(
+        {
+            "namespace": mem.namespace,
+            "context": result.context,
+            "citations": result.citations,
+            "latency_s": result.latency_s,
+            "llm_calls": result.llm_calls,
+            "steps": len(result.steps),
+            "search_tool": result.search_tool,
+            "degraded": result.degraded,
+        }
+    )
+
+
+@mcp.tool()
 def get_playbook(section: str | None = None, namespace: str | None = None) -> str:
     """Render the ACE playbook (strategy bullets with helpful/harmful counters).
     namespace: omit for the server's default."""

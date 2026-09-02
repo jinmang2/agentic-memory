@@ -75,8 +75,11 @@ class PlannedSearch:
         Per-call rather than stored on the instance: the LoCoMo harness runs
         questions on a thread pool over one shared memory, so any "last result"
         attribute would be a race with a plausible-looking value."""
+        from time import perf_counter
+
         kwargs = {**self.search_defaults, **overrides}
-        return self.strategy.run(
+        started = perf_counter()
+        result = self.strategy.run(
             query,
             QueryContext(
                 search=lambda sub_query: self.memory.search(sub_query, **kwargs),
@@ -86,6 +89,11 @@ class PlannedSearch:
                 role=self.role,
             ),
         )
+        # The planned read's own wall clock, LLM planning calls included — the
+        # inner searches each stamp theirs, but a caller comparing read paths
+        # needs the whole thing.
+        result.metrics["latency_s"] = perf_counter() - started
+        return result
 
     def search(
         self, query: str, *, metrics: dict[str, Any] | None = None, **overrides: Any

@@ -48,6 +48,7 @@ mem.add_message(content="...", role="user", timestamp=..., meta={...})
 mem.add_task_result(trajectory=[...], outcome="success",   # ReasoningBank/ACE/G-Memory 경로
                     task="...", agent_id="planner")
 mem.add_session(traj, outcome="success")       # 코딩 에이전트 세션 1건: 원문 보존 + 증류
+mem.research("how do I run the bench?")     # 탐색기 읽기 경로: 파일 뷰를 모델이 grep·read, 인용·지연 동반
 mem.warm_start(corpus)                         # cold-start 해소: 백필/offline 학습 공통 진입점
 mem.flush()                                    # 큐 드레인 대기 (테스트/벤치용)
 mem.consolidate()                              # 유예 위상 명시 트리거: 큐 드레인 + 버퍼 드레인
@@ -98,6 +99,17 @@ mem.capabilities()                             # 감지 결과 + 활성 어댑�
 CLI 진입점은 `python -m agmem.sessions ingest`다. `--dry-run`(doc store만 열고 아무것도 쓰지 않음)과
 `--no-distill`(원문만 저장)은 $0 경로이고, 증류는 `--limit N`(N ≤ 20)을 명시해야만 실행되며 설정에
 LLM 역할이 없으면 조용히 건너뛰는 대신 종료 코드 2로 거부한다.
+
+`research(query, *, root, refresh, max_steps, budget_tokens)`는 **두 번째 읽기 경로**이고 `search`의 모드가 아니다.
+`agmem.explore.export_workspace`가 스토어를 파일 뷰(`sessions/<host>/<id>.md` 원문 트랜스크립트·`runbooks/<id>.md`·
+`messages/<YYYY-MM>.md`·`INDEX.md`, 결정적·증분·관리 대상 외 파일 불변)로 내보내고, `Explorer`가 JSON 액션 루프
+(`search`=`rg`/`grep`, `list`, `read`, `final`)로 그 디렉터리를 뒤진 뒤 file:line 인용이 붙은 컨텍스트를 돌려준다. 이것이
+docs/research/agent-memory-axes-v1.md §6이 정한 v1의 정직한 대조군("세션 원문 + grep 허용 에이전트", LME-V2 AgentRunbook-C
+방식)이며, 벡터 경로와 **서로 대체되지 않는다**: `explore` LLM 역할이 없으면 `RuntimeError`로 거부하지 `search()`로 내려가지
+않고, 탐색기가 답을 못 내면 `degraded` 사유와 빈 컨텍스트를 돌려준다. 지연은 1급값이다 — `ResearchResult.latency_s`와 스텝별
+초, 그리고 같은 이유로 `search(metrics=...)`·`PlannedSearch`도 `latency_s`를 기록한다(LME-V2 LAFS가 정확도를 지연 대비로
+채점). 경로는 전부 워크스페이스 안으로 해석되며(`..`·절대경로는 관측으로 거부), 도구는 셸 없이 argv로 실행된다. MCP 도구는
+`research_memory`, CLI는 `python -m agmem.explore export|ask`(`ask`는 `--max-steps ≤ 12`, 역할 없으면 종료 2).
 
 미구현(로드맵): `search(time_range=...)` temporal 필터, `mem.snapshot()/restore()` 로그 재생 복원.
 

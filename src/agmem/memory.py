@@ -14,6 +14,7 @@ import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
+from time import perf_counter
 from typing import TYPE_CHECKING, Any, Self
 
 from agmem.capabilities import detect, resolve
@@ -1198,6 +1199,7 @@ class AgenticMemory:
         segment score, where the pypi library disabled the same term. The caller
         supplies them because the extraction is an LLM call and this layer makes
         none (``MemoryOSPageRecall``)."""
+        started = perf_counter()
         if metrics is not None:
             metrics.update({"agent": "search", "memory_search_called": 1, "queries": [query]})
         types = tuple(memory_types) if memory_types is not None else self.default_memory_types
@@ -1223,7 +1225,55 @@ class AgenticMemory:
             lambda org: self._warn_if_subscribed(org.on_retrieval(hits, self._ctx), org),
             propagate=False,
         )
+        if metrics is not None:
+            # Wall clock of the whole read, feedback hooks included: the number
+            # LongMemEval-V2's LAFS scores accuracy against, and the one the
+            # explorer path (``research``) is compared on.
+            metrics["latency_s"] = perf_counter() - started
         return bundle
+
+    def research(
+        self,
+        query: str,
+        *,
+        root: Path | str | None = None,
+        refresh: bool = True,
+        **explorer_kwargs: Any,
+    ) -> Any:
+        """The explorer read path: export the store as files, then let a model
+        grep and read them (``agmem.explore``), returning cited context with its
+        latency.
+
+        This is the other read path, not a mode of ``search``. It is the arm
+        docs/research/agent-memory-axes-v1.md §6 calls the honest baseline —
+        raw session logs plus a grep-capable agent — and it exists so the two
+        can be measured against each other; hence no fallback in either
+        direction. A memory without an ``explore`` LLM role raises rather than
+        searching, because a caller who asked for exploration and got a vector
+        bundle would not be able to tell.
+
+        ``root`` defaults to ``<data_dir>/<namespace>/workspace``; an in-memory
+        store has no such place and must be given one. ``refresh`` re-exports
+        first, which is a scan and not a rewrite when nothing changed."""
+        from agmem.explore import Explorer, export_workspace
+
+        role = explorer_kwargs.get("role", "explore")
+        llm = self.structured
+        usable = llm is not None and (not hasattr(llm, "client") or llm.client.has_role(role))
+        if not usable:
+            raise RuntimeError(
+                f"research needs an LLM role {role!r} — add an [llm.{role}] section to the "
+                "config (see agmem.example.toml). It does not fall back to search()."
+            )
+        if root is None:
+            if self.config.data_dir is None:
+                raise ValueError(
+                    "research needs a workspace root: this memory has no data_dir to put one under"
+                )
+            root = Path(self.config.data_dir) / self.namespace / "workspace"
+        if refresh:
+            export_workspace(self, root)
+        return Explorer(root, **explorer_kwargs).research(query, llm)
 
     def _warn_if_subscribed(self, ops: list[MemoryOp], source: Organizer) -> list[MemoryOp]:
         """Pass ``ops`` through, warning if any would have reached a subscriber.

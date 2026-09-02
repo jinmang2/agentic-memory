@@ -496,6 +496,9 @@ def test_the_bench_records_which_strategy_answered_each_question():
             capture=capture_plain,
             searcher=mem,  # explicit override wins over the configured policy
         )
+        # The wall clock is stamped on every read (docs/05 `research`); it is a
+        # measurement, not accounting, so it is checked apart from the rest.
+        assert plain["agent"].pop("latency_s") >= 0.0
         assert plain["agent"] == {
             "agent": "search",
             "memory_search_called": 1,
