@@ -26,9 +26,21 @@ from pathlib import Path
 ENV_NAMESPACE = "AGMEM_NAMESPACE"
 ENV_DATA_DIR = "AGMEM_DATA_DIR"
 ENV_CONFIG = "AGMEM_CONFIG"
+ENV_DAEMON_URL = "AGMEM_DAEMON_URL"
 
 DEFAULT_NAMESPACE = "main"
 DEFAULT_DATA_DIR = Path.home() / ".agmem/data"
+# Loopback only, on purpose: the daemon has no authentication, so it must never
+# be reachable from anywhere a hook on this machine is not.
+DEFAULT_DAEMON_URL = "http://127.0.0.1:8765"
+
+
+def resolve_daemon_url(explicit: str | None = None) -> str:
+    """Explicit value > `AGMEM_DAEMON_URL` > `DEFAULT_DAEMON_URL`, without a trailing slash.
+
+    The daemon is the long-lived `agmem-mcp --transport http` process the hooks
+    talk to so that no hook has to load the embedder itself (issue #2 §1)."""
+    return (explicit or os.environ.get(ENV_DAEMON_URL) or DEFAULT_DAEMON_URL).rstrip("/")
 
 
 class InvalidNamespace(ValueError):

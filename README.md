@@ -133,9 +133,12 @@ uv run agmem-mcp --organizers nemori,reasoning_bank   # namespace: $AGMEM_NAMESP
 
 MCP exposes memory as *tools*, which the model has to decide to call. The hooks
 in `src/agmem/hooks/` fire whether or not anyone decided anything — `recall` on
-`SessionStart` (0.18 s, reads the doc store only) and `capture` on
-`UserPromptSubmit` (10.8 s, needs the embedder, so `async`). Wiring is
-`docs/05-api-design.md` §2.4. Both layers resolve *which* store through the same
+`SessionStart` (recency, reads the doc store only), `recall_prompt` on
+`UserPromptSubmit` (the prompt as the query, top-5 injected) and `capture` on
+`UserPromptSubmit` (`async`). None of them loads a model: they talk to the
+same `agmem-mcp --transport http` process over loopback, which the first hook
+of a session starts and which exits when idle (`docs/05-api-design.md` §2.3.1).
+Wiring is §2.4. Both layers resolve *which* store through the same
 three variables (`AGMEM_NAMESPACE`, `AGMEM_DATA_DIR`, `AGMEM_CONFIG`) with the
 same defaults, and every MCP tool takes an optional `namespace` so one server
 can keep projects apart. That they really share one store — a prompt the hook
@@ -143,7 +146,8 @@ captured comes back from the server's `search_memory`, with neither side told
 the namespace — is checked end to end by:
 
 ```bash
-uv run python scripts/smoke_product_stack.py
+uv run python scripts/smoke_product_stack.py            # in-process path
+uv run python scripts/smoke_product_stack.py --daemon   # + spawn, backfill, recall_prompt
 ```
 
 Run a reproduction experiment (needs an LLM endpoint — see `docs/07-local-llm-setup.md`):

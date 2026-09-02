@@ -35,6 +35,10 @@ def _env(tmp_path, extra_env: dict | None = None) -> dict:
         "AGMEM_DATA_DIR": str(tmp_path / "data"),
         "AGMEM_NAMESPACE": "hooktest",
         "AGMEM_CONFIG": str(cfg),
+        # No daemon in this file: these tests pin the in-process contract, and
+        # a hook that spawned one would leave a 30-minute process behind.
+        "AGMEM_NO_DAEMON": "1",
+        "AGMEM_DAEMON_URL": "http://127.0.0.1:1",
         **(extra_env or {}),
     }
 
@@ -60,11 +64,12 @@ def seeded(tmp_path_factory):
     return root
 
 
-def test_capture_used_the_configured_embedder_not_the_default_model(seeded):
-    """The hermeticity claim, checked rather than assumed: the vectors the hook
-    wrote have FakeEmbedder's dimension, so no model was loaded. A silent fall
-    back to the lite default would pass every other test here while pulling
-    471 MB per run."""
+def test_capture_without_a_daemon_writes_the_episode_and_no_vector(seeded):
+    """The absent-daemon contract (Phase 2 spec): the episode is persisted, no
+    embedder is loaded, and the vector is left for the daemon to backfill.
+    Opening the memory here with the same config also pins that the hooks'
+    `AGMEM_CONFIG` seam resolves FakeEmbedder — a silent fall back to the lite
+    default would pull 471 MB per run."""
     from agmem.hooks import open_memory
 
     env = _env(seeded)
@@ -76,7 +81,11 @@ def test_capture_used_the_configured_embedder_not_the_default_model(seeded):
         mem = open_memory()
         try:
             assert mem.embedder.name == "fake-hash-256"
-            assert mem.stats()["episodes"] == 1
+            stats = mem.stats()
+            assert stats["episodes"] == 1
+            assert stats["vectors"] == 0, "capture loaded an embedder without a daemon"
+            episode = mem.doc_store.list_episodes(namespace=mem.namespace)[0]
+            assert episode.meta.get("pending_embed") is True
         finally:
             mem.close()
     finally:

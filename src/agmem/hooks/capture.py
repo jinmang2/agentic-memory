@@ -20,34 +20,31 @@ this hook specifically: the model deciding when to remember is the failure mode
 that MCP tools already have. Here the harness decides, on every prompt, whether
 or not anyone thought about it.
 
-KNOWN COST, MEASURED 2026-08-08, AND STILL NOT FIXED. Unlike `recall`, this hook
-needs the embedder — an episode written without a vector is invisible to every
-semantic search, including the MCP server's `search_memory` (verified end to
-end: a prompt captured here comes back from that tool). A fresh process costs
-10.8 s wall, decomposing into `import torch` 2.1 s, `import
-sentence_transformers` 4.4 s, constructing the model 3.7 s. `async: true` keeps
-that off the user's turn, but it is still ~11 s of CPU per prompt, and prompts
-arriving closer together than that will overlap.
+THE COST THAT WAS HERE, AND WHERE IT WENT. Until 2026-09-02 this hook loaded
+the embedder itself: ~11 s of `import torch`, `import sentence_transformers`
+and model construction per prompt (56 s after a cold page cache), for under a
+second of actual work. It was documented as an architecture problem, and the
+architecture is now the daemon: the same `agmem-mcp --transport http` process
+the MCP layer runs, kept warm, with a plain `POST /hooks/capture` route
+(`agmem.hooks.daemon`). Against it this hook is a JSON round trip.
 
-That is down from ~15 s: loading the model cache-first removed a hub revision
-check worth ~5 s of the construction (`SentenceTransformerEmbedder._load`).
-Worth having, and it does not change the paragraph below — halving a cost that
-should not be paid per prompt at all leaves it still paid per prompt.
-
-The honest fix is architectural, not a tweak: either capture through a
-long-lived process that loads the model once (the MCP server already is one), or
-write the episode immediately and let a batch pass attach vectors later. Both
-are real work and neither is done here. What is deliberately NOT done is the
-cheap-looking version — writing episodes with no vector and calling it fast —
-because that ships a capture hook whose memories never surface in a search,
-which would present as working.
+WHEN THERE IS NO DAEMON, the hook does NOT load the model — that would be the
+old cost coming back through a side door. It writes the episode to the doc
+store alone (0.2 s, the recall hook's path), asks for the daemon to be started,
+and exits. The episode is visible to the recency hook at once and to semantic
+search after the daemon's backfill gives it a vector, which happens on the
+daemon's next start and every minute after. What issue #2 warned against was
+an episode with no vector *forever*; a delayed one is the trade this design
+makes, and `/health` reports how many are waiting.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
-from agmem.hooks import fail_open, open_memory, read_event
+from agmem.hooks import daemon as daemon_client
+from agmem.hooks import fail_open, open_doc_store, read_event
 
 MAX_CHARS = 8000
 
@@ -66,27 +63,48 @@ def prompt_of(event: dict) -> str:
     return ""
 
 
+def write_without_daemon(text: str, meta: dict) -> None:
+    """The absent-daemon path: persist the episode without a vector and request a daemon.
+
+    `pending_embed` in `meta` is informational — the daemon derives what to
+    backfill by comparing the doc store with the vector store, so a flag that
+    went stale could not hide an episode from repair."""
+    from agmem.core.types import Episode
+
+    namespace, store = open_doc_store()
+    try:
+        store.add_episode(
+            Episode(
+                content=text, role="user", namespace=namespace, meta={**meta, "pending_embed": True}
+            )
+        )
+    finally:
+        close = getattr(store, "close", None)
+        if close is not None:
+            close()
+    daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))
+
+
 def main() -> None:
     try:
         event = read_event()
         text = prompt_of(event)
         if not text.strip():
             sys.exit(0)  # nothing said, nothing to store
-        mem = open_memory()
-        try:
-            mem.add_message(
-                text[:MAX_CHARS],
-                role="user",
-                meta={
-                    "source": "claude-code",
-                    # Kept so a later reader can group a session's turns without
-                    # inferring it from timestamps.
-                    "session_id": str(event.get("session_id") or ""),
-                },
+        meta = {
+            "source": str(
+                event.get("source") or os.environ.get("AGMEM_HOOK_SOURCE") or "claude-code"
+            ),
+            # Kept so a later reader can group a session's turns without
+            # inferring it from timestamps.
+            "session_id": str(event.get("session_id") or ""),
+        }
+        if daemon_client.health() is not None:
+            daemon_client.post(
+                "/hooks/capture", {"content": text[:MAX_CHARS], "role": "user", "meta": meta}
             )
-            mem.flush()
-        finally:
-            mem.close()
+        else:
+            write_without_daemon(text[:MAX_CHARS], meta)
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):
             raise

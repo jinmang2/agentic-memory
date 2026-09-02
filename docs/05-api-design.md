@@ -150,6 +150,7 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
   | `AGMEM_NAMESPACE` | `--namespace` | 기본 namespace | `main` |
   | `AGMEM_DATA_DIR` | `--data-dir` | 스토어 루트 | `[storage].data_dir`, 없으면 `~/.agmem/data` |
   | `AGMEM_CONFIG` | `--config` | `agmem.toml` 경로 | 없음 (프로파일 기본값) |
+  | `AGMEM_DAEMON_URL` | `--host`/`--port` | 훅이 찾는 상주 서버 | `http://127.0.0.1:8765` |
 
   **한 번 export하면 두 층이 같은 스토어를 연다**는 것이 이 표의 목적이다. 훅은 하네스가 인자를
   주지 않으므로 환경변수가 유일한 경로이고, 서버는 플래그로 덮어쓸 수 있다.
@@ -196,6 +197,22 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 기동 비용: 핸드셰이크까지 **9.4–9.8초**(2026-08-08 실측, lite 프로파일, 모델 캐시 있음). 대부분이
 임베더고, `SentenceTransformerEmbedder`가 캐시 우선으로 로드하기 전에는 15.5–16.0초였다.
 
+### 2.3.1 데몬 — 훅이 찾는 상주 프로세스 (2026-09-02)
+
+`agmem-mcp --transport http`가 그대로 데몬이다. MCP `/mcp` 외에 훅용 평문 HTTP 라우트 세 개를 연다:
+`GET /health`(기본 namespace·열린 namespace·`pending_embed` 수·유휴 시간), `POST /hooks/capture`(`add_memory`와
+같은 쓰기), `POST /hooks/recall`(`search_memory`와 같은 검색, 항목 텍스트 반환). 훅은 stdlib `urllib`만으로
+이 셋을 부르므로 torch도 MCP SDK도 import하지 않는다.
+
+- **라이프사이클(결정 A)**: SessionStart의 `recall` 훅이 `/health` 실패 시 `python -m agmem.mcp.server --transport
+  http --idle-timeout 1800`을 detach로 띄운다. 유휴 30분이면 스스로 종료. 호스트 둘(Claude Code·Codex)이 같은
+  데몬을 공유한다. `AGMEM_NO_DAEMON=1`이면 어떤 훅도 띄우지 않는다.
+- **부재 시**: `capture`는 에피소드를 doc store에만 쓰고(0.2초, 임베더 안 열음) 데몬을 요청한 뒤 exit 0. 데몬은
+  기동 시와 매 `--backfill-period`(기본 60초)마다 "doc store에는 있고 vector store에는 없는" 에피소드를 임베딩한다.
+  `recall_prompt`는 아무것도 주입하지 않는다. **어떤 훅도 인프로세스로 모델을 올리지 않는다** — 그것이 이슈 #2 §1의
+  문제 자체였다.
+- 루프백 전용, 인증 없음. `AGMEM_DAEMON_URL`을 루프백 밖으로 두지 말 것.
+
 ### 2.4 Claude Code 훅 등록
 
 MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은 결정 없이 발화하며, 그게 자동 캡처의
@@ -211,12 +228,19 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command",
+                    "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.recall_prompt",
+                    "timeout": 5 },
+                  { "type": "command",
                     "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.capture",
                     "async": true }] }
     ]
   }
 }
 ```
+
+훅은 셋이다. `recall`(SessionStart, 최근성 12줄), **`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서
+top-5를 주입 — 2026-09-02 신설)**, `capture`(UserPromptSubmit, 비동기). 같은 이벤트에서 recall_prompt가 capture보다
+앞에 와야 자기 프롬프트를 자기에게 되돌려주지 않는다. Codex의 `~/.codex/hooks.json`도 같은 계약이라 그대로 붙는다.
 
 - 네임스페이스·저장 위치·설정 파일은 `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`/`AGMEM_CONFIG`로 준다
   (기본 `main`, `~/.agmem/data`, 없음). **서버와 같은 변수, 같은 기본값**(§2.2 표, `agmem.env`).
@@ -229,8 +253,9 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
   훅의 빈 목록은 그래서 의도된 비대칭이고, LLM 엔드포인트가 없으면 어느 쪽도 과금되지 않는다.
   recall은 SQLite 문서 스토어를 직접 열므로 doc_store를 다른 것으로 오버라이드한 설정은 거부한다
   (옆에 빈 SQLite를 만들어 "기억 없음"으로 보이는 대신 로그에 남기고 exit 0).
-- **예산 실측(2026-08-08)**: recall **0.18초**(블로킹이라 `timeout` 안에 반드시 들어와야 함,
-  doc store만 열기 때문에 이 값), capture **10.8초**(임베더 필요 — `async: true`가 필수인 이유).
+- **예산 실측(2026-08-08, 인프로세스)**: recall **0.18초**(doc store만), capture **10.8초**(임베더를 프로세스마다
+  올리던 때). 2026-09-02 재측정은 웜 12.9~19초, 콜드 캐시 56초였고, 그래서 §2.3.1의 데몬으로 갔다. 데몬 경로의
+  수치는 `scripts/smoke_product_stack.py --daemon`이 출력한다.
 - 진단은 `AGMEM_HOOK_LOG=/path/to/log`. 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
   고장이 침묵으로 나타난다 — 세션을 망가뜨리지 않기 위한 설계이고, 그 대가다.
 - **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다. 두 층이 한 스토어를

@@ -23,6 +23,17 @@ and kept for the process lifetime, and they share the first one's embedder —
 the model is the expensive part of opening a memory (~4 s of the ~10 s
 handshake), the stores are not. Without this a daemon was one memory, and
 keeping projects apart meant one daemon per project.
+
+THE HOOKS' DAEMON. Over `--transport http` this process is also what the Claude
+Code / Codex hooks talk to (`agmem.hooks.daemon`), through three plain HTTP
+routes that need no MCP client: `GET /health`, `POST /hooks/capture`,
+`POST /hooks/recall`. That is issue #2 §1: a hook that loaded the embedder
+itself cost ~11 s per prompt; against this process the same write is ~50 ms.
+Two things follow. `--idle-timeout` lets a hook-spawned daemon go away when
+nobody has used it for a while. And `backfill` gives vectors to episodes a
+hook wrote while no daemon was running — the capture hook writes to the doc
+store alone in that case rather than loading a model, so "episode exists but
+has no vector" is a state this server has to expect and repair.
 """
 
 from __future__ import annotations
@@ -30,10 +41,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import threading
+import time
 from dataclasses import replace
 
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from agmem.config import AgmemConfig, load_config
 from agmem.env import (
@@ -93,6 +108,51 @@ class _Registry:
         with self._lock:
             return sorted(self._mems)
 
+    def pending_embed(self, namespace: str | None = None) -> int:
+        """Episodes in `namespace`'s doc store that have no vector yet.
+
+        Derived by comparing the two stores rather than kept as a flag, so an
+        interrupted backfill or a hook that wrote while the daemon was down
+        both leave the same, recomputable answer."""
+        return len(self._missing_vector_ids(self.get(namespace)))
+
+    @staticmethod
+    def _missing_vector_ids(mem: AgenticMemory) -> list[str]:
+        ids = [ep.id for ep in mem.doc_store.list_episodes(namespace=mem.namespace)]
+        if not ids:
+            return []
+        have = mem.vector_store.get(ids)
+        return [i for i in ids if i not in have]
+
+    def backfill(self, namespace: str | None = None, batch_size: int = 64) -> int:
+        """Embed and index every episode in `namespace` that has no vector; returns how many.
+
+        The hook-side absent path (`agmem.hooks.capture`) writes episodes to
+        the doc store only. Without this they would be visible to the recency
+        hook and invisible to every semantic search forever — the exact
+        outcome issue #2 warned the fast path must not produce."""
+        mem = self.get(namespace)
+        missing = self._missing_vector_ids(mem)
+        if not missing:
+            return 0
+        done = 0
+        for start in range(0, len(missing), batch_size):
+            chunk = mem.doc_store.get_episodes(missing[start : start + batch_size])
+            vectors = mem.embedder.embed([ep.embedding_text() for ep in chunk])
+            for ep, vec in zip(chunk, vectors, strict=True):
+                mem.vector_store.add(ep.id, vec, memory_type="episodic", namespace=mem.namespace)
+                done += 1
+        persist = getattr(mem.vector_store, "persist", None)
+        if persist is not None:
+            persist()
+        logger.info(
+            "agmem daemon: backfilled %d episode vector(s) in namespace=%s", done, mem.namespace
+        )
+        return done
+
+    def backfill_all(self) -> int:
+        return sum(self.backfill(ns) for ns in self.open_namespaces())
+
     def close_all(self) -> None:
         with self._lock:
             mems, self._mems = list(self._mems.values()), {}
@@ -103,12 +163,25 @@ class _Registry:
 _registry = _Registry()
 
 
+_started_at = time.monotonic()
+_last_activity = time.monotonic()
+
+
+def _touch() -> None:
+    global _last_activity
+    _last_activity = time.monotonic()
+
+
 def get_mem(namespace: str | None = None) -> AgenticMemory:
     """The `AgenticMemory` for `namespace`, or for the server's default when
     None. Opened on first use; see `_Registry`.
 
+    Also the idle clock: every tool and hook route passes through here, so
+    "last activity" is simply the last time a memory was asked for.
+
     Raises `AssertionError` if called before `main()` has run — tool handlers only
     execute after the server is up, so this should never fire in practice."""
+    _touch()
     return _registry.get(namespace)
 
 
@@ -236,6 +309,133 @@ def memory_stats(namespace: str | None = None) -> str:
     )
 
 
+def _item_text(item) -> str:
+    text = getattr(item, "content", None) or getattr(item, "text", None)
+    return text if isinstance(text, str) else str(item)
+
+
+def _item_timestamp(item) -> str | None:
+    stamp = getattr(item, "timestamp", None)
+    return stamp.isoformat() if hasattr(stamp, "isoformat") else None
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_: Request) -> JSONResponse:
+    """What a hook checks before deciding which path to take (`agmem.hooks.daemon.health`).
+
+    `pending_embed` is reported per open namespace so a reader can tell that
+    memories written while the daemon was down are not searchable yet."""
+    now = time.monotonic()
+    open_ns = _registry.open_namespaces()
+    return JSONResponse(
+        {
+            "ok": True,
+            "pid": os.getpid(),
+            "default_namespace": _registry.default,
+            "open_namespaces": open_ns,
+            "pending_embed": {ns: _registry.pending_embed(ns) for ns in open_ns},
+            "uptime_s": round(now - _started_at, 1),
+            "idle_s": round(now - _last_activity, 1),
+        }
+    )
+
+
+@mcp.custom_route("/hooks/capture", methods=["POST"])
+async def hooks_capture(request: Request) -> JSONResponse:
+    """The capture hook's fast path: the same write `add_memory` does, over plain JSON.
+
+    Body: `{content, role?, meta?, namespace?}`. Runs on a worker thread because
+    the write embeds synchronously and must not block the event loop for the
+    other hook that is waiting on `/hooks/recall`."""
+    import anyio
+
+    body = await request.json()
+    content = body.get("content")
+    if not isinstance(content, str) or not content.strip():
+        return JSONResponse({"error": "content required"}, status_code=400)
+    role = body.get("role") or "user"
+    meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+    namespace = body.get("namespace") or None
+
+    def _write():
+        mem = get_mem(namespace)
+        episode = mem.add_message(content, role=role, meta=meta)
+        return {"stored": True, "episode_id": episode.id, "namespace": mem.namespace}
+
+    try:
+        return JSONResponse(await anyio.to_thread.run_sync(_write))
+    except Exception as exc:
+        logger.exception("hooks/capture failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@mcp.custom_route("/hooks/recall", methods=["POST"])
+async def hooks_recall(request: Request) -> JSONResponse:
+    """The recall-on-prompt hook's search: `{query, k?, namespace?}` -> ranked items with text.
+
+    Returns the items rather than a rendered block so the hook, which owns the
+    words the model sees, decides the header and the truncation."""
+    import anyio
+
+    body = await request.json()
+    query = body.get("query")
+    if not isinstance(query, str) or not query.strip():
+        return JSONResponse({"error": "query required"}, status_code=400)
+    k = int(body.get("k") or 5)
+    namespace = body.get("namespace") or None
+
+    def _search():
+        mem = get_mem(namespace)
+        bundle = get_searcher(namespace).search(query, k=k)
+        return {
+            "namespace": mem.namespace,
+            "items": [
+                {
+                    "id": getattr(s.item, "id", None),
+                    "memory_type": s.memory_type,
+                    "score": round(float(s.score), 4),
+                    "timestamp": _item_timestamp(s.item),
+                    "text": _item_text(s.item),
+                }
+                for s in bundle.items
+            ],
+        }
+
+    try:
+        return JSONResponse(await anyio.to_thread.run_sync(_search))
+    except Exception as exc:
+        logger.exception("hooks/recall failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+def _idle_watchdog(idle_timeout_s: int, poll_s: float | None = None) -> None:
+    """Exit the process once nothing has asked for a memory in `idle_timeout_s`.
+
+    A hook-spawned daemon has no owner to stop it; this is how it goes away.
+    Stores are closed first so a queued organizer write is not lost. `os._exit`
+    rather than `sys.exit` because uvicorn's serving thread would otherwise
+    keep the process alive."""
+    poll = poll_s if poll_s is not None else min(5.0, max(0.5, idle_timeout_s / 4))
+    while True:
+        time.sleep(poll)
+        if time.monotonic() - _last_activity >= idle_timeout_s:
+            logger.info("agmem daemon: idle for %ss, exiting", idle_timeout_s)
+            try:
+                _registry.close_all()
+            finally:
+                os._exit(0)
+
+
+def _backfill_loop(period_s: float) -> None:
+    """Startup and periodic repair of episodes without vectors (see `_Registry.backfill`)."""
+    while True:
+        try:
+            _registry.backfill_all()
+        except Exception:
+            logger.exception("agmem daemon: backfill failed")
+        time.sleep(period_s)
+
+
 def register_admin_tools() -> None:
     """Register the admin-only tools (log tail, flush) onto the shared `mcp` server.
 
@@ -287,7 +487,21 @@ def main() -> None:
         help=f"store root (default ${ENV_DATA_DIR}, else [storage].data_dir, else ~/.agmem/data)",
     )
     ap.add_argument("--transport", choices=["stdio", "http"], default="stdio")
+    ap.add_argument("--host", default="127.0.0.1", help="http only; keep it loopback (no auth)")
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument(
+        "--idle-timeout",
+        type=int,
+        default=0,
+        help="http only: exit after this many seconds without a request (0 = never). "
+        "The hooks spawn the daemon with this set so it does not outlive its use.",
+    )
+    ap.add_argument(
+        "--backfill-period",
+        type=int,
+        default=60,
+        help="http only: seconds between passes that embed episodes written while no daemon ran",
+    )
     ap.add_argument("--enable-admin-tools", action="store_true")
     args = ap.parse_args()
 
@@ -332,9 +546,25 @@ def main() -> None:
     # close() on the way out: it drains queued organizer work (this server runs
     # sync_write=False, so a shutdown mid-queue would otherwise discard whatever
     # the worker had not applied yet) and then stops the worker and the stores.
+    # Whichever transport this is, repair first: a hook may have written
+    # episodes while no daemon ran, and a stdio server started by Claude Code
+    # is often the next process to open that store. Without this pass those
+    # episodes would answer to the recency hook and to nothing else.
+    pending = _registry.backfill_all()
+    if pending:
+        logger.info("agmem MCP: startup backfill embedded %d episode(s)", pending)
+
     try:
         if args.transport == "http":
+            mcp.settings.host = args.host
             mcp.settings.port = args.port
+            threading.Thread(
+                target=_backfill_loop, args=(max(args.backfill_period, 1),), daemon=True
+            ).start()
+            if args.idle_timeout > 0:
+                threading.Thread(
+                    target=_idle_watchdog, args=(args.idle_timeout,), daemon=True
+                ).start()
             mcp.run(transport="streamable-http")
         else:
             mcp.run()

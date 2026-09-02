@@ -17,13 +17,21 @@ Retrieval is unconditional, not query-driven, because SessionStart has no query
 to drive it — there is no prompt yet. What it can offer is recency, so it serves
 the most recent episodes of this namespace. That is a deliberately weak signal
 and it is why the injected block says what it is: a model told "here is what you
-remember" will trust it more than a recency dump deserves.
+remember" will trust it more than a recency dump deserves. The query-driven
+counterpart is `agmem.hooks.recall_prompt`, on `UserPromptSubmit`.
+
+This hook is also where the daemon gets started (`agmem.hooks.daemon`): it
+runs once per session, before any capture, and spawning is a non-blocking
+`Popen`. Set `AGMEM_NO_DAEMON=1` to keep it from doing that (tests, or a
+machine that runs the daemon some other way).
 """
 
 from __future__ import annotations
 
+import os
 import sys
 
+from agmem.hooks import daemon as daemon_client
 from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
 
 MAX_EPISODES = 12
@@ -71,6 +79,11 @@ def main() -> None:
         # and reversing it puts the most recent line first.
         episodes = list(episodes)[-MAX_EPISODES:][::-1]
         emit_context(render(episodes), "SessionStart")
+        # Session start is where the daemon gets started if it is not up, so
+        # the first capture of the session finds it warm. Non-blocking: this
+        # returns as soon as the process is spawned, not when it is ready.
+        if os.environ.get("AGMEM_NO_DAEMON") != "1":
+            daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):
             raise

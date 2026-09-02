@@ -85,18 +85,107 @@ async def search_over_mcp(env: dict) -> tuple[float, str, set, str]:
 
     params = StdioServerParameters(command=server_command(), args=["--organizers", ""], env=env)
     started = time.perf_counter()
-    async with stdio_client(params) as (read, write):
-        async with ClientSession(read, write) as session:
-            await session.initialize()
-            handshake = time.perf_counter() - started
-            tools = {t.name for t in (await session.list_tools()).tools}
-            rendered = _text(await session.call_tool("search_memory", {"query": QUERY}))
-            stats = json.loads(_text(await session.call_tool("memory_stats", {})))
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        handshake = time.perf_counter() - started
+        tools = {t.name for t in (await session.list_tools()).tools}
+        rendered = _text(await session.call_tool("search_memory", {"query": QUERY}))
+        stats = json.loads(_text(await session.call_tool("memory_stats", {})))
     return handshake, rendered, tools, stats["stats"]["namespace"]
+
+
+def _http_json(url: str, path: str, payload: dict | None = None, timeout: float = 5.0):
+    import urllib.request
+
+    req = urllib.request.Request(
+        f"{url}{path}",
+        data=None if payload is None else json.dumps(payload).encode(),
+        method="GET" if payload is None else "POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
+
+
+def daemon_path(env: dict, data_dir: Path) -> bool:
+    """The Phase 2 path: capture with no daemon (doc store only, spawn), the
+    daemon comes up and backfills, recall_prompt injects, capture is now fast.
+
+    Prints the timings the daemon spec's acceptance criteria name. The daemon
+    is started by the hook itself, exactly as it would be under the harness,
+    and stopped here by pid so the smoke leaves nothing running."""
+    import socket
+    import urllib.error
+
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    url = f"http://127.0.0.1:{port}"
+    env = dict(env, AGMEM_DAEMON_URL=url, AGMEM_DAEMON_LOG=str(data_dir / "daemon.log"))
+    env.pop("AGMEM_NO_DAEMON", None)
+    print(f"\n--- daemon path ({url}) ---")
+
+    cold_s, cold = run_hook(
+        "agmem.hooks.capture",
+        {"session_id": "smoke", "prompt": PROMPT, "hook_event_name": "UserPromptSubmit"},
+        env,
+    )
+    print(f"capture, no daemon {cold_s:6.2f}s  exit={cold.returncode}  (doc store only + spawn)")
+
+    started = time.perf_counter()
+    health = None
+    while time.perf_counter() - started < 90:
+        try:
+            health = _http_json(url, "/health", timeout=0.5)
+            break
+        except (urllib.error.URLError, OSError, ValueError):
+            time.sleep(0.5)
+    if not health:
+        print("daemon did not come up within 90s")
+        return False
+    print(f"daemon up          {time.perf_counter() - started:6.2f}s  pid={health['pid']}")
+
+    started = time.perf_counter()
+    while time.perf_counter() - started < 60:
+        health = _http_json(url, "/health", timeout=2)
+        if all(n == 0 for n in health["pending_embed"].values()):
+            break
+        time.sleep(0.5)
+    print(
+        f"backfill done      {time.perf_counter() - started:6.2f}s  pending={health['pending_embed']}"
+    )
+
+    rp_s, rp = run_hook(
+        "agmem.hooks.recall_prompt",
+        {"session_id": "smoke", "prompt": QUERY, "hook_event_name": "UserPromptSubmit"},
+        env,
+    )
+    injected = NEEDLE in rp.stdout
+    print(f"recall_prompt hook {rp_s:6.2f}s  exit={rp.returncode}  found={injected}")
+
+    warm_s, warm = run_hook(
+        "agmem.hooks.capture",
+        {"session_id": "smoke", "prompt": "second prompt", "hook_event_name": "UserPromptSubmit"},
+        env,
+    )
+    print(f"capture, warm      {warm_s:6.2f}s  exit={warm.returncode}")
+
+    import signal
+
+    os.kill(int(health["pid"]), signal.SIGTERM)
+    ok = injected and cold.returncode == 0 and warm.returncode == 0
+    if not ok:
+        print(f"  recall_prompt stdout: {rp.stdout[:400]}  stderr: {rp.stderr[-300:]}")
+    return ok
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument(
+        "--daemon",
+        action="store_true",
+        help="also exercise the daemon path: spawn-on-demand, backfill, recall_prompt",
+    )
     ap.add_argument(
         "--data-dir",
         default=None,
@@ -115,6 +204,11 @@ def main() -> int:
     # machine that configured its embedder there should be smoked on it.
     env = {k: v for k, v in os.environ.items() if k != "AGMEM_NAMESPACE"}
     env["AGMEM_DATA_DIR"] = str(data_dir)
+    # The in-process path below must stay the in-process path: no daemon may
+    # be spawned or used by it, or the timings it prints stop meaning what
+    # docs/05 §2.4 says they mean.
+    env["AGMEM_NO_DAEMON"] = "1"
+    env["AGMEM_DAEMON_URL"] = "http://127.0.0.1:1"  # nothing listens here
     if args.namespace:
         env["AGMEM_NAMESPACE"] = args.namespace
     print(f"store: {data_dir}")
@@ -151,9 +245,13 @@ def main() -> int:
 
     # The recall hook reads the doc store and the server searches vectors, so
     # the two answer different questions about the same write: one proves the
-    # episode was persisted, the other that it was embedded. A capture that
-    # skipped the embedder would still satisfy the first.
+    # episode was persisted, the other that it became searchable. Since
+    # 2026-09-02 the capture hook never embeds by itself (no daemon here, by
+    # construction), so `searched` is the stdio server's startup backfill doing
+    # its job — the path a Claude Code session takes when no daemon ever ran.
     ok = recalled and searched and same_store
+    if args.daemon:
+        ok = daemon_path(env, data_dir) and ok
     print("\nVERDICT:", "ok" if ok else "FAILED")
     if not ok:
         print(f"  persisted={recalled} embedded_and_searchable={searched} same_store={same_store}")
