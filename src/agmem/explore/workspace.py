@@ -37,6 +37,7 @@ reading: the distiller counted the same steps the explorer is now looking at.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -77,11 +78,17 @@ def safe_name(raw: str) -> str:
 
     Session ids and item ids are already ``[A-Za-z0-9-]`` in every writer we
     have, so this is defence rather than translation: an id is a value some
-    host or model supplied, and it becomes a path segment here. Anything else
-    collapses to ``_``, and a name that would resolve to a directory entry
-    other than itself (``.``, ``..``, empty) becomes ``_``."""
+    host or model supplied, and it becomes a path segment here. An id that
+    needs no change is used as it is. One that does gets its unsafe characters
+    collapsed to ``_`` AND a short hash of the original appended — without the
+    hash ``a:b`` and ``a/b`` would share one file, and the index would name
+    two sessions at a path that holds one of them."""
+    if raw and raw == raw.strip() and not _UNSAFE.search(raw) and raw.strip("."):
+        return raw
     name = _UNSAFE.sub("_", raw.strip())
-    return name if name and name.strip(".") else "_"
+    if not name or not name.strip("."):
+        name = "_"
+    return f"{name}-{hashlib.sha1(raw.encode()).hexdigest()[:8]}"
 
 
 def _utc(stamp: datetime) -> datetime:
@@ -151,6 +158,8 @@ def _session_files(episodes: list[Any]) -> tuple[dict[str, str], list[dict[str, 
             step_index = (episode.meta or {}).get("step_index", 0)
             blocks.append(f"[{step_index}] {_step_label(episode)}\n{episode.content}")
         relpath = f"sessions/{safe_name(host)}/{safe_name(session_id)}.md"
+        if relpath in files:
+            logger.warning("explore: two sessions map to %s — the later one wins", relpath)
         files[relpath] = "\n\n".join(blocks) + "\n"
         first_user = next(
             (e.content for e in items if ((e.meta or {}).get("kind") or e.role) == "user"), ""
@@ -265,6 +274,11 @@ def _sync(root: Path, files: dict[str, str]) -> WorkspaceStats:
             if path.relative_to(root).as_posix() not in files:
                 path.unlink()
                 stats.removed += 1
+        # A host whose sessions were all retired would otherwise leave an empty
+        # directory that `list` never shows and nothing ever cleans.
+        for path in sorted((p for p in base.rglob("*") if p.is_dir()), reverse=True):
+            if not any(path.iterdir()):
+                path.rmdir()
     return stats
 
 

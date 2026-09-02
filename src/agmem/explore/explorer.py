@@ -53,7 +53,7 @@ MAX_STEPS_CAP = 12
 MAX_BUDGET_TOKENS = 16_000
 MAX_READ_LINES = 200
 MAX_LIST_ENTRIES = 200
-MAX_HITS = 50
+MAX_HITS_PER_FILE = 50  # rg --max-count and grep -m are both per file; _clip bounds the total
 TOOL_TIMEOUT_S = 10.0
 CHARS_PER_TOKEN = 4  # the same rough figure MemoryBundle.render budgets with
 
@@ -102,7 +102,7 @@ where to look.
 - runbooks/<id>.md — notes distilled from sessions. Derived, not authoritative: when a runbook \
 and a transcript disagree, the transcript wins, and a runbook's `source:` line tells you \
 which session and steps to check.
-- messages/<YYYY-MM>.md — single user messages outside any session.
+- messages/<YYYY-MM>.md — single messages and task lines outside any session, labelled by role.
 
 Each turn, return ONE JSON object and nothing else:
 - {"action": "search", "pattern": "<regex>", "path": "<dir or file, optional>", "reason": "..."}
@@ -180,6 +180,10 @@ class Explorer:
         if search_tool not in ("rg", "grep"):
             raise ValueError(f"search_tool must be 'rg' or 'grep', not {search_tool!r}")
         self.search_tool = search_tool
+        if max_steps < 1:
+            # Zero steps would answer without exploring, which the system prompt
+            # forbids; the entry points clamp, and a library caller is refused.
+            raise ValueError("max_steps must be at least 1")
 
     # ---- the loop -----------------------------------------------------------
 
@@ -189,8 +193,8 @@ class Explorer:
         started = perf_counter()
         result = ResearchResult(query=query, search_tool=self.search_tool)
         transcript: list[str] = []
-        for used in range(self.max_steps):
-            reply = self._call(llm, query, transcript, used, result)
+        for _ in range(self.max_steps):
+            reply = self._call(llm, query, transcript, len(result.steps), result)
             if reply is None:
                 result.degraded = "llm_drop"
                 break
@@ -200,7 +204,7 @@ class Explorer:
             self._act(reply, transcript, result)
         else:
             # Out of steps without an answer: one more call, told to answer.
-            reply = self._call(llm, query, transcript, self.max_steps, result, forced=True)
+            reply = self._call(llm, query, transcript, len(result.steps), result, forced=True)
             if reply is None:
                 result.degraded = "llm_drop"
             elif reply.get("action") == "final":
@@ -241,7 +245,7 @@ class Explorer:
         if reply is not None and reply.get("action") not in ACTIONS:
             # An unknown action is a wasted step, recorded as one rather than
             # treated as an answer.
-            transcript.append(f"## step {used}: unknown action {reply.get('action')!r}")
+            transcript.append(f"## step {used + 1}: unknown action {reply.get('action')!r}")
             result.steps.append(
                 {
                     "action": str(reply.get("action")),
@@ -331,20 +335,26 @@ class Explorer:
             return f"no such path: {self._relative(target) or '.'}"
         rel = self._relative(target) or "."
         if self.search_tool == "rg":
+            # --no-ignore: the workspace is a projection of the store, not a
+            # checkout, so a .gitignore or .rgignore that happens to cover it
+            # must not turn real matches into "(no matches)". The trailing "--"
+            # keeps a file name that looks like a flag from being read as one.
             argv = [
                 "rg",
                 "-n",
                 "--no-heading",
+                "--no-ignore",
                 "--color",
                 "never",
                 "--max-count",
-                str(MAX_HITS),
+                str(MAX_HITS_PER_FILE),
                 "-e",
                 pattern,
+                "--",
                 rel,
             ]
         else:
-            argv = ["grep", "-rn", "-I", "-m", str(MAX_HITS), "--", pattern, rel]
+            argv = ["grep", "-rn", "-I", "-m", str(MAX_HITS_PER_FILE), "--", pattern, rel]
         try:
             proc = subprocess.run(
                 argv,

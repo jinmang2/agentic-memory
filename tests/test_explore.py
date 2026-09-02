@@ -320,7 +320,7 @@ def test_the_loop_searches_reads_and_returns_a_cited_context(tmp_path):
     assert result.latency_s >= 0.0
     assert all(s["seconds"] >= 0.0 for s in result.steps)
     # The search really ran: the observation carried the matching line.
-    assert result.steps[0]["observation_chars"] > 0
+    assert "idle-timeout 2" in result.steps[0]["observation"]
 
 
 def test_the_search_observation_is_the_tools_own_output(tmp_path):
@@ -359,7 +359,7 @@ def test_ripgrep_is_used_when_it_is_available(tmp_path):
     )
     result = Explorer(root).research("why did it fail?", llm)
     assert result.search_tool == "rg"
-    assert result.steps[0]["observation_chars"] > 0
+    assert "TimeoutExpired" in result.steps[0]["observation"]
 
 
 def test_listing_a_directory_is_bounded_and_relative(tmp_path):
@@ -374,7 +374,7 @@ def test_listing_a_directory_is_bounded_and_relative(tmp_path):
     )
     result = Explorer(root, search_tool="grep").research("what is here?", llm)
     assert result.steps[0]["action"] == "list"
-    assert result.steps[0]["observation_chars"] > 0
+    assert "sessions/claude-code/sess-42.md" in result.steps[0]["observation"]
 
 
 @pytest.mark.parametrize("path", ["../../etc/passwd", "/etc/passwd", "sessions/../../.."])
@@ -648,3 +648,177 @@ def test_the_mcp_tool_clamps_the_step_count(tmp_path):
     assert payload["degraded"] == "max_steps"
     assert payload["llm_calls"] == MAX_STEPS_CAP + 1  # the cap, plus the forced final
     assert payload["export_s"] >= 0.0
+
+
+# --- tool edge cases ----------------------------------------------------------
+
+
+def _run_actions(tmp_path, actions: list[dict], **kw):
+    root = _workspace(tmp_path)
+    llm = StubLLM({"explore": [*actions, _final("ok", [])]})
+    return Explorer(root, search_tool="grep", **kw).research("q", llm)
+
+
+def test_search_refuses_an_empty_pattern_and_reports_no_matches(tmp_path):
+    result = _run_actions(
+        tmp_path,
+        [
+            {"action": "search", "reason": "r", "pattern": ""},
+            {"action": "search", "reason": "r", "pattern": "definitely-not-in-there"},
+        ],
+    )
+    assert "non-empty pattern" in result.steps[0]["observation"]
+    assert result.steps[1]["observation"] == "(no matches)"
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep is not installed")
+def test_ripgrep_ignores_ignore_files_in_the_workspace(tmp_path):
+    root = _workspace(tmp_path)
+    (root / ".ignore").write_text("*.md\n")
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+                _final("ok", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="rg").research("q", llm)
+    assert "TimeoutExpired" in result.steps[0]["observation"]
+
+
+def test_read_bounds_are_enforced(tmp_path):
+    result = _run_actions(
+        tmp_path,
+        [
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 5,
+                "end": 2,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": "x",
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 900,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 1,
+                "end": 999,
+            },
+            {"action": "read", "reason": "r", "path": "sessions", "start": 1, "end": 2},
+        ],
+    )
+    obs = [s["observation"] for s in result.steps[:5]]
+    assert "end before start" in obs[0]
+    assert "must be integers" in obs[1]
+    assert "beyond end of file" in obs[2]
+    assert obs[3].startswith("1: session: sess-42") and len(obs[3].splitlines()) <= 200
+    assert "no such file" in obs[4]
+
+
+def test_list_edge_cases_and_unknown_actions(tmp_path):
+    result = _run_actions(
+        tmp_path,
+        [
+            {"action": "list", "reason": "r", "path": "sessions/claude-code/sess-42.md"},
+            {"action": "list", "reason": "r", "path": "does-not-exist"},
+            {"action": "teleport", "reason": "r"},
+        ],
+    )
+    obs = [s["observation"] for s in result.steps[:3]]
+    assert "not a directory" in obs[0] and "not a directory" in obs[1]
+    assert result.steps[2]["action"] == "teleport" and obs[2] == "unknown action"
+    assert result.degraded is None and result.context == "ok"
+
+
+def test_the_prompt_numbers_steps_consecutively(tmp_path):
+    root = _workspace(tmp_path)
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "USER"},
+                {"action": "list", "reason": "r", "path": "."},
+                _final("ok", []),
+            ]
+        }
+    )
+    Explorer(root, search_tool="grep").research("q", llm)
+    last_prompt = llm.calls[-1][1]
+    assert "## step 1: search" in last_prompt and "## step 2: list" in last_prompt
+    assert "(2 of 8 used)" in last_prompt
+
+
+def test_explorer_refuses_a_bad_tool_or_zero_steps(tmp_path):
+    with pytest.raises(ValueError, match="search_tool"):
+        Explorer(tmp_path, search_tool="ack")
+    with pytest.raises(ValueError, match="max_steps"):
+        Explorer(tmp_path, max_steps=0)
+
+
+def test_an_observation_is_clipped(tmp_path):
+    root = _workspace(tmp_path)
+    (root / "sessions" / "claude-code" / "big.md").write_text("needle\n" * 5000)
+    llm = StubLLM(
+        {"explore": [{"action": "search", "reason": "r", "pattern": "needle"}, _final("ok", [])]}
+    )
+    result = Explorer(root, search_tool="grep", max_observation_chars=500).research("q", llm)
+    assert result.steps[0]["observation"].endswith("…[observation clipped]")
+    assert result.steps[0]["observation_chars"] <= 500 + 32
+
+
+def test_colliding_ids_get_distinct_files_and_a_retired_host_dir_is_removed(tmp_path):
+    from agmem.explore.workspace import safe_name
+
+    assert safe_name("sess-42") == "sess-42"
+    assert safe_name("a:b") != safe_name("a/b")
+    assert safe_name(" a ") != safe_name("a")
+    assert safe_name("..").startswith("_-")
+
+    mem = _mem()
+    mem.add_session(_session("only", host="codex"), distill=False)
+    root = tmp_path / "ws"
+    export_workspace(mem, root)
+    assert (root / "sessions" / "codex").is_dir()
+    # Retire the session's steps out from under the export.
+    for ep in mem.doc_store.list_episodes("t"):
+        mem.doc_store._conn.execute("DELETE FROM episodes WHERE id = ?", (ep.id,))
+    mem.doc_store._conn.commit()
+    export_workspace(mem, root)
+    assert not (root / "sessions" / "codex").exists()
+    mem.close()
+
+
+def test_the_mcp_tool_reports_any_failure_as_an_error_object(tmp_path, monkeypatch):
+    from agmem.mcp import server
+
+    cfg = AgmemConfig(sync_write=True, data_dir=tmp_path / "data")
+    mem = AgenticMemory(
+        namespace="t", organizers=["experience"], embedder=FakeEmbedder(dim=128), config=cfg
+    )
+    mem.structured = StubLLM({"explore": [_final("ok", [])]})
+
+    def boom(*a, **k):
+        raise TypeError("can't compare offset-naive and offset-aware datetimes")
+
+    monkeypatch.setattr("agmem.explore.export_workspace", boom)
+    server._registry._mems["t"] = mem
+    server._registry.default = "t"
+    server._registry.config = cfg
+    try:
+        payload = json.loads(server.research_memory("q", namespace="t"))
+    finally:
+        server._registry._mems.pop("t", None)
+        mem.close()
+    assert payload["error"].startswith("TypeError:")

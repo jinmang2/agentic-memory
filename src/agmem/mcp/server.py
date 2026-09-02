@@ -297,8 +297,9 @@ def research_memory(
     mem = get_mem(namespace)
     try:
         result = mem.research(query, max_steps=max_steps, budget_tokens=budget_tokens)
-    except (RuntimeError, ValueError) as exc:
-        return json.dumps({"error": str(exc), "namespace": mem.namespace})
+    except Exception as exc:  # a tool that raises takes the whole stdio session down
+        logger.exception("research_memory failed")
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}", "namespace": mem.namespace})
     return json.dumps(
         {
             "namespace": mem.namespace,
