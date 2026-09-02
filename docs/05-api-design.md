@@ -47,6 +47,7 @@ mem = AgenticMemory(organizers=[
 mem.add_message(content="...", role="user", timestamp=..., meta={...})
 mem.add_task_result(trajectory=[...], outcome="success",   # ReasoningBank/ACE/G-Memory 경로
                     task="...", agent_id="planner")
+mem.add_session(traj, outcome="success")       # 코딩 에이전트 세션 1건: 원문 보존 + 증류
 mem.warm_start(corpus)                         # cold-start 해소: 백필/offline 학습 공통 진입점
 mem.flush()                                    # 큐 드레인 대기 (테스트/벤치용)
 mem.consolidate()                              # 유예 위상 명시 트리거: 큐 드레인 + 버퍼 드레인
@@ -75,6 +76,28 @@ mem.log.tail(20)                               # evolution_log (append-only 연�
 mem.stats()                                    # 항목 수, LLM calls/tokens 누계
 mem.capabilities()                             # 감지 결과 + 활성 어댑터 + 강등 이력
 ```
+
+`add_session(traj, *, outcome, persist_steps, distill, force)`는 `agmem.sessions.SessionTrajectory`
+하나를 받아 **원문과 증류물을 함께** 남긴다. `add_task_result`는 태스크 한 줄만 저장하고 궤적을
+버리지만(벤치 하네스와 MCP 도구가 넘기는 궤적에는 가리킬 만한 영속 id가 없기 때문에 그대로 둔다),
+세션 로그에는 호스트·세션 id·스텝 위치라는 지속적인 신원이 있으므로 스텝마다 `Episode` 하나를
+결정적 id(`SessionTrajectory.episode_id`)로 저장하고, organizer가 쓴 runbook이 자기가 읽은 스텝을
+`source_episode_ids`로 되짚을 수 있게 한다(docs/research/agent-memory-axes-v1.md §7.1).
+
+- **`on_message` 팬아웃은 하지 않는다.** 세션 스텝은 대화 턴이 아니다. 도구 호출과 그 출력은 한
+  에이전트의 작업 기록이지 사용자가 시스템에 건넨 발화가 아니며, 대화형 방법론(A-Mem·Nemori·
+  MemoryOS)은 그것을 발화처럼 분절·요약하면서 스텝당 모델 호출을 지불하게 된다. 세션을 소비하는
+  방법론은 `on_task_end`로 받고, 원문 episode는 나중에 id로 되읽기 위해 존재한다.
+- **멱등이다.** 첫 스텝의 id가 이미 doc store에 있으면 저장도 증류도 건너뛰고
+  `already_ingested=True`로 돌아온다. 데몬의 백필이 같은 파일을 다시 훑기 때문에 필요하고,
+  두 번째 증류는 두 번째 청구서이기 때문에 중요하다. `force=True`면 다시 저장하고
+  (`add_episode`가 INSERT OR REPLACE라 id가 늘지 않는다) 다시 증류한다.
+- **저장이 dispatch보다 먼저 끝난다.** 그래야 스텝 dict에 실린 `episode_id` 포인터가 organizer가
+  볼 시점에 스토어에서 해소된다.
+
+CLI 진입점은 `python -m agmem.sessions ingest`다. `--dry-run`(doc store만 열고 아무것도 쓰지 않음)과
+`--no-distill`(원문만 저장)은 $0 경로이고, 증류는 `--limit N`(N ≤ 20)을 명시해야만 실행되며 설정에
+LLM 역할이 없으면 조용히 건너뛰는 대신 종료 코드 2로 거부한다.
 
 미구현(로드맵): `search(time_range=...)` temporal 필터, `mem.snapshot()/restore()` 로그 재생 복원.
 

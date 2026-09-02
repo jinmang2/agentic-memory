@@ -99,7 +99,8 @@ def test_schema_matches_codex_raw_memory_and_agentrunbook_fields():
     """The plan's acceptance criterion: field-level correspondence, pinned.
     Codex `raw_memory` task blocks carry outcome, preference signals, reusable
     knowledge, failures, references and keywords; AgentRunbook-R adds the
-    procedure note."""
+    procedure note. `steps` is ours and has no upstream counterpart — it is the
+    citation that lets a runbook point back at the persisted transcript."""
     task_props = set(SCHEMA["properties"]["tasks"]["items"]["properties"])
     assert task_props == {
         "name",
@@ -110,6 +111,13 @@ def test_schema_matches_codex_raw_memory_and_agentrunbook_fields():
         "references",
         "procedure",
         "keywords",
+        "steps",
+    }
+    assert SCHEMA["properties"]["tasks"]["items"]["properties"]["steps"] == {
+        "type": "array",
+        "items": {"type": "integer"},
+        "minItems": 2,
+        "maxItems": 2,
     }
     assert SCHEMA["properties"]["tasks"]["items"]["properties"]["outcome"]["enum"] == [
         "success",

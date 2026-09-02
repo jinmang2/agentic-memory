@@ -1,0 +1,478 @@
+"""`add_session` and `python -m agmem.sessions ingest`: a session's raw steps
+land in the store, once, and the distillation runs against them.
+
+The gap this closes is docs/research/agent-memory-axes-v1.md §7.1: the facade
+kept only the task line, so there was no raw trajectory to read back and no
+caller for `as_task_trajectory()` outside the MCP tool. Nothing here spends —
+`FakeEmbedder` for the vectors, `StubLLM` for the one distill call.
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+
+import pytest
+from helpers import StubLLM
+
+from agmem import AgenticMemory
+from agmem.config import AgmemConfig
+from agmem.core.ops import MemoryOp, OpType
+from agmem.embed.fake import FakeEmbedder
+from agmem.organizers.base import Organizer
+from agmem.organizers.experience.organizer import MEMORY_TYPE
+from agmem.sessions import SessionTrajectory, Step
+
+TS = "2026-09-02T01:00:00.000Z"
+
+
+class RecordingOrganizer(Organizer):
+    """Counts `on_task_end` calls and keeps the trajectory it was handed, so a
+    test can assert that a re-ingest did NOT reach the distiller."""
+
+    name = "recording"
+    produces = ("runbooks",)
+
+    def __init__(self) -> None:
+        self.task_ends: list[tuple[list[dict], str, str]] = []
+
+    def on_task_end(self, trajectory, outcome, task, ctx) -> list[MemoryOp]:
+        self.task_ends.append((trajectory, outcome, task))
+        return []
+
+
+def _session(session_id: str = "sess-42") -> SessionTrajectory:
+    traj = SessionTrajectory(id=session_id, host="claude-code", source_path="x", cwd="/home/u/proj")
+    traj.steps = [
+        Step(kind="user", text="Fix the flaky test in tests/test_daemon.py"),
+        Step(kind="assistant", text="Looking."),
+        Step(kind="tool_call", text='{"command": "uv run pytest -q"}', tool_name="Bash"),
+        Step(
+            kind="tool_result", text="1 failed: test_idle_timeout TimeoutExpired", tool_name="Bash"
+        ),
+        Step(kind="user", text="use --idle-timeout 2 in that test, not 30"),
+    ]
+    return traj
+
+
+def _mem(organizer: Organizer) -> AgenticMemory:
+    return AgenticMemory(
+        namespace="t",
+        organizers=[organizer],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(sync_write=True),
+    )
+
+
+def test_add_session_persists_every_step_and_they_are_searchable():
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    traj = _session()
+    ingest = mem.add_session(traj, outcome="success")
+    mem.flush()
+
+    assert ingest.session_id == "sess-42" and ingest.host == "claude-code"
+    assert ingest.already_ingested is False and ingest.dispatched is True
+    assert ingest.episode_ids == [traj.episode_id(i) for i in range(len(traj.steps))]
+
+    stored = mem.doc_store.get_episodes(list(ingest.episode_ids))
+    assert len(stored) == len(traj.steps)
+    by_id = {e.id: e for e in stored}
+    for index, step in enumerate(traj.steps):
+        episode = by_id[traj.episode_id(index)]
+        assert episode.content == step.text
+        assert episode.role == step.kind
+        assert episode.meta["session_id"] == "sess-42"
+        assert episode.meta["step_index"] == index
+        assert episode.meta["source"] == "claude-code"
+
+    bundle = mem.search("TimeoutExpired idle-timeout", memory_types=("episodic",), k=5)
+    assert {s.item.id for s in bundle.items} <= set(ingest.episode_ids)
+    assert "TimeoutExpired" in bundle.render()
+    mem.close()
+
+
+def test_add_session_dispatches_the_distiller_with_pointered_steps():
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    traj = _session()
+    ingest = mem.add_session(traj, outcome="partial")
+    mem.flush()
+
+    assert len(org.task_ends) == 1
+    steps, outcome, task = org.task_ends[0]
+    assert outcome == "partial"
+    assert task == "Fix the flaky test in tests/test_daemon.py"
+    assert [s["episode_id"] for s in steps] == list(ingest.episode_ids)
+    # The pointers resolve: persist ran before dispatch.
+    assert len(mem.doc_store.get_episodes([s["episode_id"] for s in steps])) == len(steps)
+    mem.close()
+
+
+def test_add_session_does_not_fan_out_on_message():
+    """Session steps are not conversation turns — see the method's docstring."""
+
+    class MessageCounter(Organizer):
+        name = "counter"
+
+        def __init__(self) -> None:
+            self.seen = 0
+
+        def on_message(self, episode, ctx) -> list[MemoryOp]:
+            self.seen += 1
+            return []
+
+    org = MessageCounter()
+    mem = _mem(org)
+    mem.add_session(_session())
+    mem.flush()
+    assert org.seen == 0
+    mem.close()
+
+
+def test_reingesting_the_same_session_is_a_no_op_until_forced():
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    traj = _session()
+    first = mem.add_session(traj)
+    mem.flush()
+    before = mem.doc_store.count_episodes()
+
+    second = mem.add_session(_session())
+    mem.flush()
+    assert second.already_ingested is True and second.dispatched is False
+    assert mem.doc_store.count_episodes() == before
+    assert len(org.task_ends) == 1  # the distiller was not paid twice
+
+    forced = mem.add_session(_session(), force=True)
+    mem.flush()
+    assert forced.already_ingested is True and forced.dispatched is True
+    assert forced.episode_ids == first.episode_ids
+    assert mem.doc_store.count_episodes() == before  # INSERT OR REPLACE, not duplicates
+    assert len(org.task_ends) == 2
+    mem.close()
+
+
+def test_persist_and_distill_can_each_be_turned_off():
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    ingest = mem.add_session(_session(), distill=False)
+    mem.flush()
+    assert ingest.dispatched is False
+    assert mem.doc_store.count_episodes() == len(_session().steps)
+    assert org.task_ends == []
+
+    org2 = RecordingOrganizer()
+    mem2 = _mem(org2)
+    ingest2 = mem2.add_session(_session("other"), persist_steps=False)
+    mem2.flush()
+    assert ingest2.episode_ids == []
+    assert mem2.doc_store.count_episodes() == 0
+    assert len(org2.task_ends) == 1
+    # Nothing was persisted, so the steps must not carry pointers to episodes
+    # that do not exist — an organizer would copy them into a runbook as if
+    # they resolved.
+    assert all("episode_id" not in step for step in org2.task_ends[0][0])
+    mem.close()
+    mem2.close()
+
+
+def test_add_task_result_strips_pointers_it_did_not_persist():
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    traj = _session()
+    mem.add_task_result(traj.as_task_trajectory(), outcome="unknown", task=traj.task_text)
+    mem.flush()
+    assert len(org.task_ends) == 1
+    steps = org.task_ends[0][0]
+    assert all("episode_id" not in step for step in steps)
+    assert steps[0]["session_id"] == "sess-42"  # the rest of the step is untouched
+    assert mem.doc_store.count_episodes() == 1  # only the task line, as before
+    mem.close()
+
+
+# --------------------------------------------------------------------------- pointers
+
+
+def _distilled(steps: list[int] | None) -> dict:
+    task: dict = {
+        "name": "Fix the flaky test",
+        "outcome": "success",
+        "reusable_knowledge": ["--idle-timeout 30 exceeds the test timeout"],
+        "keywords": ["test_daemon"],
+    }
+    if steps is not None:
+        task["steps"] = steps
+    return {"summary": "The user asked to fix a flaky test.", "tasks": [task]}
+
+
+def _experience_mem(llm) -> AgenticMemory:
+    from agmem.organizers.experience import ExperienceOrganizer
+
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=[ExperienceOrganizer()],
+        embedder=FakeEmbedder(dim=128),
+        config=AgmemConfig(sync_write=True),
+    )
+    mem.structured = llm
+    mem._ctx.llm = llm
+    return mem
+
+
+def test_runbook_carries_the_step_range_and_the_episode_ids_it_is_grounded_in():
+    llm = StubLLM({"distill": [_distilled([2, 4])]})
+    mem = _experience_mem(llm)
+    traj = _session()
+    ingest = mem.add_session(traj)
+    mem.flush()
+
+    adds = [op for op in mem.log.tail(50) if op.op is OpType.ADD and op.target_type == MEMORY_TYPE]
+    assert len(adds) == 1
+    payload = adds[0].payload
+    assert payload["step_range"] == [2, 4]
+    assert payload["source_episode_ids"] == [traj.episode_id(i) for i in (2, 3, 4)]
+    assert set(payload["source_episode_ids"]) <= set(ingest.episode_ids)
+    assert "source: claude-code session sess-42 steps 2-4" in payload["content"]
+    json.dumps(payload)
+    mem.close()
+
+
+def test_a_missing_or_impossible_step_range_falls_back_to_the_whole_session():
+    for steps in (None, [9, 99], [4, 2], ["a", "b"]):
+        llm = StubLLM({"distill": [_distilled(steps)]})
+        mem = _experience_mem(llm)
+        traj = _session()
+        mem.add_session(traj)
+        mem.flush()
+        adds = [
+            op for op in mem.log.tail(50) if op.op is OpType.ADD and op.target_type == MEMORY_TYPE
+        ]
+        payload = adds[0].payload
+        assert payload["step_range"] is None, steps
+        assert payload["source_episode_ids"] == [
+            traj.episode_id(i) for i in range(len(traj.steps))
+        ], steps
+        mem.close()
+
+
+def test_an_interrupted_ingest_is_not_sealed_as_complete():
+    """Only the first step present means an earlier run died mid-loop; the next
+    pass must re-persist and distil, not report `already ingested`."""
+    org = RecordingOrganizer()
+    mem = _mem(org)
+    traj = _session()
+    first_only = traj.to_episodes("t")[:1]
+    mem.doc_store.add_episode(first_only[0])  # the state a crash after batch 1 leaves
+    ingest = mem.add_session(traj)
+    mem.flush()
+    assert ingest.already_ingested is False and ingest.dispatched is True
+    assert mem.doc_store.count_episodes() == len(traj.steps)
+    assert len(org.task_ends) == 1
+    # And now it IS complete, so the next pass is the no-op.
+    again = mem.add_session(traj)
+    assert again.already_ingested is True and len(org.task_ends) == 1
+    mem.close()
+
+
+def test_force_replaces_the_earlier_runbook_instead_of_adding_a_second():
+    llm = StubLLM({"distill": [_distilled([2, 4]), _distilled([2, 4])]})
+    mem = _experience_mem(llm)
+    traj = _session()
+    mem.add_session(traj)
+    mem.flush()
+    first = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert len(first) == 1
+
+    mem.add_session(traj, force=True)
+    mem.flush()
+    after = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert len(after) == 1, "a re-distillation must retire the runbook it replaces"
+    assert after[0]["id"] != first[0]["id"]
+    ops = list(mem.log.tail(20))
+    deletes = [op for op in ops if op.op is OpType.DELETE and op.target_type == MEMORY_TYPE]
+    assert [op.target_id for op in deletes] == [first[0]["id"]]
+    assert deletes[0].payload["reason"] == "re-distillation"
+    mem.close()
+
+
+def test_steps_without_pointers_still_distil():
+    """`add_task_result` callers (FiNER, the MCP tool) pass step dicts with no
+    `episode_id`; the payload then carries an empty list, not a crash."""
+    llm = StubLLM({"distill": [_distilled([0, 1])]})
+    mem = _experience_mem(llm)
+    steps = [{"kind": "user", "text": "hi", "host": "claude-code", "session_id": "s"}]
+    mem.add_task_result(trajectory=steps, outcome="success", task="hi")
+    mem.flush()
+    adds = [op for op in mem.log.tail(50) if op.op is OpType.ADD and op.target_type == MEMORY_TYPE]
+    assert adds[0].payload["source_episode_ids"] == []
+    mem.close()
+
+
+# --------------------------------------------------------------------------- CLI
+
+
+def _claude_session_file(tmp_path):
+    """One synthetic Claude Code session file, in the shape tests/test_sessions.py
+    builds (field names observed on 2026-09-02)."""
+    records = [
+        {
+            "type": "user",
+            "uuid": "u1",
+            "isSidechain": False,
+            "timestamp": TS,
+            "cwd": "/home/u/proj",
+            "sessionId": "cli-1",
+            "gitBranch": "main",
+            "message": {"role": "user", "content": "Fix the failing test"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "u2",
+            "isSidechain": False,
+            "timestamp": TS,
+            "cwd": "/home/u/proj",
+            "sessionId": "cli-1",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Fixed."}]},
+        },
+    ]
+    path = tmp_path / "cli-1.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return path
+
+
+def _run_cli(args, tmp_path, home=None):
+    """The CLI in its own process, pointed at a config that overrides the
+    embedder slot to `FakeEmbedder` — the real one would fetch weights, and this
+    test must neither download nor spend."""
+    import os
+
+    config = tmp_path / "agmem.toml"
+    config.write_text(
+        '[profile]\nname = "lite"\n\n'
+        f'[storage]\ndata_dir = "{tmp_path / "data"}"\n\n'
+        '[override]\nembedder = "FakeEmbedder"\n'
+    )
+    env = dict(os.environ)
+    env["AGMEM_CONFIG"] = str(config)
+    if home is not None:
+        env["HOME"] = str(home)
+    env.pop("AGMEM_DATA_DIR", None)
+    env.pop("AGMEM_NAMESPACE", None)
+    return subprocess.run(
+        [sys.executable, "-m", "agmem.sessions", *args],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(tmp_path),
+        check=False,
+    )
+
+
+def test_cli_dry_run_prints_the_plan_and_writes_nothing(tmp_path):
+    path = _claude_session_file(tmp_path)
+    proc = _run_cli(["ingest", str(path), "--dry-run"], tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "cli-1" in proc.stdout and "steps=    2" in proc.stdout
+    assert "would ingest" in proc.stdout
+
+    from agmem.stores.sqlite_doc import SqliteDocStore
+
+    store = SqliteDocStore(tmp_path / "data" / "main" / "memory.db")
+    assert store.count_episodes() == 0  # a dry run opens the store and writes nothing
+    store.close()
+
+
+def test_cli_no_distill_persists_the_raw_steps(tmp_path):
+    path = _claude_session_file(tmp_path)
+    proc = _run_cli(["ingest", str(path), "--no-distill", "--namespace", "cli"], tmp_path)
+    assert proc.returncode == 0, proc.stderr
+    assert "persisted=2" in proc.stdout
+
+    from agmem.stores.sqlite_doc import SqliteDocStore
+
+    store = SqliteDocStore(tmp_path / "data" / "cli" / "memory.db")
+    assert store.count_episodes() == 2
+    store.close()
+
+    # Second run over the same file re-reads it and writes nothing new.
+    again = _run_cli(["ingest", str(path), "--no-distill", "--namespace", "cli"], tmp_path)
+    assert again.returncode == 0
+    assert "already ingested" in again.stdout
+
+
+def test_cli_refuses_to_distil_without_a_limit_or_an_llm(tmp_path):
+    path = _claude_session_file(tmp_path)
+    no_limit = _run_cli(["ingest", str(path)], tmp_path)
+    assert no_limit.returncode == 2
+    assert "--limit" in (no_limit.stderr + no_limit.stdout)
+
+    too_many = _run_cli(["ingest", str(path), "--limit", "21"], tmp_path)
+    assert too_many.returncode == 2
+    assert "--limit" in (too_many.stderr + too_many.stdout)
+
+    no_llm = _run_cli(["ingest", str(path), "--limit", "1"], tmp_path)
+    assert no_llm.returncode == 2
+    assert "no LLM" in (no_llm.stderr + no_llm.stdout)
+
+
+def test_cli_rejects_a_negative_limit_instead_of_dropping_sessions(tmp_path):
+    path = _claude_session_file(tmp_path)
+    proc = _run_cli(["ingest", str(path), "--no-distill", "--limit", "-1"], tmp_path)
+    assert proc.returncode == 2
+    assert "non-negative" in proc.stderr
+
+
+def _second_session_file(tmp_path):
+    records = [
+        {
+            "type": "user",
+            "uuid": "v1",
+            "isSidechain": False,
+            "timestamp": TS,
+            "cwd": "/home/u/proj",
+            "sessionId": "cli-2",
+            "gitBranch": "main",
+            "message": {"role": "user", "content": "Add a changelog entry"},
+        },
+        {
+            "type": "assistant",
+            "uuid": "v2",
+            "isSidechain": False,
+            "timestamp": TS,
+            "cwd": "/home/u/proj",
+            "sessionId": "cli-2",
+            "message": {"role": "assistant", "content": [{"type": "text", "text": "Added."}]},
+        },
+    ]
+    path = tmp_path / "cli-2.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return path
+
+
+def test_cli_limit_counts_sessions_taken_in_not_files_seen(tmp_path):
+    """A backfill run in slices must advance: sessions already in the store do
+    not consume the limit, so `--limit 1` over [ingested, new] takes the new one."""
+    first = _claude_session_file(tmp_path)
+    second = _second_session_file(tmp_path)
+    ns = ["--namespace", "cli"]
+    assert _run_cli(["ingest", str(first), "--no-distill", *ns], tmp_path).returncode == 0
+    proc = _run_cli(
+        ["ingest", str(first), str(second), "--no-distill", "--limit", "1", *ns], tmp_path
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "cli-1" in proc.stdout and "already ingested" in proc.stdout
+    assert "cli-2" in proc.stdout and "persisted=2" in proc.stdout
+    assert "1 session(s) ingested this run" in proc.stdout
+
+
+@pytest.mark.parametrize("host", ["claude-code", "codex", "all"])
+def test_cli_discovers_sessions_the_way_scan_does(tmp_path, host):
+    """Discovery under an empty HOME finds nothing and says so, rather than
+    reaching for this machine's real sessions."""
+    home = tmp_path / "home"
+    home.mkdir()
+    proc = _run_cli(["ingest", "--host", host, "--dry-run"], tmp_path, home=home)
+    assert proc.returncode == 0, proc.stderr
+    assert "0 session(s)" in proc.stdout

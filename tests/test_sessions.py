@@ -268,3 +268,26 @@ def test_discovery_uses_the_hosts_layouts(tmp_path):
     assert [p.name for p in iter_codex_sessions(home=tmp_path)] == [
         "rollout-2026-09-02T00-00-00-x.jsonl"
     ]
+
+
+def test_step_ids_are_deterministic_so_reingesting_a_session_overwrites_itself(codex_session):
+    """The ingest path is idempotent because the ids are, not because it keeps a
+    ledger: a session read twice yields the same episode ids and the doc store's
+    INSERT OR REPLACE turns the second write into a no-op."""
+    traj = load_codex(codex_session)
+    again = load_codex(codex_session)
+    ids = [traj.episode_id(i) for i in range(len(traj.steps))]
+    assert ids == [again.episode_id(i) for i in range(len(again.steps))]
+    assert len(set(ids)) == len(ids)
+    assert all(eid.startswith("sess-") for eid in ids)
+    assert [e.id for e in traj.to_episodes()] == ids
+    assert [s["episode_id"] for s in traj.as_task_trajectory()] == ids
+
+    # Same index, different session or host: a different id, so two hosts that
+    # happen to name a session alike never collide in one store.
+    other_host = load_codex(codex_session)
+    other_host.host = HOST_CLAUDE_CODE
+    assert other_host.episode_id(0) != traj.episode_id(0)
+    other_id = load_codex(codex_session)
+    other_id.id = "different"
+    assert other_id.episode_id(0) != traj.episode_id(0)

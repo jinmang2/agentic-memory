@@ -75,6 +75,14 @@ def main() -> None:
             close = getattr(store, "close", None)
             if close is not None:
                 close()
+        # Only what a user said. The capture hook writes `role="user"` alone, so
+        # this used to be the whole store; `add_session` now files every step of a
+        # session log — tool-call JSON and tool output included — and twelve of
+        # those would fill the listing with an agent's working notes instead of
+        # the user's recent requests. A full scan is cheap enough here (0.006 s
+        # per 500 episodes measured), and the ordering contract of
+        # `list_episodes` still holds after the filter.
+        episodes = [ep for ep in episodes if getattr(ep, "role", "user") == "user"]
         # `list_episodes` documents oldest-first, so the tail is the newest slice
         # and reversing it puts the most recent line first.
         episodes = list(episodes)[-MAX_EPISODES:][::-1]

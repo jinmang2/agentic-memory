@@ -12,9 +12,9 @@ import logging
 import queue
 import threading
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
@@ -36,6 +36,9 @@ from agmem.retrieval import RetrievalPipeline
 from agmem.retrieval.rerank import RERANKER_CANDIDATES
 from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
 
+if TYPE_CHECKING:  # `agmem.sessions` is a leaf parser; the import stays lazy anyway
+    from agmem.sessions import SessionTrajectory
+
 logger = logging.getLogger("agmem")
 
 # BITEMPORAL_TYPES now lives in core.types (imported above, so
@@ -48,6 +51,42 @@ logger = logging.getLogger("agmem")
 # A plain sentinel rather than a flag because the worker blocks in queue.get(),
 # so nothing short of an item can wake it.
 _SHUTDOWN = object()
+
+
+@dataclass(frozen=True)
+class SessionIngest:
+    """What ``add_session`` did with one session, for a caller that has to report it.
+
+    ``already_ingested`` says the session's steps were in the store before this
+    call, which is also why ``dispatched`` may be False: a re-read of the same
+    session must not pay for the distillation twice.
+
+    ``episode_ids`` are the steps that are in the store under this session —
+    written by this call, or found there by the idempotency check. It is empty
+    only when nothing was persisted (``persist_steps=False``, or a session with
+    no steps)."""
+
+    session_id: str
+    host: str
+    episode_ids: list[str]
+    already_ingested: bool
+    dispatched: bool
+
+
+def _without_episode_ids(trajectory: list[dict]) -> list[dict]:
+    """The step dicts with their ``episode_id`` pointers removed.
+
+    ``SessionTrajectory.as_task_trajectory`` stamps every step with the id it
+    WOULD have as a persisted episode. That is only a true pointer once
+    ``add_session`` has stored the steps; through ``add_task_result``, or
+    ``add_session(persist_steps=False)``, nothing is stored, and an organizer
+    that copied the ids into a runbook would be citing episodes that do not
+    exist. An organizer cannot tell the two cases apart from the steps alone, so
+    the facade — the one party that knows what it persisted — strips the ids."""
+    return [
+        {k: v for k, v in step.items() if k != "episode_id"} if isinstance(step, dict) else step
+        for step in trajectory
+    ]
 
 
 class AgenticMemory:
@@ -497,7 +536,13 @@ class AgenticMemory:
 
         The stored episode's ``meta`` keeps only ``outcome``/``agent_id``/step count — the
         full ``trajectory`` is never persisted by the facade, so ``on_task_end`` is the only
-        place methodologies (ReasoningBank/ACE/G-Memory) see step-by-step detail."""
+        place methodologies (ReasoningBank/ACE/G-Memory) see step-by-step detail.
+
+        That is deliberate here and stays as it is: the bench harnesses and the MCP
+        tool pass trajectories they built themselves, whose steps have no durable
+        identity to point at. ``add_session`` is the path that DOES persist the
+        trajectory — one episode per step, with stable ids — for callers that have a
+        real session log."""
         episode = Episode(
             content=task,
             role="task",
@@ -505,11 +550,160 @@ class AgenticMemory:
             meta={"outcome": outcome, "agent_id": agent_id, "steps": len(trajectory)},
         )
         self._ingest_episode(episode, {"outcome": outcome})
+        trajectory = _without_episode_ids(trajectory)
         self._dispatch(
             lambda: self._apply_from_all(
                 lambda org: org.on_task_end(trajectory, outcome, task, self._ctx)
             )
         )
+
+    def add_session(
+        self,
+        traj: SessionTrajectory,
+        *,
+        outcome: str = "unknown",
+        persist_steps: bool = True,
+        distill: bool = True,
+        force: bool = False,
+        batch_size: int = 128,
+    ) -> SessionIngest:
+        """Ingest one coding-agent session: its raw steps into the store, then the
+        distillation over them.
+
+        This is the entry point ``add_task_result`` could not be. A session log has
+        a durable identity — host, session id, step position — so every step becomes
+        an ``Episode`` with a deterministic id (``SessionTrajectory.episode_id``),
+        and what an organizer writes about the session can point back at the exact
+        steps it read (docs/research/agent-memory-axes-v1.md §7.1: without this
+        there is no raw store for a later just-in-time read, and no caller of
+        ``as_task_trajectory`` outside the MCP tool).
+
+        NO ``on_message`` FAN-OUT. Session steps are not conversation turns. A tool
+        call and its output are one agent's working notes, not something a user said
+        to the system, and the conversational methodologies (A-Mem's note induction,
+        Nemori's episode boundaries, MemoryOS's STM) would segment and summarise them
+        as if they were — at one or more model calls per step, for a signal the
+        session-level distillation already extracts once. The methodologies that
+        consume sessions do so through ``on_task_end``; the raw episodes exist to be
+        read back by id (the pointer discipline GAM and AgentRunbook-C use), and the
+        recency hook and lexical search already see them without any hook running.
+
+        IDEMPOTENCY. A session read twice must not be stored twice or distilled
+        twice — the daemon's backfill will re-scan the same files, and the second
+        distillation is a second bill. The check is the FIRST AND LAST step ids:
+        both in the doc store means the persist loop ran to its end, and without
+        ``force`` this then persists nothing, dispatches nothing, and returns with
+        ``already_ingested=True``. Only the first present means an earlier run
+        died mid-loop (there is no transaction around the batches); that is
+        logged and treated as not ingested, so the session is re-persisted and
+        distilled rather than sealed at a fraction of its steps. With
+        ``force=True`` the steps are re-persisted (``add_episode`` is INSERT OR
+        REPLACE, so ids do not multiply) and the distillation runs again — the way
+        to pick up a changed prompt or a changed clip policy. In both re-runs the
+        derived items an earlier distillation wrote for this session are DELETEd
+        first (``_retire_session_items``), or a re-distillation would leave two
+        runbooks per session competing in every search.
+
+        What this does not cover: a distillation queued under ``sync_write=False``
+        and lost to a process exit before ``flush()``/``close()``. The raw steps
+        are then complete, so the next pass reports ``already_ingested`` and the
+        session is never distilled — ``force=True`` is the recovery.
+
+        ORDER. Persisting is synchronous and completes before the dispatch, so the
+        ``episode_id`` pointers on the step dicts resolve in the store by the time
+        an organizer looks at them. Under ``sync_write=False`` the distillation
+        itself is queued; ``close()`` and ``flush()`` drain that queue, and a CLI
+        that exits without either would lose it.
+
+        ``outcome`` is the caller's label for the whole session and is a hint only —
+        the ``experience`` organizer labels each task block it finds itself.
+        """
+        episode_ids = [traj.episode_id(i) for i in range(len(traj.steps))]
+        if not traj.steps:
+            # Nothing to point at and nothing to distil. Returning early keeps a
+            # zero-step session from being re-distilled on every backfill pass: it
+            # would never register as already-ingested, having stored no episode.
+            return SessionIngest(traj.id, traj.host, [], False, False)
+
+        bounds = {episode_ids[0], episode_ids[-1]}
+        present = {e.id for e in self.doc_store.get_episodes(sorted(bounds))}
+        already = present == bounds
+        if already and not force:
+            logger.info(
+                "add_session: %s/%s already ingested (%d steps) — skipping persist and distill",
+                traj.host,
+                traj.id,
+                len(traj.steps),
+            )
+            return SessionIngest(traj.id, traj.host, episode_ids, True, False)
+        if present and not already:
+            logger.warning(
+                "add_session: %s/%s is partially ingested (first step present, last missing)"
+                " — an earlier run died mid-loop; re-persisting all %d steps",
+                traj.host,
+                traj.id,
+                len(traj.steps),
+            )
+        if present and distill:
+            self._retire_session_items(traj.id)
+
+        persisted: list[str] = []
+        if persist_steps:
+            episodes = traj.to_episodes(self.namespace)
+            for start in range(0, len(episodes), batch_size):
+                chunk = episodes[start : start + batch_size]
+                vectors = self.embedder.embed([e.embedding_text() for e in chunk])
+                for offset, (episode, vector) in enumerate(zip(chunk, vectors, strict=True)):
+                    self._ingest_episode(
+                        episode,
+                        {
+                            "role": episode.role,
+                            "session_id": traj.id,
+                            "step_index": start + offset,
+                            "source": traj.host,
+                        },
+                        vector=vector,
+                    )
+                    persisted.append(episode.id)
+
+        if distill:
+            steps = traj.as_task_trajectory()
+            if not persist_steps:
+                steps = _without_episode_ids(steps)
+            task_text = traj.task_text
+            self._dispatch(
+                lambda: self._apply_from_all(
+                    lambda org: org.on_task_end(steps, outcome, task_text, self._ctx)
+                )
+            )
+        return SessionIngest(traj.id, traj.host, persisted, already, distill)
+
+    def _retire_session_items(self, session_id: str) -> int:
+        """DELETE every derived item an organizer wrote about ``session_id``, so a
+        re-distillation replaces the earlier one instead of sitting next to it.
+
+        Generic over the active organizers' ``produces``: whatever type they
+        write, an item that carries ``session_id`` in its data came from this
+        session. Goes through ``_apply_ops`` so the deletions are in the
+        evolution log like any other change — a replay can then tell that the
+        first runbook was retired, not lost."""
+        ops: list[MemoryOp] = []
+        produced = dict.fromkeys(t for org in self.organizers for t in org.produces)
+        for memory_type in produced:
+            for item in self.doc_store.list_items(memory_type, namespace=self.namespace):
+                if item.get("session_id") == session_id and item.get("id"):
+                    ops.append(
+                        MemoryOp(
+                            op=OpType.DELETE,
+                            target_type=memory_type,
+                            target_id=str(item["id"]),
+                            actor="ingest",
+                            payload={"reason": "re-distillation", "session_id": session_id},
+                        )
+                    )
+        if ops:
+            self._apply_ops(ops, actor="ingest")
+        return len(ops)
 
     def add_scaled_task_result(
         self, trajectories: list[list[dict]], task: str, agent_id: str = "agent"

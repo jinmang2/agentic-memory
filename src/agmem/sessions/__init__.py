@@ -32,6 +32,7 @@ one so the daemon can backfill thousands of steps without a bill.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Iterator
@@ -141,6 +142,23 @@ class SessionTrajectory:
     def user_turns(self) -> int:
         return sum(1 for s in self.steps if s.kind == "user")
 
+    def episode_id(self, index: int) -> str:
+        """The id the step at `index` gets as an `Episode`, derived rather than
+        drawn.
+
+        Ingest is idempotent because this is deterministic: reading the same
+        session file again yields the same ids, and the doc store's
+        INSERT OR REPLACE turns the second write into an overwrite instead of a
+        duplicate. Host and session id are both in the hash, so two hosts that
+        happen to name a session alike stay apart in one store. A step's
+        position is its identity, which means an id survives the text changing
+        (a wider clip, a new redaction pattern) and does NOT survive a step
+        being inserted earlier — acceptable, because a session log is
+        append-only once written.
+        """
+        digest = hashlib.sha1(f"{self.host}:{self.id}:{index}".encode()).hexdigest()
+        return f"sess-{digest[:24]}"
+
     def to_episodes(self, namespace: str = "main"):
         """One `Episode` per step, carrying enough meta to rebuild the trajectory.
 
@@ -153,6 +171,7 @@ class SessionTrajectory:
         for index, step in enumerate(self.steps):
             episodes.append(
                 Episode(
+                    id=self.episode_id(index),
                     content=step.text,
                     role=step.kind,
                     namespace=namespace,
@@ -192,6 +211,7 @@ class SessionTrajectory:
                 "cwd": self.cwd,
                 "session_id": self.id,
                 "step_index": index,
+                "episode_id": self.episode_id(index),
             }
             for index, step in enumerate(self.steps)
         ]

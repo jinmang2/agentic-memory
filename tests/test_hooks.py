@@ -106,6 +106,29 @@ def test_capture_then_recall_round_trips_through_the_store(seeded):
     assert "Berlin" in payload["hookSpecificOutput"]["additionalContext"]
 
 
+def test_recall_lists_what_the_user_said_not_the_agents_tool_output(seeded):
+    """`add_session` files tool calls and tool output as episodes too; the
+    session-start listing must still be the user's recent requests."""
+    from agmem.hooks import open_doc_store
+
+    ns, store = open_doc_store(namespace="hooktest", data_dir=str(seeded / "data"))
+    from agmem.core.types import Episode
+
+    for role, text in (
+        ("tool_call", '{"command": "rg -n TODO src"}'),
+        ("tool_result", "src/x.py:3: TODO remove"),
+        ("assistant", "Found one TODO."),
+    ):
+        store.add_episode(Episode(content=text, role=role, namespace=ns))
+    assert store.count_episodes(namespace=ns) == 4  # the seeded prompt + these three
+    store.close()
+    got = _run("agmem.hooks.recall", {}, seeded)
+    assert got.returncode == 0, got.stderr[-2000:]
+    context = json.loads(got.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "Berlin" in context
+    assert "rg -n TODO" not in context and "Found one TODO" not in context
+
+
 def test_recall_on_an_empty_store_emits_nothing_rather_than_an_empty_block(tmp_path):
     """No memory yet must mean no injected context. Emitting a header with no
     lines under it would spend context to tell the model nothing, on every

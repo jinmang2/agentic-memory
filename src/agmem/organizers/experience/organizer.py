@@ -42,9 +42,12 @@ WHAT IT WRITES. One ``runbooks`` item per task block. ``content`` is the
 block rendered as markdown (what a reader sees), ``embedding_text`` is the
 retrieval handle (name, keywords, references, procedure), and the structured
 fields ride alongside for anything that wants to consume them without
-re-parsing. Provenance is the session id and host, plus the outcome. A
-session with nothing worth keeping produces one NOOP op, so the evolution
-log records that the session was judged and not that it was missed.
+re-parsing. Provenance is the session id and host, plus the outcome, plus —
+when the caller came through ``AgenticMemory.add_session`` — the step range
+the block cites and the ids of the persisted episodes in it, so a runbook
+leads back to the transcript it was distilled from instead of standing on its
+own word. A session with nothing worth keeping produces one NOOP op, so the
+evolution log records that the session was judged and not that it was missed.
 """
 
 from __future__ import annotations
@@ -80,6 +83,17 @@ SCHEMA: dict[str, Any] = {
                     "references": {"type": "array", "items": {"type": "string"}},
                     "procedure": {"type": "array", "items": {"type": "string"}},
                     "keywords": {"type": "array", "items": {"type": "string"}},
+                    # Inclusive [start, end] over the `[i]` labels in the rendered
+                    # transcript. Optional, and validated against the trajectory
+                    # length before it is trusted — the model is citing, not
+                    # addressing, and a hallucinated range must degrade to "the
+                    # whole session" rather than to a wrong pointer.
+                    "steps": {
+                        "type": "array",
+                        "items": {"type": "integer"},
+                        "minItems": 2,
+                        "maxItems": 2,
+                    },
                 },
                 "required": ["name", "outcome"],
             },
@@ -126,6 +140,9 @@ with flags, file paths, function names, exact error strings, ids.
 - procedure: 4-8 imperative steps a future agent could follow to redo this task in this \
 workspace. Only if the task succeeded or partially succeeded. Empty otherwise.
 - keywords: discriminative search handles (tool names, error strings, repo concepts).
+- steps: [first, last] — the INCLUSIVE range of transcript step numbers (the \
+bracketed [i] labels) this block is grounded in. Cite the steps you actually read \
+for it; omit the field if the block spans the whole session or you are unsure.
 Keep the user's wording. Generalize only enough to be reusable; never so far that the \
 concrete request disappears. Omit any list that would be empty.
 
@@ -139,7 +156,8 @@ USER_TEMPLATE = """Session context:
 - cwd: {cwd}
 - session_id: {session_id}
 
-Transcript (steps in order; USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
+Transcript (steps in order, each prefixed by its step number in brackets; \
+USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
 {transcript}
 
 Return the JSON now."""
@@ -167,10 +185,18 @@ def _strings(value: Any) -> list[str]:
     return [str(v).strip() for v in value if str(v).strip()]
 
 
-def render_runbook(task: dict[str, Any], summary: str, cwd: str | None) -> str:
+def render_runbook(
+    task: dict[str, Any], summary: str, cwd: str | None, source: str | None = None
+) -> str:
     """The markdown block a reader is served — the same shape Codex's
     `MEMORY.md` task blocks and AgentRunbook-R's notes take, so a human and a
-    grep both find the sections they expect."""
+    grep both find the sections they expect.
+
+    `source` is the one-line provenance footer (`source: <host> session <id>
+    steps a-b`). It is in the rendered text and not only in the structured
+    fields because that is where a reader and a `grep` will look: a runbook that
+    turns out to be wrong has to lead back to the transcript it came from
+    without a store query."""
     lines = [f"# Task: {task['name']}", f"outcome: {task['outcome']}"]
     if cwd:
         lines.append(f"cwd: {cwd}")
@@ -189,7 +215,49 @@ def render_runbook(task: dict[str, Any], summary: str, cwd: str | None) -> str:
             lines += [f"- {item}" for item in items]
     if task.get("keywords"):
         lines += ["", "keywords: " + ", ".join(task["keywords"])]
+    if source:
+        lines += ["", source]
     return "\n".join(lines)
+
+
+def validated_step_range(value: Any, n_steps: int) -> list[int] | None:
+    """The model's `steps` field as an inclusive `[start, end]`, or None.
+
+    None on anything that is not two in-bounds integers in order. A citation
+    that does not resolve is worse than no citation: it would point a later
+    reader at the wrong part of the transcript, and the caller's fallback (the
+    whole session) is at least true."""
+    if not isinstance(value, list) or len(value) != 2:
+        return None
+    start, end = value
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (start, end)):
+        return None
+    if not 0 <= start <= end < n_steps:
+        return None
+    return [start, end]
+
+
+def source_episode_ids(trajectory: list[dict], step_range: list[int] | None) -> list[str]:
+    """The persisted ids of the steps a block cites, in order.
+
+    Reads `episode_id` off the step dicts, which only `add_session` puts there
+    (`SessionTrajectory.as_task_trajectory`). A trajectory a bench harness built
+    has no such ids and gets an empty list — the runbook is then unpointered,
+    which is the honest state rather than an invented one."""
+    chosen = trajectory if step_range is None else trajectory[step_range[0] : step_range[1] + 1]
+    return [
+        str(step["episode_id"])
+        for step in chosen
+        if isinstance(step, dict) and step.get("episode_id")
+    ]
+
+
+def render_source_line(host: str, session_id: str, step_range: list[int] | None) -> str:
+    """The greppable provenance footer, or "" when there is no session to name."""
+    if not session_id:
+        return ""
+    span = f" steps {step_range[0]}-{step_range[1]}" if step_range else ""
+    return f"source: {host} session {session_id}{span}"
 
 
 def embedding_text_for(task: dict[str, Any]) -> str:
@@ -265,6 +333,8 @@ class ExperienceOrganizer(Organizer):
                 for k in ("preference_signals", "reusable_knowledge", "failures", "procedure")
             ):
                 continue  # a name and an outcome alone teach the next agent nothing
+            step_range = validated_step_range(raw.get("steps"), len(trajectory))
+            episode_ids = source_episode_ids(trajectory, step_range)
             item_id = new_id()
             ops.append(
                 MemoryOp(
@@ -274,13 +344,20 @@ class ExperienceOrganizer(Organizer):
                     actor=self.name,
                     payload={
                         "id": item_id,
-                        "content": render_runbook(block, summary, meta["cwd"]),
+                        "content": render_runbook(
+                            block,
+                            summary,
+                            meta["cwd"],
+                            render_source_line(meta["host"], meta["session_id"], step_range),
+                        ),
                         "embedding_text": embedding_text_for(block),
                         "summary": summary,
                         "cwd": meta["cwd"],
                         "session_id": meta["session_id"],
                         "source_host": meta["host"],
                         "caller_outcome": outcome,
+                        "step_range": step_range,
+                        "source_episode_ids": episode_ids,
                         **block,
                     },
                 )
@@ -324,6 +401,9 @@ __all__ = [
     "ExperienceOrganizer",
     "embedding_text_for",
     "render_runbook",
+    "render_source_line",
     "render_steps",
+    "source_episode_ids",
     "to_json",
+    "validated_step_range",
 ]
