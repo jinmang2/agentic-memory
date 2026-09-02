@@ -519,11 +519,7 @@ class AgenticMemory:
                 )
             return len(episodes)
 
-        for start in range(0, len(episodes), batch_size):
-            chunk = episodes[start : start + batch_size]
-            vectors = self.embedder.embed([e.embedding_text() for e in chunk])
-            for episode, vector in zip(chunk, vectors, strict=True):
-                self._ingest_episode(episode, {"role": episode.role}, vector=vector)
+        self._ingest_batched(episodes, lambda i, e: {"role": e.role}, batch_size)
         for episode in episodes:
             self._dispatch(
                 lambda ep=episode: self._apply_from_all(lambda org: org.on_message(ep, self._ctx))
@@ -605,6 +601,11 @@ class AgenticMemory:
         first (``_retire_session_items``), or a re-distillation would leave two
         runbooks per session competing in every search.
 
+        ``persist_steps=False`` is outside the idempotency too: with nothing in the
+        store there is nothing to recognise the session by, so every pass distils
+        it again. It is for a caller that keeps the raw steps elsewhere and
+        accepts that; a backfill should not use it.
+
         What this does not cover: a distillation queued under ``sync_write=False``
         and lost to a process exit before ``flush()``/``close()``. The raw steps
         are then complete, so the next pass reports ``already_ingested`` and the
@@ -650,22 +651,16 @@ class AgenticMemory:
 
         persisted: list[str] = []
         if persist_steps:
-            episodes = traj.to_episodes(self.namespace)
-            for start in range(0, len(episodes), batch_size):
-                chunk = episodes[start : start + batch_size]
-                vectors = self.embedder.embed([e.embedding_text() for e in chunk])
-                for offset, (episode, vector) in enumerate(zip(chunk, vectors, strict=True)):
-                    self._ingest_episode(
-                        episode,
-                        {
-                            "role": episode.role,
-                            "session_id": traj.id,
-                            "step_index": start + offset,
-                            "source": traj.host,
-                        },
-                        vector=vector,
-                    )
-                    persisted.append(episode.id)
+            persisted = self._ingest_batched(
+                traj.to_episodes(self.namespace),
+                lambda i, e: {
+                    "role": e.role,
+                    "session_id": traj.id,
+                    "step_index": i,
+                    "source": traj.host,
+                },
+                batch_size,
+            )
 
         if distill:
             steps = traj.as_task_trajectory()
@@ -733,6 +728,7 @@ class AgenticMemory:
             },
         )
         self._ingest_episode(episode, {})
+        trajectories = [_without_episode_ids(t) for t in trajectories]
         self._dispatch(
             lambda: self._apply_from_all(
                 lambda org: org.on_scaled_task_end(trajectories, task, self._ctx)
@@ -761,6 +757,28 @@ class AgenticMemory:
         for episode in corpus:
             self._ingest_episode(episode, {"role": episode.role, "warm_start": True})
         self._apply_from_all(lambda org: org.warm_start(corpus, self._ctx))
+
+    def _ingest_batched(
+        self,
+        episodes: list[Episode],
+        log_payload: Callable[[int, Episode], dict],
+        batch_size: int,
+    ) -> list[str]:
+        """Embed ``episodes`` in batches and store each one; return their ids in order.
+
+        The one batching loop behind ``bulk_ingest`` and ``add_session``, which
+        differ only in the ingest op's payload (``log_payload`` gets the position
+        and the episode) and in whether ``on_message`` fans out afterwards. Each
+        episode still commits its own doc, vector and log write; the batch is
+        the embedder call, which is where the time was."""
+        ids: list[str] = []
+        for start in range(0, len(episodes), batch_size):
+            chunk = episodes[start : start + batch_size]
+            vectors = self.embedder.embed([e.embedding_text() for e in chunk])
+            for offset, (episode, vector) in enumerate(zip(chunk, vectors, strict=True)):
+                self._ingest_episode(episode, log_payload(start + offset, episode), vector=vector)
+                ids.append(episode.id)
+        return ids
 
     def _ingest_episode(
         self, episode: Episode, log_payload: dict, vector: list[float] | None = None
