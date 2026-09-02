@@ -1,5 +1,7 @@
 # agmem — agentic memory, reimplemented with its lineage attached
 
+> **v0 (the study) is closed as of 2026-09-02** — what it proved and did not is one page, [docs/22-v0-summary.md](docs/22-v0-summary.md). v1 moves the domain from conversational QA to agent trajectories and measures this stack against the hosts' native memories.
+
 Nine agentic-memory methodologies — **A-Mem · Nemori · Mem0 · MemoryOS · Zep/Graphiti · G-Memory · ACE · ReasoningBank · MemMachine** — reimplemented behind one API, where *which version of the method you are running* is a first-class, pinnable, testable property.
 
 [![CI](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml/badge.svg)](https://github.com/jinmang2/agentic-memory/actions/workflows/ci.yml)
