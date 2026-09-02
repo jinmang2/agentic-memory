@@ -170,6 +170,32 @@ class SessionTrajectory:
             )
         return episodes
 
+    @property
+    def task_text(self) -> str:
+        """The session's opening user turn — what `add_task_result` gets as `task`."""
+        for step in self.steps:
+            if step.kind == "user":
+                return step.text
+        return ""
+
+    def as_task_trajectory(self) -> list[dict[str, Any]]:
+        """The step list the facade's `add_task_result` / `Organizer.on_task_end`
+        take: one dict per step, with the session's host, cwd and id repeated on
+        every step so an organizer can read them off the trajectory alone."""
+        return [
+            {
+                "kind": step.kind,
+                "text": step.text,
+                "tool_name": step.tool_name,
+                "timestamp": step.timestamp.isoformat() if step.timestamp else None,
+                "host": self.host,
+                "cwd": self.cwd,
+                "session_id": self.id,
+                "step_index": index,
+            }
+            for index, step in enumerate(self.steps)
+        ]
+
     def render(self, max_chars: int | None = None) -> str:
         """A plain transcript for a distiller to read: one line-block per step,
         labelled, in order. Head-clipped to `max_chars` when given."""

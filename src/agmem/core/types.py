@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -22,7 +22,7 @@ def new_id() -> str:
 
 def utcnow() -> datetime:
     """Timezone-aware UTC now — never mix with naive `datetime.utcnow()` results."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # Memory type tags used for namespacing collections and filtering search.
@@ -44,6 +44,7 @@ MEMORY_TYPES = (
     "strategies",  # ReasoningBank items, G-Memory trajectories/insights
     "experiences",  # ReasoningBank task records (expand to their member strategies)
     "playbook",  # ACE bullets
+    "runbooks",  # experience organizer: one distilled task block per coding-agent session
     "state",  # internal bookkeeping, not a memory: consolidate cursors (base.cursor_key)
 )
 
@@ -253,6 +254,7 @@ class MemoryBundle:
         "semantic": "Semantic Memories",
         "episodic": "Messages",
         "notes": "Notes",
+        "runbooks": "Runbooks",
     }
 
     def render(self, budget_tokens: int = 1600) -> str:

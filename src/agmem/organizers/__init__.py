@@ -7,6 +7,7 @@ pre-built ``Organizer`` instances."""
 from agmem.organizers.ace import ACEOrganizer
 from agmem.organizers.amem import AMemOrganizer
 from agmem.organizers.base import MemoryEvent, Organizer, OrganizerContext, overrides
+from agmem.organizers.experience import ExperienceOrganizer
 from agmem.organizers.gmemory import GMemoryOrganizer
 from agmem.organizers.mem0 import Mem0Organizer
 from agmem.organizers.memmachine import MemMachineOrganizer, MemMachineProfileOrganizer
@@ -28,23 +29,25 @@ ORGANIZERS: dict[str, type[Organizer]] = {
     "ace": ACEOrganizer,
     "zep_graph": ZepGraphOrganizer,
     "gmemory": GMemoryOrganizer,
+    "experience": ExperienceOrganizer,
 }
 
 __all__ = [
-    "MemoryEvent",
-    "Organizer",
-    "OrganizerContext",
     "ORGANIZERS",
-    "overrides",
-    "PassthroughOrganizer",
-    "ReasoningBankOrganizer",
+    "ACEOrganizer",
     "AMemOrganizer",
-    "NemoriOrganizer",
+    "ExperienceOrganizer",
+    "GMemoryOrganizer",
     "Mem0Organizer",
-    "MemoryOSOrganizer",
     "MemMachineOrganizer",
     "MemMachineProfileOrganizer",
-    "ACEOrganizer",
+    "MemoryEvent",
+    "MemoryOSOrganizer",
+    "NemoriOrganizer",
+    "Organizer",
+    "OrganizerContext",
+    "PassthroughOrganizer",
+    "ReasoningBankOrganizer",
     "ZepGraphOrganizer",
-    "GMemoryOrganizer",
+    "overrides",
 ]
