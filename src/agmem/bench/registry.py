@@ -41,6 +41,12 @@ class ModelSpec:
 
 
 _OPENAI = "https://api.openai.com/v1"
+# OpenRouter serves open-weight models behind an OpenAI-compatible endpoint. It is
+# the v1 (LongMemEval-V2) reader route the user chose on 2026-09-02: the benchmark
+# fixes the reader as Qwen3.5-9B, this machine cannot host it, and the hosted
+# price makes a full small-tier run a few dollars. The key lives in its own
+# variable so a run cannot accidentally be priced or authenticated as OpenAI.
+_OPENROUTER = "https://openrouter.ai/api/v1"
 
 MODEL_REGISTRY: dict[str, ModelSpec] = {
     s.name: s
@@ -92,6 +98,13 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         # embeddings have no completion tokens, and pricing `embed` at a chat
         # model's rates would overstate it 7.5x. List price verified 2026-08-04.
         ModelSpec("text-embedding-3-small", _OPENAI, "OPENAI_API_KEY", 0.02, 0.0),
+        # LongMemEval-V2's fixed reader (docs/_internal/plans/2026-09-02-v1-experience-memory.md
+        # §5). List price on OpenRouter verified 2026-09-02 by the hosting survey:
+        # $0.10 / $0.15 per 1M in/out, 262,144-token context. The same rate was
+        # listed by DeepInfra and SiliconFlow that day. OpenRouter's model id keeps
+        # the vendor prefix; the leaderboard packager only checks that the reader
+        # name contains "qwen3.5-9b", which this does.
+        ModelSpec("qwen/qwen3.5-9b", _OPENROUTER, "OPENROUTER_API_KEY", 0.10, 0.15),
     )
 }
 

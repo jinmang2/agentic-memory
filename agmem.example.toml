@@ -72,3 +72,14 @@ model = "qwen3-0.6b"
 
 # [override]
 # vector_store = "NumpyVectorStore"        # profile 기본값 강제 오버라이드
+
+# --- hosted open-weight reader via OpenRouter (v1 / LongMemEval-V2 route) ---------
+# The key is resolved from the environment at load time (`api_key = "env:NAME"`),
+# so it never sits in a config file. Set OPENROUTER_API_KEY in your shell profile
+# (or the dotfiles machine overlay), not in this repo.
+# [llm.reader]
+# endpoint = "https://openrouter.ai/api/v1"
+# model = "qwen/qwen3.5-9b"
+# api_key = "env:OPENROUTER_API_KEY"
+# temperature = 0.0
+# max_tokens = 1024
