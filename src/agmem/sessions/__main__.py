@@ -88,16 +88,15 @@ def _ingest(args) -> int:
         shown = 0
         try:
             for traj in _load_lazily(paths):
-                seen = (
-                    len(
-                        store.get_episodes(
-                            [traj.episode_id(0), traj.episode_id(len(traj.steps) - 1)]
-                        )
+                if not traj.steps:
+                    # `add_session` returns before storing or distilling anything
+                    # for an empty session, so it costs nothing and counts for nothing.
+                    print(
+                        f"{traj.host:11s} {traj.id[:24]:24s} steps=    0 user=   0 empty, skipped"
                     )
-                    == 2
-                    if traj.steps
-                    else False
-                )
+                    continue
+                bounds = [traj.episode_id(0), traj.episode_id(len(traj.steps) - 1)]
+                seen = len(store.get_episodes(bounds)) == 2
                 state = "already ingested" if seen else "would ingest"
                 print(
                     f"{traj.host:11s} {traj.id[:24]:24s} steps={len(traj.steps):5d} "
