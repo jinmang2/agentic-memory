@@ -822,3 +822,82 @@ def test_the_mcp_tool_reports_any_failure_as_an_error_object(tmp_path, monkeypat
         server._registry._mems.pop("t", None)
         mem.close()
     assert payload["error"].startswith("TypeError:")
+
+
+# --- the remaining uncovered paths ---------------------------------------------
+
+
+def test_a_tool_timeout_is_an_observation(tmp_path, monkeypatch):
+    import subprocess as _sp
+
+    def slow(*a, **k):
+        raise _sp.TimeoutExpired(cmd=a[0], timeout=k.get("timeout", 0))
+
+    monkeypatch.setattr("agmem.explore.explorer.subprocess.run", slow)
+    result = _run_actions(tmp_path, [{"action": "search", "reason": "r", "pattern": "x"}])
+    assert "timed out" in result.steps[0]["observation"]
+    assert result.degraded is None
+
+
+def test_refresh_false_reads_the_workspace_as_it_is(tmp_path):
+    mem = _populated(_mem())
+    mem.structured = StubLLM({"explore": [_final("a", []), _final("b", [])]})
+    root = tmp_path / "ws"
+    mem.research("q", root=root)  # exports
+    mem.add_message("a brand new message", role="user", timestamp=TS)
+    result = mem.research("q", root=root, refresh=False)
+    assert result.export_s == 0.0
+    assert "brand new" not in (root / "messages" / "2026-09.md").read_text()
+    mem.close()
+
+
+def test_an_empty_store_exports_an_index_that_says_so(tmp_path):
+    mem = _mem()
+    stats = export_workspace(mem, tmp_path / "ws")
+    assert stats.sessions == 0 and stats.runbooks == 0 and stats.messages == 0
+    index = (tmp_path / "ws" / "INDEX.md").read_text()
+    assert index.count("(none)") == 2
+    mem.close()
+
+
+def test_messages_are_split_by_month_oldest_first(tmp_path):
+    from datetime import datetime as _dt
+
+    mem = _mem()
+    mem.add_message("august", role="user", timestamp=_dt(2026, 8, 3, tzinfo=UTC))
+    mem.add_message("september", role="user", timestamp=TS)
+    export_workspace(mem, tmp_path / "ws")
+    assert (tmp_path / "ws" / "messages" / "2026-08.md").read_text().strip().endswith("august")
+    assert (tmp_path / "ws" / "messages" / "2026-09.md").read_text().strip().endswith("september")
+    mem.close()
+
+
+def test_the_mcp_tool_success_path_serialises_citations_and_steps(tmp_path):
+    from agmem.mcp import server
+
+    cfg = AgmemConfig(sync_write=True, data_dir=tmp_path / "data")
+    mem = _populated(
+        AgenticMemory(
+            namespace="t", organizers=["experience"], embedder=FakeEmbedder(dim=128), config=cfg
+        )
+    )
+    mem.structured = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "idle-timeout"},
+                _final("use --idle-timeout 2", [{"file": "runbooks/rb-1.md", "lines": [1, 2]}]),
+            ]
+        }
+    )
+    server._registry._mems["t"] = mem
+    server._registry.default = "t"
+    server._registry.config = cfg
+    try:
+        payload = json.loads(server.research_memory("q", namespace="t"))
+    finally:
+        server._registry._mems.pop("t", None)
+        mem.close()
+    assert payload["context"] == "use --idle-timeout 2"
+    assert payload["citations"] == [{"file": "runbooks/rb-1.md", "lines": [1, 2]}]
+    assert payload["steps"] == 2 and payload["llm_calls"] == 2
+    assert payload["degraded"] is None and payload["latency_s"] >= payload["export_s"] >= 0.0
