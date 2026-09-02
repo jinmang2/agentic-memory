@@ -6,7 +6,7 @@ ReasoningBank, G-Memory) behind one capability-gated API.
 
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import Episode, MemoryBundle
-from agmem.memory import AgenticMemory
+from agmem.memory import AgenticMemory, SessionIngest
 
 __version__ = "0.1.0"
 
@@ -16,5 +16,6 @@ __all__ = [
     "MemoryBundle",
     "MemoryOp",
     "OpType",
+    "SessionIngest",
     "__version__",
 ]

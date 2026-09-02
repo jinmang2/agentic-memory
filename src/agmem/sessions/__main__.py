@@ -84,6 +84,26 @@ def _ingest(args) -> int:
         # The doc store alone — through the same guard the recall hook uses, so a
         # config whose doc store is not SQLite is refused here too rather than
         # answered from a fresh, empty file that would call every session new.
+        # And not even that when there is no store yet: opening one would create
+        # the file, and a dry run that leaves a memory.db behind is not dry.
+        ns, root, _config = _resolve(args.namespace, args.data_dir)
+        if not (root / ns / "memory.db").exists():
+            shown = 0
+            for traj in _load_lazily(paths):
+                if not traj.steps:
+                    print(
+                        f"{traj.host:11s} {traj.id[:24]:24s} steps=    0 user=   0 empty, skipped"
+                    )
+                    continue
+                print(
+                    f"{traj.host:11s} {traj.id[:24]:24s} steps={len(traj.steps):5d} "
+                    f"user={traj.user_turns:4d} would ingest (no store yet)"
+                )
+                shown += 1
+                if args.limit is not None and shown >= args.limit:
+                    break
+            print(f"dry run — nothing written; {shown} session(s) would be ingested")
+            return 0
         ns, store = open_doc_store(args.namespace, args.data_dir)
         shown = 0
         try:
@@ -117,23 +137,24 @@ def _ingest(args) -> int:
     from agmem.memory import AgenticMemory
 
     ns, root, config = _resolve(args.namespace, args.data_dir)
+    if distill and (config is None or "distill" not in config.llm_roles):
+        # An explicit failure, not a silent skip: the whole point of the paid
+        # path is the distillation, and a run that quietly stored raw steps
+        # instead would look like it had succeeded. Decided from the config,
+        # before the embedder is loaded, so the refusal costs nothing.
+        print(
+            "refusing to distil: the resolved config has no LLM role. Point "
+            "AGMEM_CONFIG at a config with an [llm.distill] section, or pass "
+            "--no-distill to persist the raw steps only.",
+            file=sys.stderr,
+        )
+        return 2
     if config is None:
         config = AgmemConfig(profile="lite", data_dir=root, sync_write=True)
     else:
         config = replace(config, data_dir=root, sync_write=True)
     mem = AgenticMemory(namespace=ns, organizers=["experience"], config=config)
     try:
-        if distill and mem.llm is None:
-            # An explicit failure, not a silent skip: the whole point of the paid
-            # path is the distillation, and a run that quietly stored raw steps
-            # instead would look like it had succeeded.
-            print(
-                "refusing to distil: the resolved config has no LLM role. Point "
-                "AGMEM_CONFIG at a config with an [llm.distill] section, or pass "
-                "--no-distill to persist the raw steps only.",
-                file=sys.stderr,
-            )
-            return 2
         if isinstance(mem.embedder, APIEmbedder) and args.limit is None:
             # `--no-distill` is free only with a local embedder. Every step of
             # every session goes through the embedder, so with an API-backed one

@@ -163,20 +163,70 @@ USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
 Return the JSON now."""
 
 
-def render_steps(trajectory: list[dict], max_chars: int) -> str:
-    """The transcript the model reads: numbered, labelled steps, head-and-tail
-    clipped. Accepts `agmem.sessions` step dicts (kind/text/tool_name) and the
-    generic `{"role": ..., "content": ...}` shape other organizers get."""
+def _step_block(index: int, step: dict) -> str:
+    kind = str(step.get("kind") or step.get("role") or "step").upper()
+    tool = step.get("tool_name")
+    label = f"{kind}({tool})" if tool else kind
+    text = str(step.get("text") if "text" in step else step.get("content") or "")
+    return f"[{index}] {label}\n{text}"
+
+
+def render_transcript(trajectory: list[dict], max_chars: int) -> tuple[str, frozenset[int]]:
+    """The transcript the model reads, and WHICH steps are in it.
+
+    Clipping is by whole steps, head and tail, with a marker naming the omitted
+    range — not by characters over the joined string, which cut steps in half
+    and, worse, left no record of which step numbers the model had actually
+    seen. The visible set is what makes a `steps` citation checkable: a range
+    that includes an omitted step is a citation of text the model never read,
+    and `validated_step_range` refuses it. A single step longer than the whole
+    budget is clipped inside (chars marker) and still counts as visible, since
+    its label and both ends were shown.
+
+    Accepts `agmem.sessions` step dicts (kind/text/tool_name) and the generic
+    `{"role": ..., "content": ...}` shape other organizers get."""
     from agmem.sessions import clip_head_tail
 
-    blocks = []
-    for index, step in enumerate(trajectory):
-        kind = str(step.get("kind") or step.get("role") or "step").upper()
-        tool = step.get("tool_name")
-        label = f"{kind}({tool})" if tool else kind
-        text = str(step.get("text") if "text" in step else step.get("content") or "")
-        blocks.append(f"[{index}] {label}\n{text}")
-    return clip_head_tail("\n\n".join(blocks), max_chars)
+    blocks = [_step_block(i, step) for i, step in enumerate(trajectory)]
+    joined = "\n\n".join(blocks)
+    if len(joined) <= max_chars:
+        return joined, frozenset(range(len(blocks)))
+
+    head_budget = max_chars * 2 // 3
+    tail_budget = max_chars - head_budget
+    head: list[int] = []
+    used = 0
+    for i, block in enumerate(blocks):
+        if used + len(block) + 2 > head_budget:
+            break
+        head.append(i)
+        used += len(block) + 2
+    if not head:
+        # The opening step alone outgrows the head budget. It is the task the
+        # session was about, so it is shown clipped inside rather than omitted.
+        blocks[0] = clip_head_tail(blocks[0], head_budget)
+        head = [0]
+    tail: list[int] = []
+    used = 0
+    for i in range(len(blocks) - 1, head[-1], -1):
+        if used + len(blocks[i]) + 2 > tail_budget:
+            break
+        tail.insert(0, i)
+        used += len(blocks[i]) + 2
+    visible = frozenset(head) | frozenset(tail)
+    first_omitted = head[-1] + 1
+    last_omitted = (tail[0] - 1) if tail else len(blocks) - 1
+    parts = [blocks[i] for i in head]
+    if first_omitted <= last_omitted:
+        parts.append(f"…[steps {first_omitted}-{last_omitted} omitted]…")
+    parts += [blocks[i] for i in tail]
+    return "\n\n".join(parts), visible
+
+
+def render_steps(trajectory: list[dict], max_chars: int) -> str:
+    """`render_transcript` without the visibility set, for callers that only
+    want the text (debugging, the bounded-render test)."""
+    return render_transcript(trajectory, max_chars)[0]
 
 
 def _strings(value: Any) -> list[str]:
@@ -220,19 +270,25 @@ def render_runbook(
     return "\n".join(lines)
 
 
-def validated_step_range(value: Any, n_steps: int) -> list[int] | None:
+def validated_step_range(
+    value: Any, n_steps: int, visible: frozenset[int] | None = None
+) -> list[int] | None:
     """The model's `steps` field as an inclusive `[start, end]`, or None.
 
-    None on anything that is not two in-bounds integers in order. A citation
-    that does not resolve is worse than no citation: it would point a later
-    reader at the wrong part of the transcript, and the caller's fallback (the
-    whole session) is at least true."""
+    None on anything that is not two in-bounds integers in order, and None when
+    the range reaches into steps the transcript omitted (`visible`, from
+    `render_transcript`): the model cannot have read them, so the citation would
+    be an invention. A citation that does not resolve is worse than no citation
+    — it would point a later reader at the wrong part of the transcript — and
+    the caller's fallback (the whole session) is at least true."""
     if not isinstance(value, list) or len(value) != 2:
         return None
     start, end = value
     if not all(isinstance(v, int) and not isinstance(v, bool) for v in (start, end)):
         return None
     if not 0 <= start <= end < n_steps:
+        return None
+    if visible is not None and any(i not in visible for i in range(start, end + 1)):
         return None
     return [start, end]
 
@@ -294,11 +350,12 @@ class ExperienceOrganizer(Organizer):
             )
             return []
         meta = _session_meta(trajectory, task)
+        transcript, visible = render_transcript(trajectory, self.max_chars)
         prompt = USER_TEMPLATE.format(
             host=meta["host"],
             cwd=meta["cwd"] or "unknown",
             session_id=meta["session_id"],
-            transcript=render_steps(trajectory, self.max_chars),
+            transcript=transcript,
         )
         result = ctx.llm.call(
             "distill",
@@ -333,7 +390,7 @@ class ExperienceOrganizer(Organizer):
                 for k in ("preference_signals", "reusable_knowledge", "failures", "procedure")
             ):
                 continue  # a name and an outcome alone teach the next agent nothing
-            step_range = validated_step_range(raw.get("steps"), len(trajectory))
+            step_range = validated_step_range(raw.get("steps"), len(trajectory), visible)
             episode_ids = source_episode_ids(trajectory, step_range)
             item_id = new_id()
             ops.append(
@@ -403,6 +460,7 @@ __all__ = [
     "render_runbook",
     "render_source_line",
     "render_steps",
+    "render_transcript",
     "source_episode_ids",
     "to_json",
     "validated_step_range",

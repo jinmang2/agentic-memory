@@ -24,6 +24,8 @@ from agmem.organizers.experience.organizer import (
     embedding_text_for,
     render_runbook,
     render_steps,
+    render_transcript,
+    validated_step_range,
 )
 from agmem.sessions import SessionTrajectory, Step
 
@@ -189,7 +191,8 @@ def test_no_llm_is_an_explicit_skip():
 def test_render_helpers_are_bounded_and_greppable():
     steps = _session().as_task_trajectory()
     text = render_steps(steps, max_chars=200)
-    assert text.startswith("[0] USER") and "chars omitted" in text
+    assert text.startswith("[0] USER") and "…[steps 2-4 omitted]…" in text
+    assert "[5] ASSISTANT" in text and "[3]" not in text  # whole steps, head and tail
     block = {
         "name": "n",
         "outcome": "fail",
@@ -203,3 +206,22 @@ def test_render_helpers_are_bounded_and_greppable():
     assert "## Procedure" not in md  # empty lists are omitted
     assert embedding_text_for(block).splitlines() == ["n", "k1", "k2", "grep me"]
     json.dumps(block)  # payload stays JSON-serialisable
+
+
+def test_a_citation_into_omitted_steps_is_refused():
+    """The model can only cite what it was shown. With the middle clipped out,
+    a range that crosses the gap is an invention and must not become a pointer."""
+    steps = _session().as_task_trajectory()
+    text, visible = render_transcript(steps, max_chars=200)
+    assert visible == frozenset({0, 1, 5})
+    assert validated_step_range([0, 1], len(steps), visible) == [0, 1]
+    assert validated_step_range([1, 5], len(steps), visible) is None
+    assert validated_step_range([3, 3], len(steps), visible) is None
+    # Without a visibility set the bounds check alone still applies.
+    assert validated_step_range([0, 5], len(steps)) == [0, 5]
+
+    # One step larger than the whole budget is shown clipped, and stays citable.
+    huge = [{"kind": "user", "text": "x" * 5000}, {"kind": "assistant", "text": "ok"}]
+    text, visible = render_transcript(huge, max_chars=300)
+    assert text.startswith("[0] USER") and "chars omitted" in text
+    assert text.endswith("[1] ASSISTANT\nok") and visible == frozenset({0, 1})
