@@ -46,6 +46,11 @@ from typing import Any
 logger = logging.getLogger("agmem.explore")
 
 ACTIONS = ("search", "list", "read", "final")
+# The most exploration steps any entry point allows — the CLI and the MCP tool
+# both clamp to this, because a step is a model call and the MCP surface is
+# filled in by a model, not a person.
+MAX_STEPS_CAP = 12
+MAX_BUDGET_TOKENS = 16_000
 MAX_READ_LINES = 200
 MAX_LIST_ENTRIES = 200
 MAX_HITS = 50
@@ -138,6 +143,10 @@ class ResearchResult:
     citations: list[dict[str, Any]] = field(default_factory=list)
     steps: list[dict[str, Any]] = field(default_factory=list)
     latency_s: float = 0.0
+    # Seconds spent materializing the workspace before the loop, when the
+    # caller (``AgenticMemory.research``) did that; included in ``latency_s``,
+    # since the vector arm's latency covers everything it does per query too.
+    export_s: float = 0.0
     llm_calls: int = 0
     search_tool: str = "grep"
     degraded: str | None = None
@@ -411,4 +420,12 @@ class Explorer:
         return {"file": self._relative(target), "lines": [first, last]}
 
 
-__all__ = ["ACTIONS", "SCHEMA", "SYSTEM_PROMPT", "Explorer", "ResearchResult"]
+__all__ = [
+    "ACTIONS",
+    "MAX_BUDGET_TOKENS",
+    "MAX_STEPS_CAP",
+    "SCHEMA",
+    "SYSTEM_PROMPT",
+    "Explorer",
+    "ResearchResult",
+]

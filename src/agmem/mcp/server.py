@@ -288,6 +288,12 @@ def research_memory(
     question is about what happened in past sessions and exact strings matter.
     Requires an [llm.explore] role in the server's config; without one this
     returns an error object rather than a vector search."""
+    from agmem.explore.explorer import MAX_BUDGET_TOKENS, MAX_STEPS_CAP
+
+    # Clamped, not trusted: this surface is filled in by a model, and each step
+    # is a paid call. The CLI applies the same cap to a person.
+    max_steps = max(1, min(int(max_steps), MAX_STEPS_CAP))
+    budget_tokens = max(1, min(int(budget_tokens), MAX_BUDGET_TOKENS))
     mem = get_mem(namespace)
     try:
         result = mem.research(query, max_steps=max_steps, budget_tokens=budget_tokens)
@@ -299,6 +305,7 @@ def research_memory(
             "context": result.context,
             "citations": result.citations,
             "latency_s": result.latency_s,
+            "export_s": result.export_s,
             "llm_calls": result.llm_calls,
             "steps": len(result.steps),
             "search_tool": result.search_tool,

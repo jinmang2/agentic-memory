@@ -40,6 +40,7 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -83,6 +84,23 @@ def safe_name(raw: str) -> str:
     return name if name and name.strip(".") else "_"
 
 
+def _utc(stamp: datetime) -> datetime:
+    """One comparable clock. A session read from a log line without an offset
+    parses naive, and a step that failed to parse is stamped aware by
+    ``to_episodes``; sorting or ``min`` over the mix raises. Naive is taken as
+    UTC, which is what every writer in this repo means by it."""
+    return stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp.astimezone(UTC)
+
+
+def _is_session_step(episode: Any) -> bool:
+    """A step ``add_session`` wrote, as opposed to a turn the capture hook
+    wrote. Both carry ``session_id`` (the hook keeps the host's, so a later
+    reader can group a session's turns); only the adapter's steps carry a
+    ``step_index``, and that number is what the transcript labels are."""
+    meta = episode.meta or {}
+    return bool(meta.get("session_id")) and meta.get("step_index") is not None
+
+
 def _collapse(text: str) -> str:
     """One line, whitespace normalized — the shape a message index line takes."""
     return " ".join(str(text).split())
@@ -103,17 +121,17 @@ def _step_label(episode: Any) -> str:
 def _session_files(episodes: list[Any]) -> tuple[dict[str, str], list[dict[str, Any]]]:
     """Group session steps into one file each, and describe them for the index.
 
-    Grouping is on ``meta["session_id"]``, which ``add_session`` writes and the
-    hook capture path does not — episodes without one are conversation, not a
-    trajectory, and go to ``messages/`` instead."""
+    Grouping is on ``meta["session_id"]`` for episodes that also carry a
+    ``step_index`` — the shape ``add_session`` writes. The capture hook writes a
+    ``session_id`` too but no step numbering, and one of its turns is a message,
+    not a trajectory step; those go to ``messages/`` (see ``_is_session_step``)."""
     grouped: dict[tuple[str, str], list[Any]] = {}
     for episode in episodes:
-        meta = episode.meta or {}
-        session_id = meta.get("session_id")
-        if not session_id:
+        if not _is_session_step(episode):
             continue
+        meta = episode.meta or {}
         host = str(meta.get("source") or "unknown")
-        grouped.setdefault((host, str(session_id)), []).append(episode)
+        grouped.setdefault((host, str(meta["session_id"])), []).append(episode)
 
     files: dict[str, str] = {}
     index: list[dict[str, Any]] = []
@@ -121,9 +139,9 @@ def _session_files(episodes: list[Any]) -> tuple[dict[str, str], list[dict[str, 
         # `step_index` is the trajectory's own numbering; the timestamp is the
         # tiebreak for a store that predates it. Sorting by the pair keeps the
         # order stable whichever is present.
-        items.sort(key=lambda e: ((e.meta or {}).get("step_index", 0), e.timestamp))
+        items.sort(key=lambda e: ((e.meta or {}).get("step_index", 0), _utc(e.timestamp)))
         cwd = next((e.meta.get("cwd") for e in items if (e.meta or {}).get("cwd")), None)
-        started = min(e.timestamp for e in items)
+        started = min(_utc(e.timestamp) for e in items)
         header = [f"session: {session_id}", f"host: {host}"]
         if cwd:
             header.append(f"cwd: {cwd}")
@@ -152,18 +170,19 @@ def _session_files(episodes: list[Any]) -> tuple[dict[str, str], list[dict[str, 
 
 
 def _message_files(episodes: list[Any]) -> tuple[dict[str, str], int]:
-    """Everything that is not a session step, one file per month, oldest first.
+    """Everything that is not a session step, one file per month, oldest first
+    — hook-captured turns (which carry a ``session_id`` but no step numbering),
+    task lines, and ``add_message`` calls.
 
-    Monthly rather than one file per message because these are hook captures
-    and single turns: a directory of thousands of two-line files is slower to
+    Monthly rather than one file per message because these are single turns: a directory of thousands of two-line files is slower to
     grep and unreadable to list, and the month is the coarsest bucket that
     still lets a search narrow by date."""
     by_month: dict[str, list[str]] = {}
     count = 0
-    for episode in episodes:
-        if (episode.meta or {}).get("session_id"):
+    for episode in sorted(episodes, key=lambda e: _utc(e.timestamp)):
+        if _is_session_step(episode):
             continue
-        stamp = episode.timestamp
+        stamp = _utc(episode.timestamp)
         line = f"- ({stamp.date().isoformat()}) [{episode.role}] {_collapse(episode.content)}"
         by_month.setdefault(f"{stamp.year:04d}-{stamp.month:02d}", []).append(line)
         count += 1

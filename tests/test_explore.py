@@ -214,6 +214,55 @@ def test_export_leaves_files_it_did_not_write_alone(tmp_path):
     mem.close()
 
 
+def test_a_hook_captured_turn_is_a_message_even_though_it_names_a_session(tmp_path):
+    """The capture hook keeps the host's session id on each turn but numbers no
+    steps; those turns are conversation, not a trajectory, and must not be
+    filed as a session with every step labelled [0]."""
+    mem = _mem()
+    for text in ("what is the release cadence?", "and the daemon timeout?"):
+        mem.add_message(
+            text,
+            role="user",
+            timestamp=TS,
+            meta={"source": "claude-code", "session_id": "b3f1-from-the-host"},
+        )
+    stats = export_workspace(mem, tmp_path / "ws")
+    assert stats.sessions == 0 and stats.messages == 2
+    assert not (tmp_path / "ws" / "sessions").exists()
+    text = (tmp_path / "ws" / "messages" / "2026-09.md").read_text()
+    assert "release cadence" in text and "daemon timeout" in text
+    mem.close()
+
+
+def test_mixed_naive_and_aware_timestamps_do_not_break_the_export(tmp_path):
+    from datetime import datetime as _dt
+
+    from agmem.core.types import Episode
+
+    mem = _mem()
+    naive = _dt.fromisoformat("2026-09-02T01:00:00")  # a log line without an offset
+    for index, (stamp, text) in enumerate(((naive, "first"), (TS, "second"))):
+        mem.doc_store.add_episode(
+            Episode(
+                content=text,
+                role="user",
+                namespace="t",
+                timestamp=stamp,
+                meta={
+                    "source": "codex",
+                    "session_id": "mixed",
+                    "step_index": index,
+                    "kind": "user",
+                },
+            )
+        )
+    stats = export_workspace(mem, tmp_path / "ws")
+    assert stats.sessions == 1
+    text = (tmp_path / "ws" / "sessions" / "codex" / "mixed.md").read_text()
+    assert "[0] USER\nfirst" in text and "[1] USER\nsecond" in text
+    mem.close()
+
+
 # --- the explorer loop ------------------------------------------------------
 
 
@@ -462,6 +511,15 @@ def test_research_defaults_the_root_under_the_data_dir(tmp_path):
     mem.close()
 
 
+def test_research_latency_includes_the_export(tmp_path):
+    mem = _populated(_mem())
+    mem.structured = StubLLM({"explore": [_final("ok", [])]})
+    result = mem.research("q", root=tmp_path / "ws")
+    assert result.export_s > 0.0
+    assert result.latency_s >= result.export_s
+    mem.close()
+
+
 def test_search_records_its_own_wall_clock(tmp_path):
     mem = _populated(_mem())
     metrics: dict = {}
@@ -566,3 +624,27 @@ def test_the_mcp_tool_returns_an_error_object_instead_of_crashing(tmp_path):
         mem.close()
 
     assert "[llm.explore]" in payload["error"]
+
+
+def test_the_mcp_tool_clamps_the_step_count(tmp_path):
+    """A model fills this surface in; a step is a paid call."""
+    from agmem.explore.explorer import MAX_STEPS_CAP
+    from agmem.mcp import server
+
+    cfg = AgmemConfig(sync_write=True, data_dir=tmp_path / "data")
+    mem = AgenticMemory(
+        namespace="t", organizers=["experience"], embedder=FakeEmbedder(dim=128), config=cfg
+    )
+    search = {"action": "search", "reason": "again", "pattern": "USER"}
+    mem.structured = StubLLM({"explore": [dict(search) for _ in range(500)]})
+    server._registry._mems["t"] = mem
+    server._registry.default = "t"
+    server._registry.config = cfg
+    try:
+        payload = json.loads(server.research_memory("q", max_steps=200, namespace="t"))
+    finally:
+        server._registry._mems.pop("t", None)
+        mem.close()
+    assert payload["degraded"] == "max_steps"
+    assert payload["llm_calls"] == MAX_STEPS_CAP + 1  # the cap, plus the forced final
+    assert payload["export_s"] >= 0.0

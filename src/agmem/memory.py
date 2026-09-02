@@ -1289,9 +1289,18 @@ class AgenticMemory:
                     "research needs a workspace root: this memory has no data_dir to put one under"
                 )
             root = Path(self.config.data_dir) / self.namespace / "workspace"
+        export_s = 0.0
         if refresh:
+            started = perf_counter()
             export_workspace(self, root)
-        return Explorer(root, **explorer_kwargs).research(query, llm)
+            export_s = perf_counter() - started
+        result = Explorer(root, **explorer_kwargs).research(query, llm)
+        # The export is part of what this read costs per query, exactly as the
+        # vector arm's latency includes its hooks; a number that left it out
+        # would compare the two arms at different boundaries.
+        result.export_s = export_s
+        result.latency_s += export_s
+        return result
 
     def _warn_if_subscribed(self, ops: list[MemoryOp], source: Organizer) -> list[MemoryOp]:
         """Pass ``ops`` through, warning if any would have reached a subscriber.

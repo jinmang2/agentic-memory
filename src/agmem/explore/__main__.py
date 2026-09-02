@@ -15,7 +15,7 @@ import argparse
 import json
 import sys
 
-MAX_STEPS_CAP = 12
+from agmem.explore.explorer import MAX_STEPS_CAP
 
 
 def _open(args):
