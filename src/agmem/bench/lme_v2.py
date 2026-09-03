@@ -413,6 +413,30 @@ class AgmemMemory(_MemoryBase):
             self.workspace_dir = Path(tempfile.mkdtemp(prefix="agmem-lme-v2-ws-"))
         self._exported = False
 
+    @classmethod
+    def reconcile_loaded_memory_config(
+        cls, saved_config: dict[str, Any], requested_config: dict[str, Any] | None
+    ) -> dict[str, Any]:
+        """Upstream's loader requires the requested config to equal the saved
+        one. Ours differ exactly in the volatile path keys — the run that saved
+        wrote nothing under `data_dir`, the run that loads names its own —
+        so those are left out of the comparison and the saved config wins."""
+        if saved_config.get("memory_type") != cls.memory_type:
+            raise RuntimeError(
+                f"saved memory type {saved_config.get('memory_type')!r} is not {cls.memory_type!r}"
+            )
+
+        def stable(config: dict[str, Any]) -> dict[str, Any]:
+            params = {k: v for k, v in config["memory_params"].items() if k not in VOLATILE_PARAMS}
+            return {"memory_type": config["memory_type"], "memory_params": params}
+
+        if requested_config is not None and stable(requested_config) != stable(saved_config):
+            raise RuntimeError(
+                "requested memory config does not match the saved one (paths aside): "
+                f"{stable(requested_config)} vs {stable(saved_config)}"
+            )
+        return stable(saved_config)
+
     def close(self) -> None:
         if self._mem is not None:
             self._mem.close()

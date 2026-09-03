@@ -347,11 +347,16 @@ def test_registration_makes_agmem_a_loadable_upstream_memory(tmp_path):
     saved = tmp_path / "memory_state"
     memory.save_memory(saved)
     memory.close()
+    # The requesting run names its own data_dir (as `run` does); paths are not part of the match.
     requested = {
         "memory_type": MEMORY_TYPE,
-        "memory_params": {"write": "raw", "read": "vector", "config": str(_config(tmp_path))},
+        "memory_params": params | {"data_dir": str(tmp_path / "elsewhere")},
     }
-    loaded = load_memory(saved, requested)  # upstream's loader, upstream's equality check
+    loaded = load_memory(saved, requested)  # upstream's loader, our reconcile
+    with pytest.raises(RuntimeError, match="does not match"):
+        load_memory(
+            saved, {"memory_type": MEMORY_TYPE, "memory_params": params | {"read": "explorer"}}
+        )
     assert isinstance(loaded, cls) and loaded.data_dir == saved / "agmem"
     assert "Blue widget" in loaded.query("blue widget")[0]["value"]
     loaded.close()
