@@ -647,7 +647,8 @@ def test_the_mcp_tool_clamps_the_step_count(tmp_path):
         server._registry._mems.pop("t", None)
         mem.close()
     assert payload["degraded"] == "max_steps"
-    assert payload["llm_calls"] == MAX_STEPS_CAP + 1  # the cap, plus the forced final
+    # The cap, plus the forced final and its one correction turn.
+    assert payload["llm_calls"] == MAX_STEPS_CAP + 2
     assert payload["export_s"] >= 0.0
 
 
@@ -1007,3 +1008,125 @@ def test_the_prompt_says_transcript_paths_are_not_workspace_paths():
     assert "Paths quoted INSIDE a transcript" in SYSTEM_PROMPT
     assert "do not exist here" in SYSTEM_PROMPT
     assert "per-file hit counts" in SYSTEM_PROMPT
+    assert "read it before opening a transcript" in SYSTEM_PROMPT
+
+
+def test_a_read_inside_a_range_already_shown_is_refused(tmp_path):
+    """Steps 4-6 of the second ask smoke read 3459-3500 of the same file three
+    times. The loop refuses a read that lies inside a range it has shown,
+    names the step that showed it, and leaves any new range alone."""
+    result = _run_actions(
+        tmp_path,
+        [
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 1,
+                "end": 5,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 2,
+                "end": 4,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 4,
+                "end": 9,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess-42.md",
+                "start": 1,
+                "end": 500,
+            },
+        ],
+    )
+    obs = [s["observation"] for s in result.steps if s["action"] == "read"]
+    assert obs[0].startswith("1: session: sess-42")
+    assert obs[1].startswith(
+        "refused: lines 2-4 of sessions/claude-code/sess-42.md were shown in step 1"
+    )
+    assert obs[2].startswith("4: ")  # overlaps, but reaches lines not yet shown
+    # 1-500 clamps to the file's 9 lines; step 1 showed 1-5 and step 3 showed 4-9,
+    # neither alone covers it, so it runs.
+    assert obs[3].startswith("1: session: sess-42")
+
+
+def test_the_same_search_twice_is_refused(tmp_path):
+    result = _run_actions(
+        tmp_path,
+        [
+            {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+            {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+            {"action": "search", "reason": "r", "pattern": "TimeoutExpired", "path": "runbooks"},
+        ],
+    )
+    obs = [s["observation"] for s in result.steps if s["action"] == "search"]
+    assert "TimeoutExpired" in obs[0]
+    assert obs[1] == "refused: the same search was run in step 1; its hits are above"
+    assert obs[2] == "(no matches)"  # a different path is a different search
+
+
+def test_the_forced_final_gets_one_correction_turn(tmp_path):
+    """Both ask smokes ended with the model answering "you must answer now"
+    with another read. One correction turn — the reply named, "only final is
+    accepted" — and then the honest degrade."""
+    root = _workspace(tmp_path)
+    seen: list[str] = []
+
+    class Recording(StubLLM):
+        def call(self, role, prompt, schema, required_keys=(), **kwargs):
+            seen.append(prompt)
+            return super().call(role, prompt, schema, required_keys, **kwargs)
+
+    llm = Recording(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+                {"action": "read", "reason": "r", "path": "INDEX.md", "start": 1, "end": 5},
+                _final("answered on the correction turn", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep", max_steps=1).research("q", llm)
+    assert result.context == "answered on the correction turn"
+    assert result.degraded is None and result.llm_calls == 3
+    assert [s["action"] for s in result.steps] == [
+        "search",
+        "final",
+    ]  # the refused read ran nothing
+    assert "You must answer now" in seen[1] and "previous reply" not in seen[1]
+    assert "Your previous reply was action 'read'; it was not executed" in seen[2]
+
+    stubborn = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+                {"action": "read", "reason": "r", "path": "INDEX.md", "start": 1, "end": 5},
+                {"action": "read", "reason": "r", "path": "INDEX.md", "start": 1, "end": 5},
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep", max_steps=1).research("q", stubborn)
+    assert result.degraded == "max_steps" and result.context == "" and result.llm_calls == 3
+
+
+def test_a_file_at_the_hit_cap_is_marked_capped(tmp_path):
+    root = _workspace(tmp_path)
+    big = root / "sessions" / "claude-code" / "sess-43.md"
+    big.write_text("".join(f"flaky {i}\n" for i in range(80)))
+    llm = StubLLM(
+        {"explore": [{"action": "search", "reason": "r", "pattern": "flaky"}, _final("ok", [])]}
+    )
+    result = Explorer(root, search_tool="grep").research("q", llm)
+    head = result.steps[0]["observation"].splitlines()[0]
+    assert head.startswith(
+        "52 hits in 3 files: sessions/claude-code/sess-43.md (50, capped), runbooks/rb-1.md (1)"
+    )

@@ -118,7 +118,11 @@ workspace holds nothing relevant. Paths are relative to the workspace root. Path
 INSIDE a transcript (the user's own repository files) do not exist here — only the \
 workspace files above do; to learn what such a file said, search the transcripts for it. A \
 search over several files opens with per-file hit counts: when one file's hits fill the \
-observation, search again with `path` set to another file from that line."""
+observation, search again with `path` set to another file from that line. Runbooks are \
+short: when INDEX.md lists a runbook whose title matches the question, read it before \
+opening a transcript, then verify in the transcript its `source:` line names. A read of \
+lines already shown, or a repeat of an earlier search, is refused — spend the step on \
+something new."""
 
 USER_TEMPLATE = """Question: {query}
 
@@ -156,7 +160,7 @@ class ResearchResult:
     degraded: str | None = None
 
 
-def _hit_summary(lines: list[str], *, single_file: bool) -> str:
+def _hit_summary(lines: list[str], *, single_file: bool, cap: int = MAX_HITS_PER_FILE) -> str:
     """The per-file hit counts a search observation opens with, most hits first.
 
     The hit lines that follow are clipped to the observation budget, and a big
@@ -172,7 +176,10 @@ def _hit_summary(lines: list[str], *, single_file: bool) -> str:
         file, _, _ = line.partition(":")
         counts[file] = counts.get(file, 0) + 1
     ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    files = ", ".join(f"{file} ({n})" for file, n in ranked)
+    # "capped" says the count is the per-file limit, not the file's real
+    # weight: two files at the cap tell the model nothing about which one
+    # matters more, and it should narrow the pattern rather than pick the first.
+    files = ", ".join(f"{file} ({n}{', capped' if n >= cap else ''})" for file, n in ranked)
     return f"{len(lines)} hits in {len(counts)} files: {files}\n"
 
 
@@ -217,6 +224,12 @@ class Explorer:
         started = perf_counter()
         result = ResearchResult(query=query, search_tool=self.search_tool)
         transcript: list[str] = []
+        # What this exploration has already shown: a read inside a range shown
+        # before, or a search identical to an earlier one, is refused instead
+        # of executed. Steps 4-6 of the 2026-09-04 ask smoke were the same
+        # 3459-3500 read three times over.
+        self._shown: list[tuple[str, int, int, int]] = []  # (file, first, last, step)
+        self._searched: dict[tuple[str, str], int] = {}  # (pattern, path) -> step
         for _ in range(self.max_steps):
             reply = self._call(llm, query, transcript, len(result.steps), result)
             if reply is None:
@@ -227,12 +240,23 @@ class Explorer:
                 break
             self._act(reply, transcript, result)
         else:
-            # Out of steps without an answer: one more call, told to answer.
-            reply = self._call(llm, query, transcript, len(result.steps), result, forced=True)
-            if reply is None:
-                result.degraded = "llm_drop"
-            elif reply.get("action") == "final":
-                self._finish(reply, result)
+            # Out of steps without an answer: one more call, told to answer,
+            # and one correction turn if that reply is still not "final" — the
+            # 2026-09-04 smokes had qwen3.5-9b answer the "you must answer now"
+            # prompt with another read, twice out of two, which is a format
+            # failure the arm should not score as "the memory held nothing".
+            refused: str | None = None
+            for _attempt in range(2):
+                reply = self._call(
+                    llm, query, transcript, len(result.steps), result, forced=True, refused=refused
+                )
+                if reply is None:
+                    result.degraded = "llm_drop"
+                    break
+                if reply.get("action") == "final":
+                    self._finish(reply, result)
+                    break
+                refused = str(reply.get("action"))
             else:
                 result.degraded = "max_steps"
         result.latency_s = perf_counter() - started
@@ -246,6 +270,7 @@ class Explorer:
         used: int,
         result: ResearchResult,
         forced: bool = False,
+        refused: str | None = None,
     ) -> dict[str, Any] | None:
         prompt = USER_TEMPLATE.format(
             query=query,
@@ -257,6 +282,11 @@ class Explorer:
         )
         if forced:
             prompt += FORCED_SUFFIX
+        if refused is not None:
+            prompt += (
+                f"\n\nYour previous reply was action {refused!r}; it was not executed. "
+                'Only action "final" is accepted now.'
+            )
         result.llm_calls += 1
         reply = llm.call(
             self.role,
@@ -285,15 +315,16 @@ class Explorer:
         if action == "noop":
             return
         t0 = perf_counter()
+        step = len(result.steps) + 1
         if action == "search":
             argument = f"{reply.get('pattern', '')!s} in {reply.get('path') or '.'}"
-            observation = self._search(str(reply.get("pattern") or ""), reply.get("path"))
+            observation = self._search(str(reply.get("pattern") or ""), reply.get("path"), step)
         elif action == "list":
             argument = str(reply.get("path") or ".")
             observation = self._list(reply.get("path"))
         else:  # read
             argument = f"{reply.get('path')} {reply.get('start')}-{reply.get('end')}"
-            observation = self._read(reply.get("path"), reply.get("start"), reply.get("end"))
+            observation = self._read(reply.get("path"), reply.get("start"), reply.get("end"), step)
         observation = self._clip(observation)
         seconds = perf_counter() - t0
         result.steps.append(
@@ -349,7 +380,7 @@ class Explorer:
     def _relative(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
 
-    def _search(self, pattern: str, path: Any) -> str:
+    def _search(self, pattern: str, path: Any, step: int = 0) -> str:
         if not pattern:
             return "refused: search needs a non-empty pattern"
         target, error = self._resolve(path)
@@ -358,6 +389,10 @@ class Explorer:
         if not target.exists():
             return f"no such path: {self._relative(target) or '.'}"
         rel = self._relative(target) or "."
+        earlier = self._searched.get((pattern, rel))
+        if earlier is not None:
+            return f"refused: the same search was run in step {earlier}; its hits are above"
+        self._searched[(pattern, rel)] = step
         if self.search_tool == "rg":
             # --no-ignore: the workspace is a projection of the store, not a
             # checkout, so a .gitignore or .rgignore that happens to cover it
@@ -419,7 +454,7 @@ class Explorer:
         more = len(entries) - len(shown)
         return "\n".join(shown) + (f"\n…[{more} more]" if more else "")
 
-    def _read(self, path: Any, start: Any, end: Any) -> str:
+    def _read(self, path: Any, start: Any, end: Any, step: int = 0) -> str:
         target, error = self._resolve(path)
         if error:
             return error
@@ -436,6 +471,15 @@ class Explorer:
         lines = target.read_text(errors="replace").splitlines()
         if first > len(lines):
             return f"beyond end of file ({len(lines)} lines)"
+        last = min(last, len(lines))
+        rel = self._relative(target)
+        for file, lo, hi, earlier in self._shown:
+            if file == rel and lo <= first and last <= hi:
+                return (
+                    f"refused: lines {first}-{last} of {rel} were shown in step {earlier} "
+                    f"(lines {lo}-{hi}); read a different range, search, or answer"
+                )
+        self._shown.append((rel, first, last, step))
         chunk = lines[first - 1 : last]
         return "\n".join(f"{first + i}: {line}" for i, line in enumerate(chunk))
 
