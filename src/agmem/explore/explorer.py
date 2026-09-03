@@ -133,8 +133,10 @@ Return the next action as JSON."""
 
 FORCED_SUFFIX = """
 
-You have used all exploration steps. You must answer now: return action "final" with the \
-best context you can cite from what you have already seen."""
+You have used all exploration steps. You must answer now. Reply with exactly this shape and \
+nothing else, filling in what you saw (or saying that nothing relevant was found):
+{"action": "final", "context": "<what a future agent must know>", "citations": [{"file": \
+"<path you read>", "lines": [<first>, <last>]}], "reason": "<why this answers it>"}"""
 
 
 @dataclass
@@ -380,6 +382,34 @@ class Explorer:
     def _relative(self, path: Path) -> str:
         return path.relative_to(self.root).as_posix()
 
+    def _missing(self, rel: str, what: str = "path") -> str:
+        """The observation for a path that is not in the workspace, with the
+        nearest workspace paths when there are any and, for a path that is
+        not a workspace path at all, what to do instead.
+
+        Both come from the 2026-09-04 smokes: a session id copied with two
+        characters dropped ("297fe32-…") cost a step on "no such path", and a
+        repository file named in a transcript (`docs/_internal/…`) cost a step
+        in every run despite the prompt saying such paths do not exist here."""
+        import difflib
+
+        files = [self._relative(f) for f in self.root.rglob("*") if f.is_file()]
+        close = difflib.get_close_matches(rel, files, n=3, cutoff=0.6)
+        if not close:
+            name = rel.rsplit("/", 1)[-1]
+            close = [f for f in files if f.rsplit("/", 1)[-1] == name][:3]
+        message = f"no such {what}: {rel}"
+        if close:
+            return message + "; did you mean: " + ", ".join(close)
+        top = rel.split("/", 1)[0]
+        if top not in ("INDEX.md", "sessions", "runbooks", "messages"):
+            return (
+                message + " — not a workspace path (the workspace holds only INDEX.md, "
+                "sessions/, runbooks/, messages/); to learn what that file said, search "
+                f"the transcripts for {name!r}"
+            )
+        return message
+
     def _search(self, pattern: str, path: Any, step: int = 0) -> str:
         if not pattern:
             return "refused: search needs a non-empty pattern"
@@ -387,7 +417,7 @@ class Explorer:
         if error:
             return error
         if not target.exists():
-            return f"no such path: {self._relative(target) or '.'}"
+            return self._missing(self._relative(target) or ".")
         rel = self._relative(target) or "."
         earlier = self._searched.get((pattern, rel))
         if earlier is not None:
@@ -445,6 +475,8 @@ class Explorer:
         target, error = self._resolve(path)
         if error:
             return error
+        if not target.exists():
+            return self._missing(self._relative(target) or ".", "directory")
         if not target.is_dir():
             return f"not a directory: {self._relative(target) or '.'}"
         entries = sorted(self._relative(p) for p in target.rglob("*") if p.is_file())
@@ -459,7 +491,7 @@ class Explorer:
         if error:
             return error
         if not target.is_file():
-            return f"no such file: {self._relative(target)}"
+            return self._missing(self._relative(target), "file")
         try:
             first = max(1, int(start or 1))
             last = int(end) if end is not None else first + MAX_READ_LINES - 1

@@ -740,7 +740,7 @@ def test_list_edge_cases_and_unknown_actions(tmp_path):
         ],
     )
     obs = [s["observation"] for s in result.steps[:3]]
-    assert "not a directory" in obs[0] and "not a directory" in obs[1]
+    assert "not a directory" in obs[0] and obs[1].startswith("no such directory: does-not-exist")
     assert result.steps[2]["action"] == "teleport" and obs[2] == "unknown action"
     assert result.degraded is None and result.context == "ok"
 
@@ -1130,3 +1130,56 @@ def test_a_file_at_the_hit_cap_is_marked_capped(tmp_path):
     assert head.startswith(
         "52 hits in 3 files: sessions/claude-code/sess-43.md (50, capped), runbooks/rb-1.md (1)"
     )
+
+
+def test_a_missing_path_suggests_the_nearest_workspace_paths(tmp_path):
+    """A session id copied with characters dropped, and a repository file named
+    in a transcript: both cost the 2026-09-04 smokes a step each on a bare
+    "no such path". The observation now names the nearest workspace paths, or
+    says what to do when the path is not a workspace path at all."""
+    result = _run_actions(
+        tmp_path,
+        [
+            {
+                "action": "search",
+                "reason": "r",
+                "pattern": "x",
+                "path": "sessions/claude-code/ses-42.md",
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "sessions/claude-code/sess42.md",
+                "start": 1,
+                "end": 5,
+            },
+            {
+                "action": "read",
+                "reason": "r",
+                "path": "docs/_internal/2026-08-22-lme-code-presentation.md",
+                "start": 1,
+                "end": 5,
+            },
+            {"action": "list", "reason": "r", "path": "docs"},
+        ],
+    )
+    obs = [s["observation"] for s in result.steps if s["action"] != "final"]
+    assert (
+        obs[0]
+        == "no such path: sessions/claude-code/ses-42.md; did you mean: sessions/claude-code/sess-42.md"
+    )
+    assert (
+        obs[1]
+        == "no such file: sessions/claude-code/sess42.md; did you mean: sessions/claude-code/sess-42.md"
+    )
+    assert obs[2].startswith(
+        "no such file: docs/_internal/2026-08-22-lme-code-presentation.md — not a workspace path"
+    )
+    assert "search the transcripts for '2026-08-22-lme-code-presentation.md'" in obs[2]
+    assert obs[3].startswith("no such directory: docs — not a workspace path")
+
+
+def test_the_forced_final_prompt_carries_a_skeleton_to_fill():
+    from agmem.explore.explorer import FORCED_SUFFIX
+
+    assert '{"action": "final", "context": "<what a future agent must know>"' in FORCED_SUFFIX
