@@ -36,7 +36,7 @@ class StubLLM:
 
 
 @contextmanager
-def openai_stub(replies: list[str]):
+def openai_stub(replies: list[str], finish_reason: str = "stop"):
     """A local OpenAI-compatible `/chat/completions` endpoint answering with the
     queued `replies` in order (the last one repeats), so a CLI run in its own
     process makes a real HTTP call against no model and no key.
@@ -66,7 +66,7 @@ def openai_stub(replies: list[str]):
                         {
                             "index": 0,
                             "message": {"role": "assistant", "content": content},
-                            "finish_reason": "stop",
+                            "finish_reason": finish_reason,
                         }
                     ],
                     "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},

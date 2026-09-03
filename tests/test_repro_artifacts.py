@@ -13,10 +13,10 @@ import json
 import subprocess
 import sys
 import tempfile
-
-import pytest
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from agmem import AgenticMemory
 from agmem.bench import locomo
@@ -60,21 +60,23 @@ class _FakeOpenAI:
     returns a canned completion with usage, so LLMClient.chat exercises the real
     success path (budget + trace) without any network."""
 
-    def __init__(self, content="canned reply", tokens=(11, 7)):
+    def __init__(self, content="canned reply", tokens=(11, 7), finish_reason="stop"):
         self._content = content
         self._tokens = tokens
+        self._finish_reason = finish_reason
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
 
     def _create(self, **kwargs):
         msg = SimpleNamespace(content=self._content)
         usage = SimpleNamespace(prompt_tokens=self._tokens[0], completion_tokens=self._tokens[1])
-        return SimpleNamespace(choices=[SimpleNamespace(message=msg)], usage=usage)
+        choice = SimpleNamespace(message=msg, finish_reason=self._finish_reason)
+        return SimpleNamespace(choices=[choice], usage=usage)
 
 
-def _client_with_fake(trace_path, content="canned reply"):
-    roles = {"generate": RoleConfig(endpoint="http://x", model="m", temperature=0.3)}
+def _client_with_fake(trace_path, content="canned reply", finish_reason="stop"):
+    roles = {"generate": RoleConfig(endpoint="http://x", model="m", temperature=0.3, max_tokens=64)}
     client = LLMClient(roles, trace_path=trace_path)
-    fake = _FakeOpenAI(content=content)
+    fake = _FakeOpenAI(content=content, finish_reason=finish_reason)
     client._client_for = lambda cfg: fake  # bypass real openai construction
     return client
 
@@ -97,7 +99,28 @@ def test_trace_sink_writes_full_io_line(tmp_path):
     assert row["response_text"] == "the FULL response text"
     assert row["tokens_in"] == 11 and row["tokens_out"] == 7
     assert row["error"] is None
+    assert row["finish_reason"] == "stop"
     assert "ts_iso" in row and isinstance(row["latency_ms"], (int, float))
+
+
+def test_a_reply_cut_by_the_output_cap_is_marked_in_the_trace_and_warned(tmp_path, caplog):
+    """`finish_reason == "length"` is the one signal that a JSON reply failed
+    because the cap cut it, not because the model could not follow the schema.
+    The 2026-09-04 OpenRouter smoke paid for every session twice this way and
+    the budget line could not say so; the trace and the log now can."""
+    import logging
+
+    trace = tmp_path / "run.llm-trace.jsonl"
+    client = _client_with_fake(trace, content='{"summary": "cut mid', finish_reason="length")
+    with caplog.at_level(logging.WARNING, logger="agmem.llm.client"):
+        out = client.chat("generate", [{"role": "user", "content": "p"}])
+    assert out == '{"summary": "cut mid'  # returned as-is: the caller decides
+    row = json.loads(trace.read_text(encoding="utf-8").splitlines()[0])
+    assert row["finish_reason"] == "length"
+    assert any(
+        "truncated at the output cap" in r.getMessage() and "max_tokens=64" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_a_gzipped_trace_stays_readable_line_by_line(tmp_path):

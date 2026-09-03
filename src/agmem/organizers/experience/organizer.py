@@ -131,6 +131,10 @@ Split the session into distinct tasks (one block each; do not merge unrelated wo
 For each task:
 - name: short, concrete, in the user's own words where possible.
 - outcome: success | partial | fail | uncertain. Be conservative on the last task.
+- steps: [first, last] — REQUIRED on every task. The INCLUSIVE range of transcript \
+step numbers (the bracketed [i] labels) this block is grounded in. Cite the steps you \
+actually read for it; a block that spans the whole transcript cites its first and last \
+visible label.
 - preference_signals: 'when <situation>, the user said/asked/corrected: "<near-verbatim>" \
 -> <what to do by default next time>'. One bullet per distinct default.
 - reusable_knowledge: validated repo/system facts and high-leverage shortcuts. Facts, not opinions.
@@ -140,9 +144,6 @@ with flags, file paths, function names, exact error strings, ids.
 - procedure: 4-8 imperative steps a future agent could follow to redo this task in this \
 workspace. Only if the task succeeded or partially succeeded. Empty otherwise.
 - keywords: discriminative search handles (tool names, error strings, repo concepts).
-- steps: [first, last] — the INCLUSIVE range of transcript step numbers (the \
-bracketed [i] labels) this block is grounded in. Cite the steps you actually read \
-for it; omit the field if the block spans the whole session or you are unsure.
 Keep the user's wording. Generalize only enough to be reusable; never so far that the \
 concrete request disappears. Omit any list that would be empty.
 
@@ -155,6 +156,7 @@ USER_TEMPLATE = """Session context:
 - host: {host}
 - cwd: {cwd}
 - session_id: {session_id}
+- steps: {n_steps}, labelled [0] to [{last_step}]
 
 Transcript (steps in order, each prefixed by its step number in brackets; \
 USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
@@ -355,6 +357,8 @@ class ExperienceOrganizer(Organizer):
             host=meta["host"],
             cwd=meta["cwd"] or "unknown",
             session_id=meta["session_id"],
+            n_steps=len(trajectory),
+            last_step=max(len(trajectory) - 1, 0),
             transcript=transcript,
         )
         result = ctx.llm.call(

@@ -225,3 +225,24 @@ def test_a_citation_into_omitted_steps_is_refused():
     text, visible = render_transcript(huge, max_chars=300)
     assert text.startswith("[0] USER") and "chars omitted" in text
     assert text.endswith("[1] ASSISTANT\nok") and visible == frozenset({0, 1})
+
+
+def test_the_prompt_requires_a_step_range_and_says_how_many_steps_there_are():
+    """The 2026-09-04 smoke: two sessions, seven runbooks, `steps` on none of
+    them — the prompt had said "omit the field if … unsure", and a 9B model
+    took that every time, so every pointer fell back to the whole session. The
+    field is now asked for as required, listed before the free-text lists, and
+    the user turn states the label range so the model has the numbers to cite."""
+    assert "steps: [first, last] — REQUIRED on every task" in SYSTEM_PROMPT
+    assert "omit the field" not in SYSTEM_PROMPT
+    assert SYSTEM_PROMPT.index("- steps:") < SYSTEM_PROMPT.index("- preference_signals:")
+
+    llm = StubLLM({"distill": [{"summary": "", "tasks": []}]})
+    mem = _mem(llm)
+    traj = _session()
+    steps = traj.as_task_trajectory()
+    mem.add_task_result(trajectory=steps, outcome="unknown", task=traj.task_text)
+    mem.flush()
+    prompt = llm.calls[0][1]
+    assert f"- steps: {len(steps)}, labelled [0] to [{len(steps) - 1}]" in prompt
+    mem.close()

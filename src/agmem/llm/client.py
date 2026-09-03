@@ -158,9 +158,34 @@ class LLMClient:
                     cfg.model,
                 )
         self.budget.record(budget_key or role, tokens_in, tokens_out, latency_ms)
-        content = resp.choices[0].message.content or ""
+        choice = resp.choices[0]
+        content = choice.message.content or ""
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason == "length":
+            # The reply hit the output cap, so it is cut mid-way — for a JSON
+            # caller that means a parse failure and a correction turn that
+            # re-sends the WHOLE prompt. The 2026-09-04 smoke paid twice for
+            # every session this way, with `max_tokens = 2048` under a
+            # 3-task runbook. Loud, because the budget line cannot show it.
+            logger.warning(
+                "%s reply truncated at the output cap (%s=%s, role=%s, tokens_out=%s); "
+                "a structured caller will re-send the whole prompt — raise max_tokens",
+                cfg.model,
+                cfg.max_tokens_key,
+                cfg.max_tokens,
+                role,
+                tokens_out,
+            )
         self._trace(
-            role, budget_key, cfg.model, messages, content, tokens_in, tokens_out, latency_ms
+            role,
+            budget_key,
+            cfg.model,
+            messages,
+            content,
+            tokens_in,
+            tokens_out,
+            latency_ms,
+            finish_reason=finish_reason,
         )
         return content
 
@@ -175,6 +200,7 @@ class LLMClient:
         tokens_out: int,
         latency_ms: float,
         error: str | None = None,
+        finish_reason: str | None = None,
     ) -> None:
         """Append one JSON line capturing the FULL prompt+response of a single
         `chat()` call (success or failure) to `self.trace_path`. No-op when the
@@ -194,6 +220,9 @@ class LLMClient:
             "tokens_out": tokens_out,
             "latency_ms": round(latency_ms, 3),
             "error": error,
+            # "stop" / "length" / None — "length" is the one to grep for: it
+            # marks a reply the output cap cut off (see `chat`).
+            "finish_reason": finish_reason,
         }
         try:
             payload = json.dumps(line, ensure_ascii=False, default=str) + "\n"
