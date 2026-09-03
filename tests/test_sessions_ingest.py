@@ -592,3 +592,28 @@ def test_cli_distil_keeps_the_full_llm_trace_beside_the_store(tmp_path):
     assert f"trace: {explicit}" in again.stdout
     assert len(explicit.read_text().splitlines()) == 1
     assert runbooks() == 1
+
+
+def test_force_keeps_the_earlier_runbook_when_the_redistillation_drops(caplog):
+    """The 2026-09-04 smoke: `--force` retired the session's four runbooks,
+    then both replies of the new call were malformed and dropped, and the
+    session was left with none. The earlier items go only once the new call
+    has put something in their place."""
+    import logging
+
+    llm = StubLLM({"distill": [_distilled([2, 4])]})  # the second call has no reply: a drop
+    mem = _experience_mem(llm)
+    traj = _session()
+    mem.add_session(traj)
+    mem.flush()
+    (first,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+
+    with caplog.at_level(logging.WARNING, logger="agmem.memory"):
+        mem.add_session(traj, force=True)
+        mem.flush()
+    (kept,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert kept["id"] == first["id"]
+    ops = list(mem.log.tail(20))
+    assert not [op for op in ops if op.op is OpType.DELETE and op.target_type == MEMORY_TYPE]
+    assert any("produced nothing" in r.getMessage() for r in caplog.records)
+    mem.close()

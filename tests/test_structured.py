@@ -161,3 +161,20 @@ def test_spent_retries_that_never_recovered_are_not_recoveries(monkeypatch):
     assert caller.call("extract", "p", {"type": "object"}, required_keys=("ok",)) is None
     assert caller.drops == {"extract": 1}
     assert caller.transport_recoveries == {}, "retries were spent; none of them recovered anything"
+
+
+def test_the_correction_turn_names_the_parse_error():
+    """The 2026-09-04 smoke: "not valid JSON" alone got the identical malformed
+    reply back. The correction now carries the parser's line, column and the
+    text around it, or the keys that were missing."""
+    bad = '{"summary": "s", "tasks": [{"procedure": [1. Find the path, 2. Read it]}]}'
+    caller, client = _caller([bad, '{"summary": "s", "tasks": []}'])
+    out = caller.call("distill", "p", {"type": "object"}, required_keys=("summary", "tasks"))
+    assert out == {"summary": "s", "tasks": []}
+    correction = client.sent[1][-1]["content"]
+    assert "parse error: Expecting" in correction and "line 1 column" in correction
+    assert "1. Find the path" in correction
+
+    caller, client = _caller(['{"summary": "s"}', '{"summary": "s", "tasks": []}'])
+    caller.call("distill", "p", {"type": "object"}, required_keys=("summary", "tasks"))
+    assert "(missing keys: ['tasks'])" in client.sent[1][-1]["content"]

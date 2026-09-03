@@ -646,8 +646,9 @@ class AgenticMemory:
                 traj.id,
                 len(traj.steps),
             )
-        if present and distill:
-            self._retire_session_items(traj.id)
+        # Ids of the items an earlier distillation of this session left; they
+        # are retired only after the new one has produced something (below).
+        prior = self._session_item_ids(traj.id) if present and distill else set()
 
         persisted: list[str] = []
         if persist_steps:
@@ -667,16 +668,47 @@ class AgenticMemory:
             if not persist_steps:
                 steps = _without_episode_ids(steps)
             task_text = traj.task_text
-            self._dispatch(
-                lambda: self._apply_from_all(
+
+            def redistil() -> None:
+                self._apply_from_all(
                     lambda org: org.on_task_end(steps, outcome, task_text, self._ctx)
                 )
-            )
+                if not prior:
+                    return
+                # The earlier items go only once the new call has replaced them.
+                # A re-distillation whose reply was dropped (the 2026-09-04
+                # smoke: two malformed JSON replies) used to leave the session
+                # with no runbook at all, the old ones already deleted.
+                if self._session_item_ids(traj.id) - prior:
+                    self._retire_session_items(traj.id, only=prior)
+                else:
+                    logger.warning(
+                        "add_session: re-distillation of %s/%s produced nothing — keeping "
+                        "the %d earlier item(s)",
+                        traj.host,
+                        traj.id,
+                        len(prior),
+                    )
+
+            # One unit of work, so the check runs after the hooks under a
+            # background queue as well as in sync mode.
+            self._dispatch(redistil)
         return SessionIngest(traj.id, traj.host, persisted, already, distill)
 
-    def _retire_session_items(self, session_id: str) -> int:
+    def _session_item_ids(self, session_id: str) -> set[str]:
+        """Ids of the live items the active organizers hold about ``session_id``."""
+        ids: set[str] = set()
+        produced = dict.fromkeys(t for org in self.organizers for t in org.produces)
+        for memory_type in produced:
+            for item in self.doc_store.list_items(memory_type, namespace=self.namespace):
+                if item.get("session_id") == session_id and item.get("id"):
+                    ids.add(str(item["id"]))
+        return ids
+
+    def _retire_session_items(self, session_id: str, only: set[str] | None = None) -> int:
         """DELETE every derived item an organizer wrote about ``session_id``, so a
         re-distillation replaces the earlier one instead of sitting next to it.
+        With ``only``, just those ids — the ones a re-distillation replaced.
 
         Generic over the active organizers' ``produces``: whatever type they
         write, an item that carries ``session_id`` in its data came from this
@@ -687,15 +719,18 @@ class AgenticMemory:
         produced = dict.fromkeys(t for org in self.organizers for t in org.produces)
         for memory_type in produced:
             for item in self.doc_store.list_items(memory_type, namespace=self.namespace):
-                if item.get("session_id") == session_id and item.get("id"):
-                    ops.append(
-                        MemoryOp(
-                            op=OpType.DELETE,
-                            target_type=memory_type,
-                            target_id=str(item["id"]),
-                            actor="ingest",
-                            payload={"reason": "re-distillation", "session_id": session_id},
-                        )
+                if item.get("session_id") != session_id or not item.get("id"):
+                    continue
+                if only is not None and str(item["id"]) not in only:
+                    continue
+                ops.append(
+                    MemoryOp(
+                        op=OpType.DELETE,
+                        target_type=memory_type,
+                        target_id=str(item["id"]),
+                        actor="ingest",
+                        payload={"reason": "re-distillation", "session_id": session_id},
+                    )
                     )
         if ops:
             self._apply_ops(ops, actor="ingest")

@@ -40,6 +40,24 @@ def extract_json(text: str) -> dict[str, Any] | list | None:
     return None
 
 
+def _reply_defect(text: str, parsed: Any, required_keys: tuple[str, ...]) -> str:
+    """What the correction turn can say about WHY the reply was refused.
+
+    "Not valid JSON" alone earned the same reply twice from qwen3.5-9b on
+    2026-09-04 (`"procedure": [1. Find …, 2. Read …]` — bare strings in an
+    array, both times, then a drop). The parser knows the line and column;
+    the model gets them, plus the offending text."""
+    if parsed is not None:
+        missing = [k for k in required_keys if k not in parsed]
+        return f" (missing keys: {missing})" if missing else ""
+    try:
+        json.loads(text)
+    except json.JSONDecodeError as exc:
+        snippet = text[max(0, exc.pos - 40) : exc.pos + 40].replace("\n", " ")
+        return f" (parse error: {exc.msg} at line {exc.lineno} column {exc.colno}, near: {snippet!r})"
+    return ""
+
+
 def coerce_to_schema(parsed: Any, schema: dict[str, Any]) -> dict[str, Any] | None:
     """Schema-guided repair for common small-model deviations.
 
@@ -233,7 +251,8 @@ class StructuredCaller:
                     "role": "user",
                     "content": (
                         "Your previous reply was not valid JSON with keys "
-                        f"{list(required_keys)}. Respond again with ONLY the JSON object."
+                        f"{list(required_keys)}{_reply_defect(last_output, parsed, required_keys)}. "
+                        "Respond again with ONLY the JSON object."
                     ),
                 }
             )
