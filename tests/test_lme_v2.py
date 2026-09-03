@@ -362,9 +362,21 @@ def test_registration_makes_agmem_a_loadable_upstream_memory(tmp_path):
         "memory_params": params | {"data_dir": str(tmp_path / "elsewhere")},
     }
     loaded = load_memory(saved, requested)  # upstream's loader, our reconcile
-    with pytest.raises(RuntimeError, match="does not match"):
+    # The read side may change on load: the same raw store, read by the explorer.
+    as_explorer = load_memory(
+        saved,
+        {
+            "memory_type": MEMORY_TYPE,
+            "memory_params": params | {"read": "explorer", "max_steps": 3},
+        },
+    )
+    assert as_explorer.read == "explorer" and as_explorer.max_steps == 3
+    assert as_explorer.data_dir == saved / "agmem"
+    as_explorer.close()
+    # The write side may not: a store built raw is not an experience store.
+    with pytest.raises(RuntimeError, match="write side"):
         load_memory(
-            saved, {"memory_type": MEMORY_TYPE, "memory_params": params | {"read": "explorer"}}
+            saved, {"memory_type": MEMORY_TYPE, "memory_params": params | {"write": "experience"}}
         )
     assert isinstance(loaded, cls) and loaded.data_dir == saved / "agmem"
     assert "Blue widget" in loaded.query("blue widget")[0]["value"]

@@ -67,6 +67,19 @@ DEFAULT_RENDER_STATE_CHARS = 5_000
 # left out of the persisted memory_config so a `--load-memory-dir` run, whose
 # paths differ, still matches the saved config (upstream requires equality).
 VOLATILE_PARAMS = ("data_dir", "workspace_dir")
+# Parameters that only shape `query`. A saved store is what `insert` wrote,
+# so a load may change these freely — the same raw store read by the vector
+# arm and by the explorer is exactly the controlled comparison the arms are
+# for — while the write-side parameters must match what built it.
+READ_PARAMS = (
+    "read",
+    "top_k",
+    "budget_tokens",
+    "max_steps",
+    "explorer_budget_tokens",
+    "slice_radius",
+    "render_state_chars",
+)
 
 
 # ----------------------------------------------------------------------------
@@ -557,24 +570,35 @@ class AgmemMemory(_MemoryBase):
         cls, saved_config: dict[str, Any], requested_config: dict[str, Any] | None
     ) -> dict[str, Any]:
         """Upstream's loader requires the requested config to equal the saved
-        one. Ours differ exactly in the volatile path keys — the run that saved
-        wrote nothing under `data_dir`, the run that loads names its own —
-        so those are left out of the comparison and the saved config wins."""
+        one. Ours may differ in two kinds of key: the volatile paths (the run
+        that saved wrote nothing under `data_dir`, the run that loads names its
+        own) and the read-side parameters (`READ_PARAMS`), which do not touch
+        what the store holds. The write side must match; the effective config
+        is the saved one with the requested read side laid over it."""
         if saved_config.get("memory_type") != cls.memory_type:
             raise RuntimeError(
                 f"saved memory type {saved_config.get('memory_type')!r} is not {cls.memory_type!r}"
             )
+        skip = set(VOLATILE_PARAMS) | set(READ_PARAMS)
 
-        def stable(config: dict[str, Any]) -> dict[str, Any]:
-            params = {k: v for k, v in config["memory_params"].items() if k not in VOLATILE_PARAMS}
-            return {"memory_type": config["memory_type"], "memory_params": params}
+        def write_side(config: dict[str, Any]) -> dict[str, Any]:
+            return {k: v for k, v in config["memory_params"].items() if k not in skip}
 
-        if requested_config is not None and stable(requested_config) != stable(saved_config):
-            raise RuntimeError(
-                "requested memory config does not match the saved one (paths aside): "
-                f"{stable(requested_config)} vs {stable(saved_config)}"
-            )
-        return stable(saved_config)
+        effective = {
+            k: v for k, v in saved_config["memory_params"].items() if k not in VOLATILE_PARAMS
+        }
+        if requested_config is not None:
+            if write_side(requested_config) != write_side(saved_config):
+                raise RuntimeError(
+                    "requested memory config does not match the saved store's write side: "
+                    f"{write_side(requested_config)} vs {write_side(saved_config)}"
+                )
+            for key in READ_PARAMS:
+                if key in requested_config["memory_params"]:
+                    effective[key] = requested_config["memory_params"][key]
+                else:
+                    effective.pop(key, None)
+        return {"memory_type": cls.memory_type, "memory_params": effective}
 
     def close(self) -> None:
         if self._mem is not None:
