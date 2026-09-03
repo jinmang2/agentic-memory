@@ -43,6 +43,21 @@ class RoleConfig:
     extra_body: dict[str, Any] = field(default_factory=dict)
 
 
+def default_trace_path(store_dir: Path, kind: str) -> Path:
+    """Where a paid CLI run's full LLM I/O goes when the caller named no path:
+    `<store_dir>/traces/<kind>-<UTC stamp>.jsonl`, next to the store it fed.
+
+    A paid run without its prompt/response trace cannot be replayed, re-scored
+    or even diagnosed — the 2026-09-04 OpenRouter smoke recorded `calls: 2` for
+    one session and nothing that said why the second call happened. The trace
+    lives beside the store rather than in the repo so it is never staged, and
+    the stamp keeps successive runs from appending into one file."""
+    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    path = store_dir / "traces" / f"{kind}-{stamp}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 class LLMClient:
     """Routes each role to its own `RoleConfig` and OpenAI-compatible
     endpoint, and records every call (success or failure) into `budget`."""

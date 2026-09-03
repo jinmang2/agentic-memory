@@ -901,3 +901,53 @@ def test_the_mcp_tool_success_path_serialises_citations_and_steps(tmp_path):
     assert payload["citations"] == [{"file": "runbooks/rb-1.md", "lines": [1, 2]}]
     assert payload["steps"] == 2 and payload["llm_calls"] == 2
     assert payload["degraded"] is None and payload["latency_s"] >= payload["export_s"] >= 0.0
+
+
+def test_cli_ask_runs_the_loop_against_a_stub_model_and_keeps_the_trace(tmp_path):
+    """The one CLI path the bundle-C review listed as uncovered: `ask` with a
+    real (stubbed) model role, in the CLI's own process. The stub answers with
+    a `list` then a `final` citing a session file the export is known to
+    write, and the full LLM I/O lands beside the store."""
+    from helpers import openai_stub
+
+    mem = _populated(
+        AgenticMemory(
+            namespace="main",
+            organizers=["experience"],
+            embedder=FakeEmbedder(),
+            config=AgmemConfig(sync_write=True, data_dir=tmp_path / "data"),
+        )
+    )
+    root = tmp_path / "data" / "main" / "workspace"
+    export_workspace(mem, root)  # deterministic: `ask` re-exports to the same bytes
+    mem.close()
+    cited = min((root / "sessions").rglob("*.md"))
+    rel = cited.relative_to(root).as_posix()
+    n_lines = len(cited.read_text().splitlines())
+
+    replies = [
+        json.dumps({"action": "list", "reason": "see the layout", "path": "sessions"}),
+        json.dumps(
+            _final("The answer is in the session log.", [{"file": rel, "lines": [1, n_lines]}])
+        ),
+    ]
+    with openai_stub(replies) as (url, requests):
+        proc = _run_cli(
+            ["ask", "what happened?"],
+            tmp_path,
+            extra_config=f'\n[llm.explore]\nendpoint = "{url}"\nmodel = "stub"\napi_key = "stub"\n',
+        )
+    assert proc.returncode == 0, proc.stderr
+    assert len(requests) == 2 and all(r["model"] == "stub" for r in requests)
+    assert "The answer is in the session log." in proc.stdout
+    assert f'"file": "{rel}"' in proc.stdout
+    assert "llm_calls=2 steps=2" in proc.stdout and "degraded=None" in proc.stdout
+
+    trace_lines = [line for line in proc.stdout.splitlines() if line.startswith("trace: ")]
+    assert len(trace_lines) == 1
+    trace = Path(trace_lines[0].removeprefix("trace: "))
+    assert trace.parent == tmp_path / "data" / "main" / "traces"
+    assert trace.name.startswith("ask-")
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert [r["role"] for r in records] == ["explore", "explore"]
+    assert records[1]["response_text"] == replies[1]

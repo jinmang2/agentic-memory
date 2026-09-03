@@ -56,7 +56,10 @@ def _export(args) -> int:
 
 
 def _ask(args) -> int:
+    from pathlib import Path
+
     from agmem.hooks import _resolve
+    from agmem.llm.client import default_trace_path
 
     if args.max_steps < 1 or args.max_steps > MAX_STEPS_CAP:
         print(f"--max-steps must be between 1 and {MAX_STEPS_CAP}", file=sys.stderr)
@@ -70,7 +73,17 @@ def _ask(args) -> int:
         )
         return 2
     ns, root, _config, mem = _open(args)
+    trace = None
     try:
+        if mem.llm is not None:
+            # As in `agmem.sessions ingest`: a paid run keeps its full LLM I/O.
+            trace = (
+                Path(args.trace).expanduser()
+                if args.trace
+                else default_trace_path(root / ns, "ask")
+            )
+            trace.parent.mkdir(parents=True, exist_ok=True)
+            mem.llm.trace_path = trace
         result = mem.research(
             args.query,
             root=_workspace_root(args, root, ns),
@@ -89,6 +102,8 @@ def _ask(args) -> int:
         f"degraded={result.degraded}"
     )
     print(f"budget: {budget}")
+    if trace is not None:
+        print(f"trace: {trace}")
     return 0
 
 
@@ -101,6 +116,11 @@ def main() -> int:
             p.add_argument("query")
             p.add_argument("--max-steps", type=int, default=8)
             p.add_argument("--budget-tokens", type=int, default=4000)
+            p.add_argument(
+                "--trace",
+                default=None,
+                help="where to append the full LLM I/O (default <data>/<ns>/traces/ask-<stamp>.jsonl)",
+            )
         p.add_argument("--root", default=None, help="workspace dir (default <data>/<ns>/workspace)")
         p.add_argument("--namespace", default=None)
         p.add_argument("--data-dir", default=None)

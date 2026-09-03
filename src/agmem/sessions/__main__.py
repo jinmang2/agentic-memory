@@ -134,6 +134,7 @@ def _ingest(args) -> int:
 
     from agmem.config import AgmemConfig
     from agmem.embed.api_embedder import APIEmbedder
+    from agmem.llm.client import default_trace_path
     from agmem.memory import AgenticMemory
 
     ns, root, config = _resolve(args.namespace, args.data_dir)
@@ -154,7 +155,19 @@ def _ingest(args) -> int:
     else:
         config = replace(config, data_dir=root, sync_write=True)
     mem = AgenticMemory(namespace=ns, organizers=["experience"], config=config)
+    trace = None
     try:
+        if distill and mem.llm is not None:
+            # Every paid run keeps its full prompt/response trace, by default
+            # beside the store it fed. Not optional: a run whose model replies
+            # are gone cannot be replayed, re-scored, or explained.
+            trace = (
+                Path(args.trace).expanduser()
+                if args.trace
+                else default_trace_path(root / ns, "ingest")
+            )
+            trace.parent.mkdir(parents=True, exist_ok=True)
+            mem.llm.trace_path = trace
         if isinstance(mem.embedder, APIEmbedder) and args.limit is None:
             # `--no-distill` is free only with a local embedder. Every step of
             # every session goes through the embedder, so with an API-backed one
@@ -167,6 +180,13 @@ def _ingest(args) -> int:
             return 2
         processed = 0
         for traj in _load_lazily(paths):
+            if not traj.steps:
+                # Same line the dry run prints, and the same accounting: an
+                # empty session stores nothing, calls nothing, and must not
+                # consume the limit — the 2026-09-04 smoke lost its second
+                # session to one.
+                print(f"{traj.host:11s} {traj.id[:24]:24s} steps=    0 user=   0 empty, skipped")
+                continue
             before = mem.log.count()
             ingest = mem.add_session(traj, outcome=args.outcome, distill=distill, force=args.force)
             mem.flush()
@@ -189,6 +209,8 @@ def _ingest(args) -> int:
         print(f"{processed} session(s) ingested this run")
         if distill:
             print(f"budget: {mem.budget.summary()}")
+        if trace is not None:
+            print(f"trace: {trace}")
     finally:
         mem.close()
     return 0
@@ -221,6 +243,11 @@ def main() -> int:
     ingest.add_argument("--force", action="store_true", help="re-persist and re-distil")
     ingest.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     ingest.add_argument("--outcome", default="unknown", help="caller's label for the session")
+    ingest.add_argument(
+        "--trace",
+        default=None,
+        help="where to append the full LLM I/O (default <data>/<ns>/traces/ingest-<stamp>.jsonl)",
+    )
     ingest.add_argument("--namespace", default=None)
     ingest.add_argument("--data-dir", default=None)
     args = ap.parse_args()

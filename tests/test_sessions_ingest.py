@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from helpers import StubLLM
@@ -342,17 +343,18 @@ def _claude_session_file(tmp_path):
     return path
 
 
-def _run_cli(args, tmp_path, home=None):
+def _run_cli(args, tmp_path, home=None, extra_config: str = ""):
     """The CLI in its own process, pointed at a config that overrides the
     embedder slot to `FakeEmbedder` — the real one would fetch weights, and this
-    test must neither download nor spend."""
+    test must neither download nor spend. `extra_config` is appended verbatim
+    (an `[llm.distill]` section pointing at `openai_stub`, for the paid path)."""
     import os
 
     config = tmp_path / "agmem.toml"
     config.write_text(
         '[profile]\nname = "lite"\n\n'
         f'[storage]\ndata_dir = "{tmp_path / "data"}"\n\n'
-        '[override]\nembedder = "FakeEmbedder"\n'
+        '[override]\nembedder = "FakeEmbedder"\n' + extra_config
     )
     env = dict(os.environ)
     env["AGMEM_CONFIG"] = str(config)
@@ -476,3 +478,117 @@ def test_cli_discovers_sessions_the_way_scan_does(tmp_path, host):
     proc = _run_cli(["ingest", "--host", host, "--dry-run"], tmp_path, home=home)
     assert proc.returncode == 0, proc.stderr
     assert "0 session(s)" in proc.stdout
+
+
+def _empty_session_file(tmp_path):
+    """A session file the adapter reads as zero steps — the shape the 2026-09-04
+    smoke met (a file holding only a summary record)."""
+    from agmem.sessions import load
+
+    path = tmp_path / "cli-empty.jsonl"
+    path.write_text(json.dumps({"type": "summary", "summary": "nothing typed"}) + "\n")
+    assert load(path).steps == []  # the precondition the test is about
+    return path
+
+
+def test_cli_skips_an_empty_session_without_counting_it_against_the_limit(tmp_path):
+    """The 2026-09-04 smoke ran `--limit 2` over [big, empty, big] and took only
+    the first big one: the empty session stored nothing, called nothing, and
+    still consumed a slot. The dry run had (correctly) skipped it. Both paths
+    now print the same line and count the same way."""
+    empty = _empty_session_file(tmp_path)
+    first = _claude_session_file(tmp_path)
+    proc = _run_cli(
+        ["ingest", str(empty), str(first), "--no-distill", "--limit", "1", "--namespace", "cli"],
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "empty, skipped" in proc.stdout
+    assert "cli-1" in proc.stdout and "persisted=2" in proc.stdout
+    assert "1 session(s) ingested this run" in proc.stdout
+
+
+def _distill_config(url: str) -> str:
+    return f'\n[llm.distill]\nendpoint = "{url}"\nmodel = "stub"\napi_key = "stub"\n'
+
+
+def test_cli_distil_keeps_the_full_llm_trace_beside_the_store(tmp_path):
+    """The paid path end to end, in the CLI's own process, against a local
+    OpenAI-shaped stub: the model call happens, the runbook lands, and the full
+    prompt/response trace is written beside the store by default (or where
+    `--trace` says). The 2026-09-04 smoke had no trace, so its `calls: 2` for
+    one session could not be explained."""
+    from helpers import openai_stub
+
+    from agmem.stores.sqlite_doc import SqliteDocStore
+
+    def runbooks() -> int:
+        # The store API, not a raw row count: a DELETE is a tombstone the
+        # readers skip, and the row stays for replay.
+        store = SqliteDocStore(tmp_path / "data" / "cli" / "memory.db")
+        try:
+            return len(store.list_items("runbooks", namespace="cli"))
+        finally:
+            store.close()
+
+    path = _claude_session_file(tmp_path)
+    reply = json.dumps(
+        {
+            "summary": "Fixed a failing test",
+            "tasks": [
+                {
+                    "name": "Fix the failing test",
+                    "outcome": "success",
+                    "procedure": ["run pytest", "fix the assertion"],
+                    "keywords": ["pytest"],
+                    "steps": [0, 1],
+                }
+            ],
+        }
+    )
+    with openai_stub([reply]) as (url, requests):
+        proc = _run_cli(
+            ["ingest", str(path), "--limit", "1", "--namespace", "cli"],
+            tmp_path,
+            extra_config=_distill_config(url),
+        )
+    assert proc.returncode == 0, proc.stderr
+    assert len(requests) == 1 and requests[0]["model"] == "stub"
+    assert "persisted=2" in proc.stdout and "'calls': 1" in proc.stdout
+
+    trace_lines = [line for line in proc.stdout.splitlines() if line.startswith("trace: ")]
+    assert len(trace_lines) == 1
+    trace = Path(trace_lines[0].removeprefix("trace: "))
+    assert trace.parent == tmp_path / "data" / "cli" / "traces"
+    assert trace.name.startswith("ingest-") and trace.suffix == ".jsonl"
+    records = [json.loads(line) for line in trace.read_text().splitlines()]
+    assert len(records) == 1
+    assert records[0]["role"] == "distill" and records[0]["response_text"] == reply
+    assert "Fix the failing test" in records[0]["messages"][-1]["content"]
+
+    assert runbooks() == 1
+
+    # An explicit `--trace` wins over the default location, and `--force` really
+    # re-distils: one more model call, one more trace line, still one runbook.
+    explicit = tmp_path / "elsewhere" / "run.jsonl"
+    with openai_stub([reply]) as (url, requests):
+        again = _run_cli(
+            [
+                "ingest",
+                str(path),
+                "--limit",
+                "1",
+                "--namespace",
+                "cli",
+                "--force",
+                "--trace",
+                str(explicit),
+            ],
+            tmp_path,
+            extra_config=_distill_config(url),
+        )
+    assert again.returncode == 0, again.stderr
+    assert len(requests) == 1
+    assert f"trace: {explicit}" in again.stdout
+    assert len(explicit.read_text().splitlines()) == 1
+    assert runbooks() == 1
