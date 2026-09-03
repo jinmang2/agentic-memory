@@ -91,8 +91,7 @@ SCHEMA: dict[str, Any] = {
                     "steps": {
                         "type": "array",
                         "items": {"type": "integer"},
-                        "minItems": 2,
-                        "maxItems": 2,
+                        "minItems": 1,
                     },
                 },
                 "required": ["name", "outcome"],
@@ -131,10 +130,10 @@ Split the session into distinct tasks (one block each; do not merge unrelated wo
 For each task:
 - name: short, concrete, in the user's own words where possible.
 - outcome: success | partial | fail | uncertain. Be conservative on the last task.
-- steps: [first, last] — REQUIRED on every task. The INCLUSIVE range of transcript \
-step numbers (the bracketed [i] labels) this block is grounded in. Cite the steps you \
-actually read for it; a block that spans the whole transcript cites its first and last \
-visible label.
+- steps: REQUIRED on every task. Either [first, last], the INCLUSIVE range of transcript \
+step numbers (the bracketed [i] labels) this block is grounded in, or the list of the step \
+numbers you actually read for it. A block that spans the whole transcript cites its first \
+and last visible label.
 - preference_signals: 'when <situation>, the user said/asked/corrected: "<near-verbatim>" \
 -> <what to do by default next time>'. One bullet per distinct default.
 - reusable_knowledge: validated repo/system facts and high-leverage shortcuts. Facts, not opinions.
@@ -282,37 +281,67 @@ def render_runbook(
     return "\n".join(lines)
 
 
+def cited_steps(
+    value: Any, n_steps: int, visible: frozenset[int] | None = None
+) -> list[int] | None:
+    """The steps the model's `steps` field cites, as an explicit sorted list, or None.
+
+    Two forms. `[first, last]` in order is an inclusive range, and every step in
+    it must be in bounds and visible; any other list of integers is an
+    enumeration of the steps read, and each of those must be. Visible means in
+    the transcript the model saw (`render_transcript`): a step it omitted cannot
+    have been read, so citing it would be an invention. A citation that does not
+    resolve is worse than none — it would point a later reader at the wrong part
+    of the transcript — and the caller's fallback (the whole session) is at
+    least true.
+
+    The enumeration form is there because that is what qwen3.5-9b produced on
+    2026-09-04 (`[11, 14, 17, 19, 38, 40, 41, 42]`, all of them steps it had
+    been shown) and a two-element validator threw all four blocks' citations
+    away."""
+    if not isinstance(value, list) or not value:
+        return None
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in value):
+        return None
+    if len(value) == 2:
+        # A pair is a range; a pair out of order is a mistyped range, not two
+        # steps, and falls back like any other citation that does not resolve.
+        if value[0] > value[1]:
+            return None
+        steps = list(range(value[0], value[1] + 1))
+    else:
+        steps = sorted(set(value))
+    if steps[0] < 0 or steps[-1] >= n_steps:
+        return None
+    if visible is not None and any(i not in visible for i in steps):
+        return None
+    return steps
+
+
 def validated_step_range(
     value: Any, n_steps: int, visible: frozenset[int] | None = None
 ) -> list[int] | None:
-    """The model's `steps` field as an inclusive `[start, end]`, or None.
-
-    None on anything that is not two in-bounds integers in order, and None when
-    the range reaches into steps the transcript omitted (`visible`, from
-    `render_transcript`): the model cannot have read them, so the citation would
-    be an invention. A citation that does not resolve is worse than no citation
-    — it would point a later reader at the wrong part of the transcript — and
-    the caller's fallback (the whole session) is at least true."""
-    if not isinstance(value, list) or len(value) != 2:
-        return None
-    start, end = value
-    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (start, end)):
-        return None
-    if not 0 <= start <= end < n_steps:
-        return None
-    if visible is not None and any(i not in visible for i in range(start, end + 1)):
-        return None
-    return [start, end]
+    """`cited_steps` as an inclusive `[first, last]`, or None — the span a
+    footer and a reader want, even when the model enumerated."""
+    steps = cited_steps(value, n_steps, visible)
+    return None if steps is None else [steps[0], steps[-1]]
 
 
-def source_episode_ids(trajectory: list[dict], step_range: list[int] | None) -> list[str]:
+def source_episode_ids(trajectory: list[dict], steps: list[int] | None) -> list[str]:
     """The persisted ids of the steps a block cites, in order.
 
+    `steps` is the explicit list from `cited_steps` (an inclusive `[first,
+    last]` pair is also accepted and expanded); None means the whole session.
     Reads `episode_id` off the step dicts, which only `add_session` puts there
     (`SessionTrajectory.as_task_trajectory`). A trajectory a bench harness built
     has no such ids and gets an empty list — the runbook is then unpointered,
     which is the honest state rather than an invented one."""
-    chosen = trajectory if step_range is None else trajectory[step_range[0] : step_range[1] + 1]
+    if steps is None:
+        chosen = trajectory
+    elif len(steps) == 2 and steps[0] <= steps[1]:
+        chosen = trajectory[steps[0] : steps[1] + 1]
+    else:
+        chosen = [trajectory[i] for i in steps if 0 <= i < len(trajectory)]
     return [
         str(step["episode_id"])
         for step in chosen
@@ -404,8 +433,9 @@ class ExperienceOrganizer(Organizer):
                 for k in ("preference_signals", "reusable_knowledge", "failures", "procedure")
             ):
                 continue  # a name and an outcome alone teach the next agent nothing
-            step_range = validated_step_range(raw.get("steps"), len(trajectory), visible)
-            episode_ids = source_episode_ids(trajectory, step_range)
+            cited = cited_steps(raw.get("steps"), len(trajectory), visible)
+            step_range = None if cited is None else [cited[0], cited[-1]]
+            episode_ids = source_episode_ids(trajectory, cited)
             item_id = new_id()
             ops.append(
                 MemoryOp(
@@ -428,6 +458,10 @@ class ExperienceOrganizer(Organizer):
                         "source_host": meta["host"],
                         "caller_outcome": outcome,
                         "step_range": step_range,
+                        # The exact steps when the model enumerated them; the
+                        # range's every step otherwise. What `source_episode_ids`
+                        # points at, kept so a reader can tell the two apart.
+                        "cited_steps": cited,
                         "source_episode_ids": episode_ids,
                         **block,
                     },
@@ -470,6 +504,7 @@ __all__ = [
     "SCHEMA",
     "SYSTEM_PROMPT",
     "ExperienceOrganizer",
+    "cited_steps",
     "embedding_text_for",
     "render_runbook",
     "render_source_line",

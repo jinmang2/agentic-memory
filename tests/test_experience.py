@@ -118,8 +118,7 @@ def test_schema_matches_codex_raw_memory_and_agentrunbook_fields():
     assert SCHEMA["properties"]["tasks"]["items"]["properties"]["steps"] == {
         "type": "array",
         "items": {"type": "integer"},
-        "minItems": 2,
-        "maxItems": 2,
+        "minItems": 1,
     }
     assert SCHEMA["properties"]["tasks"]["items"]["properties"]["outcome"]["enum"] == [
         "success",
@@ -233,7 +232,7 @@ def test_the_prompt_requires_a_step_range_and_says_how_many_steps_there_are():
     took that every time, so every pointer fell back to the whole session. The
     field is now asked for as required, listed before the free-text lists, and
     the user turn states the label range so the model has the numbers to cite."""
-    assert "steps: [first, last] — REQUIRED on every task" in SYSTEM_PROMPT
+    assert "steps: REQUIRED on every task" in SYSTEM_PROMPT
     assert "omit the field" not in SYSTEM_PROMPT
     assert SYSTEM_PROMPT.index("- steps:") < SYSTEM_PROMPT.index("- preference_signals:")
 
@@ -275,3 +274,28 @@ def test_a_list_field_returned_as_a_string_is_kept_not_dropped():
     assert item["keywords"] == ["test_daemon, idle-timeout, TimeoutExpired"]
     assert "## Failures" in item["content"] and "TimeoutExpired" in item["embedding_text"]
     mem.close()
+
+
+def test_an_enumeration_of_steps_is_a_citation_too():
+    """2026-09-04: qwen3.5-9b cited `[11, 14, 17, …, 42]` — the steps it had
+    read, all of them shown — and a `[first, last]`-only validator threw the
+    citation away. An enumeration is accepted when every listed step is in
+    bounds and visible; the range it spans is what the footer shows, and the
+    pointers are the listed steps only."""
+    from agmem.organizers.experience.organizer import cited_steps, source_episode_ids
+
+    visible = frozenset({0, 1, 2, 3, 8, 9})
+    assert cited_steps([1, 3, 8], 10, visible) == [1, 3, 8]
+    assert cited_steps([8, 3, 1, 3], 10, visible) == [1, 3, 8]  # order and repeats do not matter
+    assert cited_steps([1, 3, 5], 10, visible) is None  # 5 was omitted from the transcript
+    assert cited_steps([1, 3, 12], 10, visible) is None  # out of bounds
+    assert cited_steps([1, 3], 10, visible) == [1, 2, 3]  # a pair in order is a range
+    assert cited_steps([3, 1], 10, visible) is None  # a pair out of order is a mistyped range
+    assert cited_steps([2], 10, visible) == [2]
+    assert cited_steps([], 10, visible) is None and cited_steps([True, 1], 10, visible) is None
+    assert validated_step_range([1, 3, 8], 10, visible) == [1, 8]
+
+    trajectory = [{"episode_id": f"e{i}"} for i in range(10)]
+    assert source_episode_ids(trajectory, [1, 3, 8]) == ["e1", "e3", "e8"]
+    assert source_episode_ids(trajectory, [1, 3]) == ["e1", "e2", "e3"]
+    assert source_episode_ids(trajectory, None) == [f"e{i}" for i in range(10)]
