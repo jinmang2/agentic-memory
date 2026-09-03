@@ -31,6 +31,7 @@ from agmem.config import AgmemConfig
 from agmem.core.ops import MemoryOp, OpType
 from agmem.embed.fake import FakeEmbedder
 from agmem.explore import Explorer, export_workspace
+from agmem.explore.explorer import SYSTEM_PROMPT
 from agmem.llm.client import RoleConfig
 from agmem.sessions import SessionTrajectory, Step
 
@@ -951,3 +952,58 @@ def test_cli_ask_runs_the_loop_against_a_stub_model_and_keeps_the_trace(tmp_path
     records = [json.loads(line) for line in trace.read_text().splitlines()]
     assert [r["role"] for r in records] == ["explore", "explore"]
     assert records[1]["response_text"] == replies[1]
+
+
+def test_grep_alternation_matches_like_ripgrep_does(tmp_path):
+    """The 2026-09-04 ask smoke: `LongMemEval|CP1` under basic grep matched the
+    literal bar and reported "(no matches)" for a workspace with dozens of hits,
+    and the model spent its next step re-running the search without the bar.
+    Under the grep fallback a pattern is an extended regex, as it is under rg."""
+    result = _run_actions(
+        tmp_path,
+        [{"action": "search", "reason": "r", "pattern": "TimeoutExpired|flaky daemon"}],
+    )
+    observation = result.steps[0]["observation"]
+    assert "sessions/claude-code/sess-42.md:8:" in observation
+    assert "runbooks/rb-1.md:1:" in observation
+
+
+def test_a_multi_file_search_opens_with_per_file_hit_counts(tmp_path):
+    """The ask smoke's third step: one 1,134-step transcript filled the 4,000
+    character observation on its own, and nothing said the other session — the
+    one with the answer — had matched too. The counts line comes first, most
+    hits first, so it is what survives the clip; a search over one file has
+    nothing to summarize."""
+    root = _workspace(tmp_path)
+    big = root / "sessions" / "claude-code" / "sess-43.md"
+    big.write_text(
+        "".join(f"[{i}] TOOL_RESULT(Bash)\nflaky line {i} " + "x" * 200 + "\n" for i in range(40))
+    )
+    llm = StubLLM(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "flaky"},
+                {"action": "search", "reason": "r", "pattern": "flaky", "path": "runbooks/rb-1.md"},
+                _final("ok", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep", max_observation_chars=1500).research("q", llm)
+
+    first = result.steps[0]["observation"]
+    head = first.splitlines()[0]
+    assert head.startswith("42 hits in 3 files: sessions/claude-code/sess-43.md (40), ")
+    assert "runbooks/rb-1.md (1)" in head and "sess-42.md (1)" in head
+    assert "…[observation clipped]" in first  # the big file still fills the budget
+    single = result.steps[1]["observation"]
+    # No summary over one file, and the file name is still on every hit.
+    assert single.startswith("runbooks/rb-1.md:1:")
+
+
+def test_the_prompt_says_transcript_paths_are_not_workspace_paths():
+    """Steps 4–6 of the ask smoke went to `docs/_internal/…` and `docs` — the
+    user's repository paths, read off a transcript — and got "no such file",
+    "no such path", "not a directory" for three of six steps."""
+    assert "Paths quoted INSIDE a transcript" in SYSTEM_PROMPT
+    assert "do not exist here" in SYSTEM_PROMPT
+    assert "per-file hit counts" in SYSTEM_PROMPT

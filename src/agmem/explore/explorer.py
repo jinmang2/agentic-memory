@@ -114,7 +114,11 @@ Each turn, return ONE JSON object and nothing else:
 Rules: quote exact strings (flags, paths, error text, ids) from what you read; do not invent \
 anything you did not see; cite the file and line range for each claim in `context`; keep \
 `context` short enough to drop into an agent's prompt; say plainly in `context` when the \
-workspace holds nothing relevant. Paths are relative to the workspace root."""
+workspace holds nothing relevant. Paths are relative to the workspace root. Paths quoted \
+INSIDE a transcript (the user's own repository files) do not exist here — only the \
+workspace files above do; to learn what such a file said, search the transcripts for it. A \
+search over several files opens with per-file hit counts: when one file's hits fill the \
+observation, search again with `path` set to another file from that line."""
 
 USER_TEMPLATE = """Question: {query}
 
@@ -150,6 +154,26 @@ class ResearchResult:
     llm_calls: int = 0
     search_tool: str = "grep"
     degraded: str | None = None
+
+
+def _hit_summary(lines: list[str], *, single_file: bool) -> str:
+    """The per-file hit counts a search observation opens with, most hits first.
+
+    The hit lines that follow are clipped to the observation budget, and a big
+    unrelated session can fill that budget by itself: in the 2026-09-04 smoke a
+    search for `LongMemEval` showed 4,000 characters of one transcript and
+    nothing said that the other session — the one holding the answer — had
+    matched too. The summary is what survives the clip. Empty when the search
+    was over one file, where it would only repeat the path."""
+    if single_file:
+        return ""
+    counts: dict[str, int] = {}
+    for line in lines:
+        file, _, _ = line.partition(":")
+        counts[file] = counts.get(file, 0) + 1
+    ranked = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    files = ", ".join(f"{file} ({n})" for file, n in ranked)
+    return f"{len(lines)} hits in {len(counts)} files: {files}\n"
 
 
 class Explorer:
@@ -343,6 +367,7 @@ class Explorer:
                 "rg",
                 "-n",
                 "--no-heading",
+                "--with-filename",
                 "--no-ignore",
                 "--color",
                 "never",
@@ -354,7 +379,13 @@ class Explorer:
                 rel,
             ]
         else:
-            argv = ["grep", "-rn", "-I", "-m", str(MAX_HITS_PER_FILE), "--", pattern, rel]
+            # -E: extended regex, so `a|b` alternates as it does under rg. The
+            # 2026-09-04 smoke's second step searched `LongMemEval|CP1` under
+            # basic grep, matched the literal bar, and reported "(no matches)"
+            # for a workspace with dozens of hits.
+            # -H: the file name even when the search is over one file, so every
+            # hit is `file:line:text` and the model has the path to cite.
+            argv = ["grep", "-rnHE", "-I", "-m", str(MAX_HITS_PER_FILE), "--", pattern, rel]
         try:
             proc = subprocess.run(
                 argv,
@@ -371,7 +402,9 @@ class Explorer:
         if proc.returncode not in (0, 1):
             return f"search failed: {proc.stderr.strip()[:500]}"
         lines = [line.removeprefix("./") for line in proc.stdout.splitlines()]
-        return "\n".join(lines) if lines else "(no matches)"
+        if not lines:
+            return "(no matches)"
+        return _hit_summary(lines, single_file=target.is_file()) + "\n".join(lines)
 
     def _list(self, path: Any) -> str:
         target, error = self._resolve(path)
