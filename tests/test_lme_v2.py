@@ -133,9 +133,18 @@ def test_raw_vector_arm_answers_from_the_stored_states(tmp_path):
     memory.set_query_context(query_invocation_id="inv-1")
     items = memory.query("where is the new password textbox?")
     assert len(items) == 1 and items[0]["type"] == "text"
-    assert "[7] textbox 'New password'" in items[0]["value"]
+    text = items[0]["value"]
+    assert "[7] textbox 'New password'" in text
+    # a hit is rendered as its trajectory window: goal, state, URL, agent turn, AXTree
+    assert "### Trajectory traj-ent-1 (states 0-0 of 1)" in text
+    assert "Goal: Reset the password for user 42 / and confirm by email" in text
+    assert (
+        "State 0 (step 0)\n- URL: http://erp.local/users/42\n- Agent: the reset form is here\nAction: type [7] 'newpass'\n- AXTree:\n[7] textbox 'New password'"
+        in text
+    )
     hook = memory.post_query_hook(query="q", query_image=None, memory_context=items)
     assert hook["read"] == "vector" and hook["items"] > 0 and hook["latency_s"] >= 0
+    assert hook["windows"] >= 1
     memory.clear_query_context()
     assert memory.get_query_context() == {}
     # a second insert of the same trajectory is the facade's idempotent path
@@ -426,3 +435,40 @@ def test_estimate_prices_the_haystack_and_run_refuses_without_a_cap(tmp_path, ca
     assert main(["run", *common, "--output-dir", str(out), "--max-usd", "0.0"]) == 2  # over the cap
     assert "exceeds --max-usd" in capsys.readouterr().err
     assert not (out / "runtime_inputs").exists()  # refused before writing anything
+
+
+def test_vector_windows_merge_neighbours_and_stop_at_the_budget(tmp_path):
+    """Hits on states 0, 1 and 2 of one trajectory are one window, not three;
+    the window carries the neighbours a hit alone would not; and the budget
+    stops further windows rather than clipping one mid-state."""
+    memory = AgmemMemory(
+        {"write": "raw", "read": "vector", "config": str(_config(tmp_path)), "data_dir": str(tmp_path / "store"),
+         "top_k": 12, "budget_tokens": 120}
+    )  # fmt: skip
+    memory.insert(_public_trajectory("traj-web-1", n_states=3))
+    memory.insert(_public_trajectory("traj-web-2", n_states=3))
+    memory.set_query_context(query_invocation_id="inv-2")
+    text = memory.query("Blue widget link on the shop page")[0]["value"]
+    hook = memory.post_query_hook(query="q", query_image=None, memory_context=[])
+    assert text.count("### Trajectory") == hook["windows"] == 1  # 480 chars: the first window only
+    assert "(states 0-2 of 3)" in text  # all three states of that trajectory, merged
+    assert text.count("State ") == 3 and "State 1 (step 1)" in text
+
+    # the layout survives save/load, so a loaded store renders windows too
+    saved = tmp_path / "ms"
+    memory.save_memory(saved)
+    state = json.loads((saved / "agmem_state.json").read_text())
+    assert state["layout"]["traj-web-1"]["states"] == [[1, 2], [3, 4], [5, 6]]
+    loaded = AgmemMemory({"write": "raw", "read": "vector", "config": str(_config(tmp_path))})
+    loaded._load_backend(saved)
+    assert "### Trajectory" in loaded.query("Blue widget")[0]["value"]
+    memory.close()
+    loaded.close()
+
+
+def test_configure_runtime_warms_the_embedder_before_the_timed_queries(tmp_path):
+    memory = AgmemMemory({"write": "raw", "read": "vector", "config": str(_config(tmp_path))})
+    assert memory._mem is None
+    memory.configure_runtime(query_trace_dir=str(tmp_path / "traces"), generation_temperature=0.6)
+    assert memory._mem is not None  # opened, and a search ran, before any question
+    memory.close()

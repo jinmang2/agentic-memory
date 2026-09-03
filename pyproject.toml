@@ -81,6 +81,9 @@ lme-v2 = [
     "tqdm>=4.66",
     "transformers>=4.51",
     "huggingface_hub>=0.30",
+    # The Qwen3.5-9B processor the harness tokenizes with is a vision-language
+    # one whose video processor imports torchvision (upstream's `torch` extra).
+    "torchvision>=0.28",
 ]
 train = [
     "transformers>=4.51",

@@ -57,6 +57,12 @@ READS = ("vector", "explorer")
 # episodes hold one state each. The cap bounds the store and the embedder's
 # work, and is a parameter because the right value is an experiment.
 DEFAULT_MAX_STATE_CHARS = 12_000
+# The vector arm renders each hit as a window of neighbouring states, the way
+# the paper's RAG returns three-state slices; this is the radius, and the AXTree
+# characters kept per state in the rendering (the store holds up to
+# `max_state_chars`; a context of a dozen states cannot carry that much each).
+DEFAULT_SLICE_RADIUS = 1
+DEFAULT_RENDER_STATE_CHARS = 5_000
 # Keys of memory_params that name where THIS process keeps its files. They are
 # left out of the persisted memory_config so a `--load-memory-dir` run, whose
 # paths differ, still matches the saved config (upstream requires equality).
@@ -151,6 +157,29 @@ def trajectory_to_session(
     )
 
 
+def _episode_id(session_id: str, step_index: int) -> str:
+    """The id `add_session` gave this step: host, session and position, hashed
+    (`SessionTrajectory.episode_id`). Recomputed here so a window's neighbours
+    can be fetched by id without a store query per state."""
+    return SessionTrajectory(id=session_id, host=HOST, source_path="").episode_id(step_index)
+
+
+def _layout_of(session: SessionTrajectory) -> dict[str, Any]:
+    """Per state, the step indexes of its observation and its agent turn."""
+    states: dict[int, list[int | None]] = {}
+    for index, step in enumerate(session.steps):
+        state = step.meta.get("state_index")
+        if state is None:
+            continue
+        slot = states.setdefault(int(state), [None, None])
+        if step.kind == "tool_result":
+            slot[0] = index
+        elif step.kind == "assistant":
+            slot[1] = index
+    ordered = [states[k] for k in sorted(states) if states[k][0] is not None]
+    return {"goal": session.meta.get("goal", ""), "states": ordered}
+
+
 # ----------------------------------------------------------------------------
 # The Memory implementation
 # ----------------------------------------------------------------------------
@@ -238,6 +267,8 @@ class AgmemMemory(_MemoryBase):
         self.max_steps = int(p.get("max_steps", 8))
         self.explorer_budget_tokens = int(p.get("explorer_budget_tokens", 4_000))
         self.max_state_chars = int(p.get("max_state_chars", DEFAULT_MAX_STATE_CHARS))
+        self.slice_radius = int(p.get("slice_radius", DEFAULT_SLICE_RADIUS))
+        self.render_state_chars = int(p.get("render_state_chars", DEFAULT_RENDER_STATE_CHARS))
         self.data_dir = (
             Path(str(p["data_dir"])).expanduser()
             if p.get("data_dir")
@@ -250,6 +281,11 @@ class AgmemMemory(_MemoryBase):
         self._lock = threading.Lock()
         self._exported = False
         self._inserted: list[str] = []
+        # Per session: the goal and, per state, the step indexes of its
+        # observation and its agent turn — what turns a hit on one episode
+        # back into the window of states around it. Written on insert, kept
+        # in agmem_state.json, and the reason a loaded store renders the same.
+        self._layout: dict[str, dict[str, Any]] = {}
         self._query_trace_dir: Path | None = None
         self._metrics: dict[str, dict[str, Any]] = {}
 
@@ -296,12 +332,21 @@ class AgmemMemory(_MemoryBase):
             self._query_trace_dir.mkdir(parents=True, exist_ok=True)
             if self._mem is not None and self._mem.llm is not None:
                 self._mem.llm.trace_path = self._query_trace_dir / "agmem-llm-trace.jsonl"
+        # Warm up before the timed queries: the first search loads the embedder
+        # (29 s on the 2026-09-04 run, against 0.13 s for every later query),
+        # and the harness's average latency would otherwise carry it. The
+        # paper's RAG warms its embedding client here for the same reason.
+        try:
+            self.mem.search("warm-up", k=1)
+        except Exception:  # a store with no LLM role, an empty store: not fatal here
+            logger.exception("lme_v2: warm-up search failed")
 
     def insert(self, trajectory: dict[str, object]) -> None:
         session = trajectory_to_session(trajectory, max_state_chars=self.max_state_chars)
         with self._lock:
             ingest = self.mem.add_session(session, distill=self.write == "experience")
             self._inserted.append(session.id)
+            self._layout[session.id] = _layout_of(session)
             self._exported = False
         if ingest.already_ingested and not ingest.dispatched:
             logger.info("lme_v2: trajectory %s already in the store", session.id)
@@ -315,10 +360,11 @@ class AgmemMemory(_MemoryBase):
             if self.read == "vector":
                 metrics: dict[str, Any] = {}
                 bundle = self.mem.search(query, k=self.top_k, metrics=metrics)
-                text = bundle.render(self.budget_tokens)
+                text, windows = self._render_slices(bundle)
                 record = {
                     "read": "vector",
                     "items": len(bundle.items),
+                    "windows": windows,
                     "latency_s": metrics.get("latency_s"),
                     "rendered_chars": len(text),
                 }
@@ -366,6 +412,97 @@ class AgmemMemory(_MemoryBase):
         invocation = self.get_query_context().get("query_invocation_id", "")
         return self._metrics.pop(invocation, None) if invocation else None
 
+    # -- the vector arm's rendering ---------------------------------------------
+
+    def _render_slices(self, bundle: Any) -> tuple[str, int]:
+        """The bundle as trajectory windows, most relevant first, under the budget.
+
+        A hit is one episode: one state's observation or the agent's turn at
+        it. What a reader needs is that state with its neighbours, its URL and
+        action, and the goal the trajectory was pursuing — the shape the
+        paper's RAG returns (a three-state slice, the goal, the actions) and
+        the shape that let the reader answer where a bare list of steps did
+        not. Hits in the same window merge; windows go in score order until
+        the character budget is spent. Non-episodic hits (runbooks, on the
+        experience arm) come first, rendered as the facade renders them, since
+        they are the shorter, distilled form."""
+        budget_chars = self.budget_tokens * 4
+        parts: list[str] = []
+        used = 0
+        other = [it for it in bundle.items if it.memory_type != "episodic"]
+        if other:
+            from agmem.core.types import MemoryBundle
+
+            head = MemoryBundle(query=bundle.query, items=other).render(self.budget_tokens // 3)
+            parts.append(head)
+            used += len(head)
+        # windows: (session, first_state, last_state), keyed by session, in score order
+        windows: list[list[Any]] = []
+        for hit in bundle.items:
+            if hit.memory_type != "episodic":
+                continue
+            meta = getattr(hit.item, "meta", None) or {}
+            session_id = meta.get("session_id")
+            state = meta.get("state_index")
+            layout = self._layout.get(session_id) if session_id else None
+            if layout is None or state is None:
+                continue
+            first = max(0, int(state) - self.slice_radius)
+            last = min(len(layout["states"]) - 1, int(state) + self.slice_radius)
+            for w in windows:
+                if w[0] == session_id and not (last < w[1] - 1 or first > w[2] + 1):
+                    w[1], w[2] = min(w[1], first), max(w[2], last)
+                    break
+            else:
+                windows.append([session_id, first, last])
+        rendered = 0
+        for session_id, first, last in windows:
+            block = self._render_window(session_id, first, last)
+            if not block:
+                continue
+            if parts and used + len(block) > budget_chars:
+                break
+            parts.append(block)
+            used += len(block)
+            rendered += 1
+        if not windows and not other:
+            # No layout for what came back (a store built before layouts were
+            # kept): the facade's own rendering, so the arm still answers.
+            return bundle.render(self.budget_tokens), 0
+        return "\n\n".join(parts), rendered
+
+    def _render_window(self, session_id: str, first: int, last: int) -> str:
+        layout = self._layout[session_id]
+        states = layout["states"][first : last + 1]
+        wanted: list[str] = []
+        for obs_idx, act_idx in states:
+            wanted.append(_episode_id(session_id, obs_idx))
+            if act_idx is not None:
+                wanted.append(_episode_id(session_id, act_idx))
+        by_id = {e.id: e for e in self.mem.doc_store.get_episodes(wanted)}
+        lines = [
+            f"### Trajectory {session_id} (states {first}-{last} of {len(layout['states'])})",
+            f"Goal: {layout['goal']}",
+        ]
+        for offset, (obs_idx, act_idx) in enumerate(states):
+            index = first + offset
+            obs = by_id.get(_episode_id(session_id, obs_idx))
+            act = by_id.get(_episode_id(session_id, act_idx)) if act_idx is not None else None
+            if obs is None:
+                continue
+            url = (obs.meta or {}).get("url", "")
+            body = obs.content
+            if url and body.startswith(f"URL: {url}\n"):
+                body = body[len(url) + 6 :]
+            if len(body) > self.render_state_chars:
+                body = body[: self.render_state_chars] + "\n…[state text clipped]…"
+            lines.append(f"State {index} (step {(obs.meta or {}).get('step', index)})")
+            lines.append(f"- URL: {url}")
+            if act is not None:
+                lines.append(f"- Agent: {act.content}")
+            lines.append(f"- AXTree:\n{body}")
+        return "\n".join(lines) if len(lines) > 2 else ""
+
     # -- persistence -----------------------------------------------------------
 
     def _save_backend(self, output_dir: Path) -> None:
@@ -388,6 +525,7 @@ class AgmemMemory(_MemoryBase):
                     "read": self.read,
                     "namespace": self.namespace,
                     "inserted_trajectory_ids": list(self._inserted),
+                    "layout": self._layout,
                 },
                 indent=2,
             )
@@ -409,6 +547,7 @@ class AgmemMemory(_MemoryBase):
         if state_path.exists():
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self._inserted = list(state.get("inserted_trajectory_ids", []))
+            self._layout = dict(state.get("layout", {}))
         if self.workspace_dir is None:
             self.workspace_dir = Path(tempfile.mkdtemp(prefix="agmem-lme-v2-ws-"))
         self._exported = False
