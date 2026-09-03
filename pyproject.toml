@@ -70,6 +70,18 @@ eval = ["nltk>=3.9"]
 # passthrough, so a plain install never touches this. `nltk` above covers the
 # equally non-default `deriver="sentence_text"` (upstream `extract_sentences`).
 memmachine = ["langchain-text-splitters>=0.3"]
+# The LongMemEval-V2 harness (~/.agmem/upstream/longmemeval-v2) imported by
+# `agmem.bench.lme_v2`: its memory registry pulls in every baseline, one of which
+# is built on the OpenAI Agents SDK, and the reader-side truncation loads the
+# Qwen3.5-9B processor through transformers and PIL. Only `python -m
+# agmem.bench.lme_v2 run|estimate` needs these; the adapter class does not.
+lme-v2 = [
+    "openai-agents>=0.1",
+    "pillow>=10",
+    "tqdm>=4.66",
+    "transformers>=4.51",
+    "huggingface_hub>=0.30",
+]
 train = [
     "transformers>=4.51",
     "datasets>=3.0",
