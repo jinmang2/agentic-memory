@@ -232,6 +232,16 @@ def render_steps(trajectory: list[dict], max_chars: int) -> str:
 
 
 def _strings(value: Any) -> list[str]:
+    """A list field of the model's reply as non-empty stripped strings.
+
+    A string is one item per non-empty line, not nothing. The 2026-09-04 smoke's
+    third call had qwen3.5-9b return every list field but `procedure` as a
+    single string; treating "not a list" as "empty" dropped the runbook's
+    preference signals, knowledge, failures, references and keywords while the
+    call was counted a success. No splitting beyond lines: a reference such as
+    `sed -n '90,117p' f; grep -n x y` is one handle, commas and all."""
+    if isinstance(value, str):
+        value = value.splitlines()
     if not isinstance(value, list):
         return []
     return [str(v).strip() for v in value if str(v).strip()]

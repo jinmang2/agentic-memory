@@ -246,3 +246,32 @@ def test_the_prompt_requires_a_step_range_and_says_how_many_steps_there_are():
     prompt = llm.calls[0][1]
     assert f"- steps: {len(steps)}, labelled [0] to [{len(steps) - 1}]" in prompt
     mem.close()
+
+
+def test_a_list_field_returned_as_a_string_is_kept_not_dropped():
+    """The 2026-09-04 smoke, third call: qwen3.5-9b returned every list field
+    but `procedure` as one string, and `_strings` turned "not a list" into
+    "empty" — the stored runbook had a procedure and nothing else, and the
+    call counted as a success. A string is one item per non-empty line."""
+    reply = _distilled()
+    task = reply["tasks"][0]
+    task["preference_signals"] = 'when fixing a test, the user said "don\'t touch the hooks"'
+    task["failures"] = "TimeoutExpired -> idle timeout too long -> use --idle-timeout 2\n\n"
+    task["references"] = "uv run pytest tests/test_daemon.py -q\nTimeoutExpired"
+    task["keywords"] = "test_daemon, idle-timeout, TimeoutExpired"  # one handle, not split
+    llm = StubLLM({"distill": [reply]})
+    mem = _mem(llm)
+    traj = _session()
+    mem.add_task_result(
+        trajectory=traj.as_task_trajectory(), outcome="unknown", task=traj.task_text
+    )
+    mem.flush()
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["preference_signals"] == [
+        'when fixing a test, the user said "don\'t touch the hooks"'
+    ]
+    assert item["failures"] == ["TimeoutExpired -> idle timeout too long -> use --idle-timeout 2"]
+    assert item["references"] == ["uv run pytest tests/test_daemon.py -q", "TimeoutExpired"]
+    assert item["keywords"] == ["test_daemon, idle-timeout, TimeoutExpired"]
+    assert "## Failures" in item["content"] and "TimeoutExpired" in item["embedding_text"]
+    mem.close()
