@@ -93,28 +93,42 @@ class SqliteVecStore:
         memory_type: str | None = None,
         namespace: str | None = None,
     ) -> list[tuple[str, float]]:
-        """Over-fetches (4x when filtering) then drops rows failing the
-        namespace/memory_type filter, so a heavily-filtered query can still
-        return fewer than ``k`` results if the pool is thin."""
-        # Over-fetch then post-filter on map attributes.
-        fetch_k = k * 4 if (memory_type or namespace) else k
+        """KNN over the whole table, then the namespace/memory_type filter on
+        the map attributes — widening the KNN until ``k`` rows pass or the
+        table is exhausted.
+
+        It used to over-fetch a fixed 4x and stop there, which made a rare
+        type invisible under a common one: in a LongMemEval-V2 store of 3,574
+        raw-step episodes and 107 runbooks, a runbooks-only search for a
+        question phrased like a page returned nothing, because the 36 nearest
+        vectors were all episodes (2026-09-04). A filtered search that returns
+        fewer than ``k`` results must mean the pool holds fewer than ``k``,
+        never that they were outranked by rows the caller did not ask for. The
+        widening is geometric and bounded by the row count, so the common case
+        is still one query, and the rare-type case is a few."""
+        filtered = bool(memory_type or namespace)
+        fetch_k = k * 4 if filtered else k
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT v.rowid, v.distance, m.item_id, m.namespace, m.memory_type"
-                " FROM vectors v JOIN vec_map m ON m.rowid = v.rowid"
-                " WHERE v.embedding MATCH ? AND v.k = ?",
-                (_serialize(embedding), fetch_k),
-            ).fetchall()
-        out: list[tuple[str, float]] = []
-        for _rowid, dist, item_id, ns, mt in rows:
-            if namespace and ns != namespace:
-                continue
-            if memory_type and mt != memory_type:
-                continue
-            out.append((item_id, 1.0 - float(dist)))  # cosine distance -> similarity
-            if len(out) >= k:
-                break
-        return out
+            total = self._conn.execute("SELECT count(*) FROM vec_map").fetchone()[0]
+            while True:
+                rows = self._conn.execute(
+                    "SELECT v.rowid, v.distance, m.item_id, m.namespace, m.memory_type"
+                    " FROM vectors v JOIN vec_map m ON m.rowid = v.rowid"
+                    " WHERE v.embedding MATCH ? AND v.k = ?",
+                    (_serialize(embedding), fetch_k),
+                ).fetchall()
+                out: list[tuple[str, float]] = []
+                for _rowid, dist, item_id, ns, mt in rows:
+                    if namespace and ns != namespace:
+                        continue
+                    if memory_type and mt != memory_type:
+                        continue
+                    out.append((item_id, 1.0 - float(dist)))  # cosine distance -> similarity
+                    if len(out) >= k:
+                        break
+                if not filtered or len(out) >= k or len(rows) < fetch_k or fetch_k >= total:
+                    return out
+                fetch_k = min(fetch_k * 4, total)
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
         if not ids:
@@ -146,7 +160,7 @@ class SqliteVecStore:
 
     def persist(self) -> None:
         """No-op — SQLite already persists each write on commit."""
-        pass  # SQLite persists on commit
+        # SQLite persists on commit
 
     def close(self) -> None:
         with self._lock:

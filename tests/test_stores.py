@@ -137,6 +137,34 @@ def test_vector_namespace_and_type_filter(vec_cls):
 
 
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
+def test_a_rare_type_is_found_under_many_rows_of_another(vec_cls):
+    """A filtered search returns fewer than k only when the pool holds fewer
+    than k — never because rows of another type outranked them. The sqlite-vec
+    store over-fetched a fixed 4x and post-filtered, so in a store of 3,574
+    episodes and 107 runbooks a runbooks-only search returned nothing for a
+    query that resembled a page (LongMemEval-V2, 2026-09-04)."""
+    import random
+
+    rng = random.Random(7)
+    dim = 32
+    store = vec_cls(None, dim=dim)
+    query = [1.0] + [0.0] * (dim - 1)
+    for i in range(400):  # the common type, all close to the query
+        v = [1.0] + [rng.uniform(-0.05, 0.05) for _ in range(dim - 1)]
+        store.add(f"ep-{i}", v, memory_type="episodic", namespace="t")
+    for i in range(5):  # the rare type, far from it
+        v = [0.0] * dim
+        v[1 + i] = 1.0
+        store.add(f"rb-{i}", v, memory_type="runbooks", namespace="t")
+    hits = store.search(query, k=3, memory_type="runbooks", namespace="t")
+    assert len(hits) == 3 and all(h[0].startswith("rb-") for h in hits)
+    hits = store.search(query, k=10, memory_type="runbooks", namespace="t")
+    assert len(hits) == 5  # the pool really holds five
+    assert len(store.search(query, k=3, namespace="t")) == 3  # unfiltered: still one query's worth
+    store.close()
+
+
+@pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_dim_mismatch_raises(vec_cls):
     store = vec_cls(None, dim=8)
     with pytest.raises(ValueError):
