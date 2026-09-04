@@ -1183,3 +1183,30 @@ def test_the_forced_final_prompt_carries_a_skeleton_to_fill():
     from agmem.explore.explorer import FORCED_SUFFIX
 
     assert '{"action": "final", "context": "<what a future agent must know>"' in FORCED_SUFFIX
+
+
+def test_a_dropped_turn_mid_loop_wastes_a_step_but_not_the_exploration(tmp_path):
+    """LME-V2 web raw+explorer (2026-09-04): 4 of 20 questions came back with
+    no context because one turn's reply was empty and the loop treated that
+    as a drop of the whole exploration. A dropped turn is now a used step; the
+    loop goes on, and a later final still counts."""
+    root = _workspace(tmp_path)
+
+    class Flaky(StubLLM):
+        def call(self, role, prompt, schema, required_keys=(), **kwargs):
+            reply = super().call(role, prompt, schema, required_keys, **kwargs)
+            return None if reply == "DROP" else reply
+
+    llm = Flaky(
+        {
+            "explore": [
+                {"action": "search", "reason": "r", "pattern": "TimeoutExpired"},
+                "DROP",
+                _final("answered after the dropped turn", []),
+            ]
+        }
+    )
+    result = Explorer(root, search_tool="grep", max_steps=4).research("q", llm)
+    assert result.context == "answered after the dropped turn" and result.degraded is None
+    assert [s["action"] for s in result.steps] == ["search", "dropped", "final"]
+    assert result.llm_calls == 3

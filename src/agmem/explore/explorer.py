@@ -235,8 +235,16 @@ class Explorer:
         for _ in range(self.max_steps):
             reply = self._call(llm, query, transcript, len(result.steps), result)
             if reply is None:
-                result.degraded = "llm_drop"
-                break
+                # One turn's reply was unusable (the 2026-09-04 LME-V2 run: three
+                # empty replies and one runaway regex, each after a correction
+                # turn). That is a wasted step, not evidence that the workspace
+                # holds nothing — the loop goes on with what it has seen, and
+                # only a forced final that still fails is a drop.
+                transcript.append(f"## step {len(result.steps) + 1}: (no usable reply)")
+                result.steps.append(
+                    {"action": "dropped", "observation": "no usable reply", "seconds": 0.0}
+                )
+                continue
             if reply.get("action") == "final":
                 self._finish(reply, result)
                 break
