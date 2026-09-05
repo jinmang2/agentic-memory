@@ -178,6 +178,48 @@ class AttachSources(ReadStep):
         return hits
 
 
+class AttachCitedSteps(ReadStep):
+    """The experience organizer's runbooks carry ``source_episode_ids`` — the
+    transcript steps the block cites (``cited_steps``), persisted by
+    ``add_session``. The top-r runbook hits get those steps attached as
+    ``_source_messages`` (clipped, at most ``max_steps``), so the reader sees
+    the evidence beside the distilled procedure — Nemori's ``AttachSources``
+    for a derived procedural type, the runbook read step the research found
+    missing (docs/research/agent-memory-axes-v1.md §2.2, §7.3).
+
+    A runbook whose citation fell back to the whole session (``cited_steps``
+    None) attaches nothing: a 451-step transcript is not evidence for a block,
+    it is the transcript, and the explorer arm exists to read those."""
+
+    def __init__(self, top_r: int = 2, max_steps: int = 6, max_chars: int = 300) -> None:
+        self.top_r = top_r
+        self.max_steps = max_steps
+        self.max_chars = max_chars
+
+    def run(self, hits: list[ScoredItem], ctx: ReadContext) -> list[ScoredItem]:
+        for s in sorted(hits, key=lambda s: s.score, reverse=True)[: self.top_r]:
+            data = s.item.data
+            ids = list(data.get("source_episode_ids") or [])
+            if not data.get("cited_steps") or not ids:
+                continue
+            ids = ids[: self.max_steps]
+            by_id = {e.id: e for e in ctx.doc_store.get_episodes(ids)}
+            messages: list[str] = []
+            for episode_id in ids:
+                episode = by_id.get(episode_id)
+                if episode is None:
+                    continue
+                text = " ".join(episode.content.split())
+                if len(text) > self.max_chars:
+                    text = text[: self.max_chars] + "…"
+                step = (episode.meta or {}).get("step_index")
+                label = f"[{step}] " if step is not None else ""
+                messages.append(f"{label}{episode.role}: {text}")
+            if messages:
+                data["_source_messages"] = messages
+        return hits
+
+
 class ExpandExperiences(ReadStep):
     """ReasoningBank experience mode: an experience hit is REPLACED by its
     member strategy items (upstream injects the top-1 experience's items, never
@@ -995,6 +1037,7 @@ def default_read_steps(
     memmachine_backend: str = "declarative",
     task_graph_expansion_cap: int = 5,
     task_graph_insight_cap: int = 10,
+    runbook_cited_top_r: int = 2,
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 
@@ -1024,6 +1067,8 @@ def default_read_steps(
         steps["notes"] = LinkExpansion(link_expansion_cap, link_expansion_per_hit)
     if attach_sources_top_r:
         steps["episodes"] = AttachSources(attach_sources_top_r)
+    if runbook_cited_top_r:
+        steps["runbooks"] = AttachCitedSteps(runbook_cited_top_r)
     if graph_expansion_cap:
         steps["entities"] = GraphRecall(graph_expansion_cap, graph_expansion_hops)
     if task_graph_expansion_cap:

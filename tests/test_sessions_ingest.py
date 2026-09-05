@@ -664,3 +664,33 @@ def test_cli_admission_flags_refuse_without_consuming_the_limit(tmp_path):
     assert "0 session(s) ingested this run" in proc.stdout
     ok = _run_cli(["ingest", str(first), "--no-distill", "--namespace", "cli"], tmp_path)
     assert "persisted=2" in ok.stdout  # the default floors admit it
+
+
+def test_a_runbook_hit_carries_the_transcript_steps_it_cites():
+    """The runbook read step (research §2.2: there was none): the top runbook
+    hits get the steps they cite attached as source messages, clipped, so the
+    reader sees the evidence beside the procedure. A runbook that fell back to
+    the whole session attaches nothing."""
+    from agmem.retrieval.steps import AttachCitedSteps
+
+    llm = StubLLM({"distill": [_distilled([2, 4])]})
+    mem = _experience_mem(llm)
+    traj = _session()
+    mem.add_session(traj)
+    mem.flush()
+    assert isinstance(mem.pipeline.read_steps.get("runbooks"), AttachCitedSteps)
+    bundle = mem.search("idle timeout", memory_types=["runbooks"], k=3)
+    (hit,) = bundle.items
+    messages = hit.item.data["_source_messages"]
+    assert [m.split(" ", 1)[0] for m in messages] == ["[2]", "[3]", "[4]"]
+    assert messages[0].startswith("[2] ") and traj.steps[2].text[:20] in messages[0]
+    assert "Source Messages:" in hit.item.render()
+    mem.close()
+
+    whole = StubLLM({"distill": [_distilled(None)]})
+    mem = _experience_mem(whole)
+    mem.add_session(_session())
+    mem.flush()
+    (hit,) = mem.search("idle timeout", memory_types=["runbooks"], k=3).items
+    assert "_source_messages" not in hit.item.data
+    mem.close()
