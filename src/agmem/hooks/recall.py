@@ -45,7 +45,14 @@ HEADER = (
 )
 
 
-def render(episodes: list) -> str:
+COMPACT_HEADER = (
+    "What this session said before the context was compacted (agmem, preserved by the "
+    "PreCompact hook, most recent first). The transcript's raw steps are in memory under "
+    "this session id; search memory for anything the summary lost."
+)
+
+
+def render(episodes: list, header: str = HEADER) -> str:
     lines = []
     used = 0
     for ep in episodes:
@@ -63,7 +70,7 @@ def render(episodes: list) -> str:
         used += len(line)
     if not lines:
         return ""
-    return HEADER + "\n" + "\n".join(lines)
+    return header + "\n" + "\n".join(lines)
 
 
 def main() -> None:
@@ -85,6 +92,21 @@ def main() -> None:
         # per 500 episodes measured), and the ordering contract of
         # `list_episodes` still holds after the filter.
         episodes = [ep for ep in episodes if getattr(ep, "role", "user") == "user"]
+        # After a compaction (research §6 #11), the loss to repair is THIS
+        # session's own turns, which the PreCompact hook preserved under its
+        # id; a global recency listing would be the wrong memory. Falls
+        # through to recency when nothing of this session is in the store.
+        session_id = str(event.get("session_id") or "")
+        if event.get("source") == "compact" and session_id:
+            own = [
+                ep
+                for ep in episodes
+                if (getattr(ep, "meta", None) or {}).get("session_id") == session_id
+            ]
+            if own:
+                emit_context(render(own[-MAX_EPISODES:][::-1], COMPACT_HEADER), "SessionStart")
+                daemon_client.ensure_running()
+                sys.exit(0)
         # Project gating (research §6 #9): a turn typed in another repository
         # is not this session's recent memory. Turns with no recorded cwd pass.
         if project:

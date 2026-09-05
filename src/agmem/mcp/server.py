@@ -45,6 +45,7 @@ import os
 import threading
 import time
 from dataclasses import replace
+from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
@@ -151,7 +152,50 @@ class _Registry:
         return done
 
     def backfill_all(self) -> int:
-        return sum(self.backfill(ns) for ns in self.open_namespaces())
+        return sum(
+            self.backfill(ns) + self.drain_preserve_queue(ns) for ns in self.open_namespaces()
+        )
+
+    def preserve(self, transcript_path: str, namespace: str | None = None) -> dict[str, Any]:
+        """Ingest one transcript's raw steps under its session id, no model
+        call (`agmem.hooks.preserve`, research §6 #11). Idempotent through
+        `add_session`: a transcript preserved twice — two compactions of one
+        session — re-persists the steps it already has under the same ids."""
+        from agmem.sessions import SessionAdmission, load
+
+        mem = self.get(namespace)
+        traj = load(transcript_path)
+        ingest = mem.add_session(traj, distill=False, admit=SessionAdmission())
+        return {
+            "session_id": ingest.session_id,
+            "episodes": len(ingest.episode_ids),
+            "admitted": ingest.admitted,
+            "reason": ingest.reason,
+        }
+
+    def drain_preserve_queue(self, namespace: str | None = None) -> int:
+        """Preserve every transcript the hook spooled while no daemon ran, then
+        truncate the spool. Returns how many were taken in."""
+        mem = self.get(namespace)
+        root = Path(mem.config.data_dir) if mem.config.data_dir else None
+        if root is None:
+            return 0
+        spool = root / mem.namespace / "preserve-queue.jsonl"
+        if not spool.exists():
+            return 0
+        lines = [line for line in spool.read_text(encoding="utf-8").splitlines() if line.strip()]
+        done = 0
+        for line in lines:
+            try:
+                body = json.loads(line)
+                path = str(body.get("transcript_path") or "")
+                if path and Path(path).is_file():
+                    self.preserve(path, mem.namespace)
+                    done += 1
+            except Exception:
+                logger.exception("agmem daemon: preserve of a spooled transcript failed")
+        spool.write_text("", encoding="utf-8")
+        return done
 
     def close_all(self) -> None:
         with self._lock:
@@ -412,6 +456,30 @@ async def hooks_capture(request: Request) -> JSONResponse:
         return JSONResponse(await anyio.to_thread.run_sync(_write))
     except Exception as exc:
         logger.exception("hooks/capture failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@mcp.custom_route("/hooks/preserve", methods=["POST"])
+async def hooks_preserve(request: Request) -> JSONResponse:
+    """The PreCompact hook's request: `{transcript_path, session_id?, cwd?, namespace?}`.
+    Ingests the transcript's raw steps on a worker thread and answers when it
+    is done — the hook's timeout is generous enough for a transcript, and a
+    reply that says what was stored is worth more than a queued acknowledgement
+    nobody reads. No model is called."""
+    import anyio
+
+    body = await request.json()
+    path = body.get("transcript_path")
+    if not isinstance(path, str) or not Path(path).is_file():
+        return JSONResponse(
+            {"error": "transcript_path must name an existing file"}, status_code=400
+        )
+    namespace = body.get("namespace") or None
+    try:
+        result = await anyio.to_thread.run_sync(lambda: _registry.preserve(path, namespace))
+        return JSONResponse({"stored": True, **result})
+    except Exception as exc:
+        logger.exception("hooks/preserve failed")
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 

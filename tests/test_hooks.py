@@ -253,3 +253,105 @@ def test_recall_prompt_asks_the_daemon_to_gate_by_the_sessions_cwd():
         "cwd": "/w/proj-a",
     }
     assert request_body({"prompt": "q"}, "q", 3) == {"query": "q", "k": 3}
+
+
+def test_preserve_without_a_daemon_spools_the_transcript_for_the_next_daemon(tmp_path):
+    """PreCompact (research §6 #11): the hook never loads a model; with no
+    daemon it spools the transcript path and asks for a daemon, and exits 0."""
+    transcript = tmp_path / "s-compact.jsonl"
+    transcript.write_text("{}\n")
+    proc = _run(
+        "agmem.hooks.preserve",
+        {
+            "session_id": "s-compact",
+            "transcript_path": str(transcript),
+            "cwd": "/w/p",
+            "trigger": "auto",
+        },
+        tmp_path,
+    )
+    assert proc.returncode == 0 and proc.stdout == "", proc.stderr[-1000:]
+    spool = tmp_path / "data" / "hooktest" / "preserve-queue.jsonl"
+    (line,) = spool.read_text().splitlines()
+    assert json.loads(line) == {
+        "transcript_path": str(transcript),
+        "session_id": "s-compact",
+        "cwd": "/w/p",
+    }
+    # an event without a transcript is a no-op
+    assert _run("agmem.hooks.preserve", {"session_id": "x"}, tmp_path).returncode == 0
+    assert len(spool.read_text().splitlines()) == 1
+
+
+def test_recall_after_compaction_restores_this_sessions_own_turns(tmp_path):
+    """After the harness compacts, SessionStart arrives with source=compact and
+    the session id; the listing is then this session's preserved turns, not
+    the global recency, and falls back to recency when none are stored."""
+    for i, text in enumerate(
+        ["first, set up the venv", "then fix the flaky test", "now write the docs"]
+    ):
+        assert (
+            _run(
+                "agmem.hooks.capture", {"session_id": "c1", "prompt": text, "cwd": "/w/p"}, tmp_path
+            ).returncode
+            == 0
+        )
+    assert (
+        _run(
+            "agmem.hooks.capture", {"session_id": "other", "prompt": "unrelated session"}, tmp_path
+        ).returncode
+        == 0
+    )
+    out = _run(
+        "agmem.hooks.recall", {"session_id": "c1", "source": "compact", "cwd": "/w/p"}, tmp_path
+    ).stdout
+    assert "before the context was compacted" in out
+    assert "flaky test" in out and "venv" in out and "unrelated session" not in out
+    fallback = _run(
+        "agmem.hooks.recall", {"session_id": "never-seen", "source": "compact"}, tmp_path
+    ).stdout
+    assert "Recent memory from previous sessions" in fallback and "unrelated session" in fallback
+
+
+def test_daemon_preserve_ingests_a_transcript_and_drains_the_spool(tmp_path):
+    """The daemon side, in process: `/hooks/preserve`'s work and the spool
+    drain both go through `add_session(distill=False)` — raw steps under the
+    session id, no model — and a second pass is idempotent."""
+    from agmem.config import AgmemConfig
+    from agmem.mcp.server import _Registry
+
+    transcript = tmp_path / "t1.jsonl"
+    records = [
+        {"type": "user", "uuid": "u1", "isSidechain": False, "timestamp": "2026-09-05T01:00:00.000Z",
+         "cwd": "/w/p", "sessionId": "t1", "message": {"role": "user", "content": "keep this before compaction"}},
+        {"type": "assistant", "uuid": "u2", "isSidechain": False, "timestamp": "2026-09-05T01:00:01.000Z",
+         "cwd": "/w/p", "sessionId": "t1", "message": {"role": "assistant", "content": [{"type": "text", "text": "kept."}]}},
+    ]  # fmt: skip
+    transcript.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    reg = _Registry()
+    reg.start(
+        "t",
+        [],
+        AgmemConfig(
+            profile="lite",
+            data_dir=tmp_path / "data",
+            sync_write=True,
+            overrides={"embedder": "FakeEmbedder"},
+        ),
+    )
+    try:
+        result = reg.preserve(str(transcript), "t")
+        assert result["session_id"] == "t1" and result["episodes"] == 2 and result["admitted"]
+        mem = reg.get("t")
+        assert mem.doc_store.count_episodes() == 2
+        spool = tmp_path / "data" / "t" / "preserve-queue.jsonl"
+        spool.write_text(
+            json.dumps({"transcript_path": str(transcript), "session_id": "t1"})
+            + "\n"
+            + json.dumps({"transcript_path": str(tmp_path / "missing.jsonl")})
+            + "\n"
+        )
+        assert reg.drain_preserve_queue("t") == 1  # the missing file is skipped, not fatal
+        assert spool.read_text() == "" and mem.doc_store.count_episodes() == 2  # idempotent
+    finally:
+        reg.close_all()
