@@ -167,6 +167,7 @@ class SessionTrajectory:
         them all as episodes."""
         from agmem.core.types import Episode
 
+        origin = self.origin()
         episodes = []
         for index, step in enumerate(self.steps):
             episodes.append(
@@ -182,6 +183,12 @@ class SessionTrajectory:
                         "step_index": index,
                         "kind": step.kind,
                         "cwd": self.cwd,
+                        # Origin binding (research §6 #8): the session's branch
+                        # and clock on every raw step, the record the runbooks
+                        # carry as `origin`, so gating and freshness read one shape.
+                        "git_branch": origin["git_branch"],
+                        "session_started_at": origin["started_at"],
+                        "session_ended_at": origin["ended_at"],
                         "tool_name": step.tool_name,
                         **step.meta,
                     },
@@ -197,10 +204,31 @@ class SessionTrajectory:
                 return step.text
         return ""
 
+    def origin(self) -> dict[str, Any]:
+        """Where this session came from, as the record every item written from
+        it carries (docs/research/agent-memory-axes-v1.md §6 #8, origin binding
+        at write time): host, session id, project (cwd), git branch, and when
+        it started and ended. Times fall back to the first and last step's
+        timestamps when the loader recorded none. Deterministic signals only —
+        this is what freshness decisions and project gating read, so nothing
+        a model said belongs here."""
+        stamps = [s.timestamp for s in self.steps if s.timestamp is not None]
+        started = self.started_at or (min(stamps) if stamps else None)
+        ended = self.ended_at or (max(stamps) if stamps else None)
+        return {
+            "host": self.host,
+            "session_id": self.id,
+            "cwd": self.cwd,
+            "git_branch": self.git_branch,
+            "started_at": started.isoformat() if started else None,
+            "ended_at": ended.isoformat() if ended else None,
+        }
+
     def as_task_trajectory(self) -> list[dict[str, Any]]:
         """The step list the facade's `add_task_result` / `Organizer.on_task_end`
         take: one dict per step, with the session's host, cwd and id repeated on
         every step so an organizer can read them off the trajectory alone."""
+        origin = self.origin()
         return [
             {
                 "kind": step.kind,
@@ -210,6 +238,9 @@ class SessionTrajectory:
                 "host": self.host,
                 "cwd": self.cwd,
                 "session_id": self.id,
+                "git_branch": origin["git_branch"],
+                "session_started_at": origin["started_at"],
+                "session_ended_at": origin["ended_at"],
                 "step_index": index,
                 "episode_id": self.episode_id(index),
             }

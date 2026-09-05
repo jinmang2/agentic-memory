@@ -21,6 +21,7 @@ from agmem.capabilities import detect, resolve
 from agmem.capabilities.detect import HostCapabilities
 from agmem.config import AgmemConfig, load_config
 from agmem.core.ops import MemoryOp, OpType
+from agmem.core.origin import item_cwd, same_project
 from agmem.core.types import (
     BITEMPORAL_TYPES,
     Episode,
@@ -672,6 +673,7 @@ class AgenticMemory:
 
         persisted: list[str] = []
         if persist_steps:
+            origin = traj.origin()
             persisted = self._ingest_batched(
                 traj.to_episodes(self.namespace),
                 lambda i, e: {
@@ -679,6 +681,13 @@ class AgenticMemory:
                     "session_id": traj.id,
                     "step_index": i,
                     "source": traj.host,
+                    # Origin binding (research §6 #8): the same record the
+                    # runbooks carry, so project gating and freshness read one
+                    # shape whether the item is raw or derived.
+                    "cwd": origin["cwd"],
+                    "git_branch": origin["git_branch"],
+                    "session_started_at": origin["started_at"],
+                    "session_ended_at": origin["ended_at"],
                 },
                 batch_size,
             )
@@ -694,6 +703,7 @@ class AgenticMemory:
                     lambda org: org.on_task_end(steps, outcome, task_text, self._ctx)
                 )
                 if not prior:
+                    self._supersede_stale_runbooks(traj.id)
                     return
                 # The earlier items go only once the new call has replaced them.
                 # A re-distillation whose reply was dropped (the 2026-09-04
@@ -701,6 +711,7 @@ class AgenticMemory:
                 # with no runbook at all, the old ones already deleted.
                 if self._session_item_ids(traj.id) - prior:
                     self._retire_session_items(traj.id, only=prior)
+                    self._supersede_stale_runbooks(traj.id)
                 else:
                     logger.warning(
                         "add_session: re-distillation of %s/%s produced nothing — keeping "
@@ -714,6 +725,49 @@ class AgenticMemory:
             # background queue as well as in sync mode.
             self._dispatch(redistil)
         return SessionIngest(traj.id, traj.host, persisted, already, distill)
+
+    def _supersede_stale_runbooks(self, session_id: str) -> int:
+        """Freshness by deterministic signal (research §6 #7): a runbook from
+        ``session_id`` INVALIDATEs an older live runbook about the same task in
+        the same project — same ``cwd``, same normalized ``name``, a different
+        session whose origin ended earlier (or has no end time). No model
+        judges which is current; the session clock does. The older item stays
+        in the store with ``superseded_by`` and drops out of serving, as any
+        non-bi-temporal INVALIDATE does."""
+        live = [
+            item
+            for item in self.doc_store.list_items("runbooks", namespace=self.namespace)
+            if not item.get("invalid_at") and item.get("cwd") and item.get("name")
+        ]
+        fresh = [i for i in live if i.get("session_id") == session_id]
+        ops: list[MemoryOp] = []
+        for new in fresh:
+            new_end = (new.get("origin") or {}).get("ended_at")
+            key = (new["cwd"], " ".join(str(new["name"]).casefold().split()))
+            for old in live:
+                if old.get("session_id") == session_id:
+                    continue
+                if (old["cwd"], " ".join(str(old["name"]).casefold().split())) != key:
+                    continue
+                old_end = (old.get("origin") or {}).get("ended_at")
+                if old_end and new_end and old_end > new_end:
+                    continue  # the other session is the newer one
+                ops.append(
+                    MemoryOp(
+                        op=OpType.INVALIDATE,
+                        target_type="runbooks",
+                        target_id=str(old["id"]),
+                        actor="ingest",
+                        payload={
+                            "superseded_by": str(new["id"]),
+                            "reason": "newer session, same project and task",
+                            **({"t_invalid": new_end} if new_end else {}),
+                        },
+                    )
+                )
+        if ops:
+            self._apply_ops(ops, actor="ingest")
+        return len(ops)
 
     def _session_item_ids(self, session_id: str) -> set[str]:
         """Ids of the live items the active organizers hold about ``session_id``."""
@@ -1226,9 +1280,17 @@ class AgenticMemory:
         bfs_origin_ids: list[str] | None = None,
         query_keywords: set[str] | frozenset[str] | None = None,
         metrics: dict[str, Any] | None = None,
+        project: str | None = None,
     ) -> MemoryBundle:
         """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
         read->write hooks.
+
+        ``project`` gates the bundle by origin (research §6 #9, cross-project
+        leakage at read time): an item written from a session whose ``cwd`` is
+        neither this path nor inside/outside it on the same tree is dropped
+        before it is served, and ``metrics["project_gated"]`` counts them. Items
+        with no cwd (bench-built, or written before origin binding) pass — the
+        gate refuses what it knows is foreign, not what it cannot place.
 
         ``metrics``, when a dict is passed, records how this bundle was obtained
         — here always one plain search. It exists so that this signature and
@@ -1285,6 +1347,13 @@ class AgenticMemory:
             bfs_origin_ids=bfs_origin_ids,
             query_keywords=query_keywords,
         )
+        if project is not None:
+            kept = [
+                scored for scored in bundle.items if same_project(item_cwd(scored.item), project)
+            ]
+            if metrics is not None:
+                metrics["project_gated"] = len(bundle.items) - len(kept)
+            bundle.items = kept
         # read->write feedback (round-5): organizers see what was served.
         hits = [
             (

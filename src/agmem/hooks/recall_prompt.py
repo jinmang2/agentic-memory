@@ -44,6 +44,17 @@ HEADER = (
 )
 
 
+def request_body(event: dict, query: str, k: int) -> dict:
+    """What the daemon is asked: the prompt as the query, and the session's
+    cwd so the daemon gates the answer by project (research §6 #9) — memory
+    from another repository is not a lead for this one."""
+    body: dict = {"query": query, "k": k}
+    cwd = str(event.get("cwd") or "")
+    if cwd:
+        body["cwd"] = cwd
+    return body
+
+
 def render(items: list[dict]) -> str:
     lines = []
     used = 0
@@ -73,7 +84,7 @@ def main() -> None:
         if not query.strip() or daemon_client.health() is None:
             sys.exit(0)
         k = int(os.environ.get("AGMEM_RECALL_K") or K)
-        reply = daemon_client.post("/hooks/recall", {"query": query, "k": k})
+        reply = daemon_client.post("/hooks/recall", request_body(event, query, k))
         emit_context(render(list(reply.get("items") or [])), "UserPromptSubmit")
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):

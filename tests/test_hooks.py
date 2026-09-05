@@ -220,3 +220,36 @@ def test_recall_stays_fast_enough_for_a_blocking_hook(seeded):
     elapsed = time.perf_counter() - start
     assert got.returncode == 0
     assert elapsed < 5.0, f"recall took {elapsed:.1f}s — the embedder is back on this path"
+
+
+def test_recall_serves_only_the_current_projects_turns(tmp_path):
+    """Project gating at the hooks (research §6 #9): capture records the turn's
+    cwd; the SessionStart recall lists only turns from the same project tree,
+    and a turn with no recorded cwd still shows."""
+    a = _run(
+        "agmem.hooks.capture",
+        {"session_id": "a", "prompt": "In proj-a I use pnpm", "cwd": "/w/proj-a"},
+        tmp_path,
+    )
+    b = _run(
+        "agmem.hooks.capture",
+        {"session_id": "b", "prompt": "In proj-b I use poetry", "cwd": "/w/proj-b"},
+        tmp_path,
+    )
+    n = _run("agmem.hooks.capture", {"session_id": "n", "prompt": "no cwd recorded here"}, tmp_path)
+    assert a.returncode == b.returncode == n.returncode == 0
+    out = _run("agmem.hooks.recall", {"cwd": "/w/proj-a/packages/x"}, tmp_path).stdout
+    assert "pnpm" in out and "no cwd recorded" in out and "poetry" not in out
+    everything = _run("agmem.hooks.recall", {}, tmp_path).stdout
+    assert "pnpm" in everything and "poetry" in everything
+
+
+def test_recall_prompt_asks_the_daemon_to_gate_by_the_sessions_cwd():
+    from agmem.hooks.recall_prompt import request_body
+
+    assert request_body({"cwd": "/w/proj-a", "prompt": "q"}, "q", 5) == {
+        "query": "q",
+        "k": 5,
+        "cwd": "/w/proj-a",
+    }
+    assert request_body({"prompt": "q"}, "q", 3) == {"query": "q", "k": 3}

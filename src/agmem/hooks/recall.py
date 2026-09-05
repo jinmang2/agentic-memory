@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import sys
 
+from agmem.core.origin import item_cwd, same_project
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
 
@@ -67,7 +68,8 @@ def render(episodes: list) -> str:
 
 def main() -> None:
     try:
-        read_event()  # drained so the harness never blocks writing to our stdin
+        event = read_event()  # also drained so the harness never blocks on our stdin
+        project = str(event.get("cwd") or "") or None
         namespace, store = open_doc_store()
         try:
             episodes = store.list_episodes(namespace=namespace)
@@ -83,6 +85,10 @@ def main() -> None:
         # per 500 episodes measured), and the ordering contract of
         # `list_episodes` still holds after the filter.
         episodes = [ep for ep in episodes if getattr(ep, "role", "user") == "user"]
+        # Project gating (research §6 #9): a turn typed in another repository
+        # is not this session's recent memory. Turns with no recorded cwd pass.
+        if project:
+            episodes = [ep for ep in episodes if same_project(item_cwd(ep), project)]
         # `list_episodes` documents oldest-first, so the tail is the newest slice
         # and reversing it puts the most recent line first.
         episodes = list(episodes)[-MAX_EPISODES:][::-1]

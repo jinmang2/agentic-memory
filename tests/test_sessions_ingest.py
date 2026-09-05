@@ -694,3 +694,116 @@ def test_a_runbook_hit_carries_the_transcript_steps_it_cites():
     (hit,) = mem.search("idle timeout", memory_types=["runbooks"], k=3).items
     assert "_source_messages" not in hit.item.data
     mem.close()
+
+
+def _session_in(
+    cwd: str, session_id: str, ended: str, task: str = "Fix the flaky test"
+) -> SessionTrajectory:
+    from datetime import UTC, datetime
+
+    steps = [
+        Step(kind="user", text=task, timestamp=datetime.fromisoformat(ended).replace(tzinfo=UTC)),
+        Step(kind="tool_result", text="1 failed: test_idle_timeout TimeoutExpired", tool_name="Bash",
+             timestamp=datetime.fromisoformat(ended).replace(tzinfo=UTC)),
+    ]  # fmt: skip
+    return SessionTrajectory(
+        id=session_id, host="claude-code", source_path="x", cwd=cwd, git_branch="main", steps=steps
+    )
+
+
+def test_every_item_written_from_a_session_carries_its_origin():
+    """Origin binding at write time (research §6 #8): host, session, project,
+    branch and the session's clock on every episode and on the runbook, in
+    one shape, so gating and freshness read the same record."""
+    llm = StubLLM({"distill": [_distilled([0, 1])]})
+    mem = _experience_mem(llm)
+    traj = _session_in("/home/u/proj", "s-origin", "2026-09-05T10:00:00")
+    mem.add_session(traj)
+    mem.flush()
+    (episode,) = mem.doc_store.get_episodes([traj.episode_id(0)])
+    assert episode.meta["cwd"] == "/home/u/proj" and episode.meta["git_branch"] == "main"
+    assert episode.meta["session_ended_at"] == "2026-09-05T10:00:00+00:00"
+    (runbook,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert runbook["origin"] == {
+        "host": "claude-code", "session_id": "s-origin", "cwd": "/home/u/proj", "git_branch": "main",
+        "started_at": "2026-09-05T10:00:00+00:00", "ended_at": "2026-09-05T10:00:00+00:00",
+    }  # fmt: skip
+    mem.close()
+
+
+def test_search_gated_by_project_drops_what_another_project_wrote():
+    """Cross-project leakage gating at read time (research §6 #9): with
+    `project=`, items whose origin cwd is a different tree are not served;
+    the same tree (equal, or nested either way) and items with no cwd pass."""
+    llm = StubLLM({"distill": [_distilled([0, 1]), _distilled([0, 1])]})
+    mem = _experience_mem(llm)
+    mem.add_session(_session_in("/home/u/proj-a", "s-a", "2026-09-05T10:00:00"))
+    mem.add_session(_session_in("/home/u/proj-b", "s-b", "2026-09-05T11:00:00"))
+    mem.add_task_result(
+        trajectory=[{"kind": "user", "text": "flaky test elsewhere"}],
+        outcome="unknown",
+        task="no cwd",
+    )
+    mem.flush()
+    metrics: dict = {}
+    everything = mem.search("flaky test", k=20, memory_types=["episodic", MEMORY_TYPE])
+    gated = mem.search(
+        "flaky test",
+        k=20,
+        memory_types=["episodic", MEMORY_TYPE],
+        project="/home/u/proj-a/sub",
+        metrics=metrics,
+    )
+    cwds = {
+        s.item.meta.get("cwd") if hasattr(s.item, "meta") else s.item.data.get("cwd")
+        for s in gated.items
+    }
+    assert cwds <= {"/home/u/proj-a", None}
+    assert "/home/u/proj-b" in {
+        s.item.meta.get("cwd") if hasattr(s.item, "meta") else s.item.data.get("cwd")
+        for s in everything.items
+    }
+    assert metrics["project_gated"] >= 1 and len(gated.items) < len(everything.items)
+    assert (
+        len(mem.search("flaky test", k=20, project="/somewhere/else").items) <= 1
+    )  # only the cwd-less task line, if ranked
+    mem.close()
+
+
+def test_a_newer_session_supersedes_the_same_task_in_the_same_project():
+    """Freshness by deterministic signal (research §6 #7): a runbook about the
+    same task in the same project from a newer session INVALIDATEs the older
+    one — session clock, not a model. Different projects coexist."""
+    llm = StubLLM({"distill": [_distilled([0, 1]), _distilled([0, 1]), _distilled([0, 1])]})
+    mem = _experience_mem(llm)
+    mem.add_session(_session_in("/home/u/proj", "s-old", "2026-09-01T10:00:00"))
+    mem.flush()
+    (old,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    mem.add_session(_session_in("/home/u/proj", "s-new", "2026-09-05T10:00:00"))
+    mem.flush()
+    live = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    by_session = {i["session_id"]: i for i in live}
+    assert by_session["s-old"]["invalid_at"] == "2026-09-05T10:00:00+00:00"
+    assert by_session["s-old"]["superseded_by"] == by_session["s-new"]["id"]
+    assert "invalid_at" not in by_session["s-new"]
+    served = {
+        s.item.data.get("session_id")
+        for s in mem.search("flaky", k=5, memory_types=[MEMORY_TYPE]).items
+    }
+    assert served == {"s-new"}
+    ops = [op for op in mem.log.tail(30) if op.op is OpType.INVALIDATE]
+    assert (
+        ops
+        and ops[-1].target_id == old["id"]
+        and ops[-1].payload["reason"] == "newer session, same project and task"
+    )
+    # another project, same task name: nothing superseded
+    mem.add_session(_session_in("/home/u/other", "s-other", "2026-09-06T10:00:00"))
+    mem.flush()
+    assert (
+        "invalid_at"
+        not in {i["session_id"]: i for i in mem.doc_store.list_items(MEMORY_TYPE, namespace="t")}[
+            "s-new"
+        ]
+    )
+    mem.close()

@@ -457,6 +457,10 @@ class ExperienceOrganizer(Organizer):
                         "session_id": meta["session_id"],
                         "source_host": meta["host"],
                         "caller_outcome": outcome,
+                        # Origin binding (research §6 #8): the deterministic
+                        # provenance every derived item carries, bound at the
+                        # moment it is written and never inferred later.
+                        "origin": meta["origin"],
                         "step_range": step_range,
                         # The exact steps when the model enumerated them; the
                         # range's every step otherwise. What `source_episode_ids`
@@ -519,6 +523,16 @@ def _session_meta(trajectory: list[dict], task: str) -> dict[str, Any]:
         "cwd": first.get("cwd"),
         "session_id": str(first.get("session_id") or ""),
         "task": task,
+        # The session's origin record (SessionTrajectory.origin), carried on
+        # every step by as_task_trajectory; absent for bench-built trajectories.
+        "origin": {
+            "host": str(first.get("host") or "unknown"),
+            "session_id": str(first.get("session_id") or ""),
+            "cwd": first.get("cwd"),
+            "git_branch": first.get("git_branch"),
+            "started_at": first.get("session_started_at"),
+            "ended_at": first.get("session_ended_at"),
+        },
     }
 
 

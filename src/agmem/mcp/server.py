@@ -241,6 +241,7 @@ def search_memory(
     k: int = 10,
     budget_tokens: int = 1600,
     namespace: str | None = None,
+    project: str | None = None,
 ) -> str:
     """Search memory. memory_types: comma-separated subset of episodic,
     episodes, notes, pages, semantic, entities, facts, strategies, playbook.
@@ -248,10 +249,14 @@ def search_memory(
     configured organizers actually produce — the old "episodic" default silently
     returned raw messages instead of, say, A-Mem notes.
     namespace: which memory to search; omit for the server's default.
+    project: the caller's working directory; when given, memory written from
+    another project tree is not served (origin gating).
     Returns rendered context plus item provenance."""
     types = tuple(t.strip() for t in memory_types.split(",") if t.strip()) or None
     metrics: dict = {}
-    bundle = get_searcher(namespace).search(query, memory_types=types, k=k, metrics=metrics)
+    bundle = get_searcher(namespace).search(
+        query, memory_types=types, k=k, metrics=metrics, project=project
+    )
     return json.dumps(
         {
             "namespace": get_mem(namespace).namespace,
@@ -424,10 +429,11 @@ async def hooks_recall(request: Request) -> JSONResponse:
         return JSONResponse({"error": "query required"}, status_code=400)
     k = int(body.get("k") or 5)
     namespace = body.get("namespace") or None
+    project = body.get("cwd") or None  # the hook's session cwd: gate by project
 
     def _search():
         mem = get_mem(namespace)
-        bundle = get_searcher(namespace).search(query, k=k)
+        bundle = get_searcher(namespace).search(query, k=k, project=project)
         return {
             "namespace": mem.namespace,
             "items": [

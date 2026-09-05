@@ -98,6 +98,10 @@ def main() -> None:
             # Kept so a later reader can group a session's turns without
             # inferring it from timestamps.
             "session_id": str(event.get("session_id") or ""),
+            # The project this turn belongs to (origin binding, research §6
+            # #8): what the recall hooks gate on, so a turn typed in one
+            # repository is not served into another.
+            "cwd": str(event.get("cwd") or "") or None,
         }
         if daemon_client.health() is not None:
             daemon_client.post(
