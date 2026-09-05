@@ -237,18 +237,23 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
 
 ### 2.3.1 데몬 — 훅이 찾는 상주 프로세스 (2026-09-02)
 
-`agmem-mcp --transport http`가 그대로 데몬이다. MCP `/mcp` 외에 훅용 평문 HTTP 라우트 세 개를 연다:
+`agmem-mcp --transport http`가 그대로 데몬이다. MCP `/mcp` 외에 훅용 평문 HTTP 라우트를 연다:
 `GET /health`(기본 namespace·열린 namespace·`pending_embed` 수·유휴 시간), `POST /hooks/capture`(`add_memory`와
-같은 쓰기), `POST /hooks/recall`(`search_memory`와 같은 검색, 항목 텍스트 반환). 훅은 stdlib `urllib`만으로
-이 셋을 부르므로 torch도 MCP SDK도 import하지 않는다.
+같은 쓰기), `POST /hooks/recall`(`search_memory`와 같은 검색, 항목 텍스트 반환), `POST /hooks/preserve`(압축 직전
+트랜스크립트 보존), `POST /hooks/distill`(끝난 세션의 보존 + 증류, 스레드에서 처리하고 즉시 `queued` 반환). 훅은 stdlib
+`urllib`만으로 이것들을 부르므로 torch도 MCP SDK도 import하지 않는다.
 
 - **라이프사이클(결정 A)**: SessionStart의 `recall` 훅이 `/health` 실패 시 `python -m agmem.mcp.server --transport
   http --idle-timeout 1800`을 detach로 띄운다. 유휴 30분이면 스스로 종료. 호스트 둘(Claude Code·Codex)이 같은
   데몬을 공유한다. `AGMEM_NO_DAEMON=1`이면 어떤 훅도 띄우지 않는다.
 - **부재 시**: `capture`는 에피소드를 doc store에만 쓰고(0.2초, 임베더 안 열음) 데몬을 요청한 뒤 exit 0. 데몬은
   기동 시와 매 `--backfill-period`(기본 60초)마다 "doc store에는 있고 vector store에는 없는" 에피소드를 임베딩한다.
-  `recall_prompt`는 아무것도 주입하지 않는다. **어떤 훅도 인프로세스로 모델을 올리지 않는다** — 그것이 이슈 #2 §1의
-  문제 자체였다.
+  `recall_prompt`는 doc store만 열어 BM25(runbook → 지난 턴, 프로젝트 게이팅, 4자 이상 토큰 겹침 필터)로 답하고
+  헤더에 어느 경로가 답했는지 적는다(2026-09-05; 데몬 기동이 약 20초라 그 사이의 프롬프트가 조용히 빈손이었다 —
+  `docs/23` §8). **어떤 훅도 인프로세스로 모델을 올리지 않는다** — 그것이 이슈 #2 §1의 문제 자체였다.
+- **기동 시간**: 훅이 띄운 데몬이 `/health`에 답하기까지 약 20초(2026-09-05 실측, lite, 모델 캐시 있음; 모델 적재 +
+  기동 backfill). 콜드 데몬의 첫 벡터 질의 자체는 0.17초라 예열은 필요 없다. 데몬의 stdout/stderr는 `AGMEM_DAEMON_LOG`가
+  가리키는 파일에 붙는다(없으면 버림) — 데몬을 띄우는 훅(recall·capture·preserve·distill)이 이 변수를 데몬에 넘긴다.
 - 루프백 전용, 인증 없음. `AGMEM_DAEMON_URL`을 루프백 밖으로 두지 말 것.
 
 ### 2.4 Claude Code 훅 등록
@@ -288,8 +293,10 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
 
 훅은 다섯이다. **`distill`(SessionEnd, 2026-09-05 신설)** 은 끝난 세션의 트랜스크립트를 데몬에 넘기고 즉시 종료하며, 데몬이
 백그라운드에서 `add_session(distill=True)`로 원문 보존 + `experience` 증류 1콜을 수행한다(`[llm.distill]`이 없으면 원문만 남고
-증류는 명시적으로 건너뛴다). 훅이 띄우는 데몬은 `--organizers experience`로 뜬다. 나머지 넷: `recall`(SessionStart, 최근성 12줄; `source=compact`이면 **이 세션이 압축 전에 말한 턴**을 대신 돌려준다),
-**`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서 top-5를 주입 — 2026-09-02 신설)**, `capture`(UserPromptSubmit, 비동기),
+증류는 명시적으로 건너뛴다). 훅이 띄우는 데몬은 `--organizers experience`로 뜬다. 나머지 넷: `recall`(SessionStart — **이
+프로젝트의 최신 live runbook 5건**(이름·outcome·stage·키워드, 세션 요약은 세션당 한 번)을 먼저, 그 뒤에 사용자의 최근 턴 12줄;
+`source=compact`이면 **이 세션이 압축 전에 말한 턴**을 대신 돌려준다),
+**`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서 top-5를 주입 — 2026-09-02 신설; 데몬이 없으면 §2.3.1의 BM25 폴백)**, `capture`(UserPromptSubmit, 비동기),
 **`preserve`(PreCompact, 2026-09-05 신설 — 압축 직전 트랜스크립트 원문을 세션 id 아래 에피소드로 보존, 모델 호출 없음; 데몬이 없으면
 스풀에 적고 데몬이 다음 기동 때 처리)**. 같은 이벤트에서 recall_prompt가 capture보다 앞에 와야 자기 프롬프트를 자기에게
 되돌려주지 않는다. Codex의 `~/.codex/hooks.json`도 같은 계약이라 그대로 붙는다.
@@ -303,15 +310,43 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
   켜면 서로 못 보는 스토어 두 개가 생겼다(issue #2). 훅에는 플래그가 없다: 하네스가 인자를 주지
   않고, 같은 것을 말하는 두 번째 방법은 어긋나는 두 번째 방법이다.
 - `AGMEM_CONFIG`는 서버의 `--config`와 같은 파일을 훅에도 적용한다(임베더·스토어 오버라이드).
-  단 **organizer는 무시하고 항상 비운다** — 훅은 키 입력마다 도는 것이라 LLM을 부르는 쓰기는
-  모델이 부르기로 결정한 MCP 쪽에서만 일어난다. 서버 기본 `--organizers nemori,reasoning_bank`와
-  훅의 빈 목록은 그래서 의도된 비대칭이고, LLM 엔드포인트가 없으면 어느 쪽도 과금되지 않는다.
+  단 **훅 프로세스 자신은 organizer를 무시하고 항상 비운다** — 훅은 키 입력마다 도는 것이라 인프로세스로 LLM을
+  부르지 않는다. LLM이 도는 곳은 둘뿐이다: 모델이 부르기로 결정한 MCP 도구, 그리고 훅이 띄운 데몬이
+  SessionEnd마다 하는 `experience` 증류 1콜(설정에 `[llm.distill]`이 있을 때만; 없으면 원문 보존만). 서버를 손으로
+  띄울 때의 기본 `--organizers nemori,reasoning_bank`와 훅이 띄울 때의 `experience`는 그래서 다르고, LLM 엔드포인트가
+  없으면 어느 쪽도 과금되지 않는다.
+- **우리 머신의 도그푸드 설정(2026-09-05, `docs/23` §8)**: `~/.claude/settings.json`의 `env`에 `AGMEM_CONFIG=~/.agmem/agmem.toml`,
+  `AGMEM_DAEMON_LOG=~/.agmem/daemon.log`, 그리고 증류 키(`OPENROUTER_API_KEY`)를 두고, 그 toml은 다음과 같다.
+
+  ```toml
+  [profile]
+  name = "lite"
+
+  [storage]
+  data_dir = "~/.agmem/data"
+
+  [llm.distill]                       # SessionEnd 증류 1콜 (없으면 원문 보존만)
+  endpoint = "https://openrouter.ai/api/v1"
+  model = "qwen/qwen3.5-9b"
+  api_key = "env:OPENROUTER_API_KEY"  # 값이 아니라 변수 이름 — 데몬이 기동할 때 푼다
+  temperature = 0.1
+  max_tokens = 4096                   # 2048이면 runbook JSON이 잘린다 (docs/23 §4)
+
+  [llm.explore]                       # MCP research_memory의 탐색 에이전트
+  endpoint = "https://openrouter.ai/api/v1"
+  model = "qwen/qwen3.5-9b"
+  api_key = "env:OPENROUTER_API_KEY"
+  temperature = 0.0
+  max_tokens = 2048
+  ```
+
+  9B 기준 세션당 증류 비용은 $0.01 미만이다. 훅 설정은 새 세션부터 적용되며, 현재 세션에서 바로 쓰려면 `/hooks`를 한 번 연다.
   recall은 SQLite 문서 스토어를 직접 열므로 doc_store를 다른 것으로 오버라이드한 설정은 거부한다
   (옆에 빈 SQLite를 만들어 "기억 없음"으로 보이는 대신 로그에 남기고 exit 0).
 - **예산 실측(2026-08-08, 인프로세스)**: recall **0.18초**(doc store만), capture **10.8초**(임베더를 프로세스마다
   올리던 때). 2026-09-02 재측정은 웜 12.9~19초, 콜드 캐시 56초였고, 그래서 §2.3.1의 데몬으로 갔다. 데몬 경로의
   수치는 `scripts/smoke_product_stack.py --daemon`이 출력한다.
-- 진단은 `AGMEM_HOOK_LOG=/path/to/log`. 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
+- 진단은 `AGMEM_HOOK_LOG=/path/to/log`(훅 자신), `AGMEM_DAEMON_LOG`(훅이 띄운 데몬). 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
   고장이 침묵으로 나타난다 — 세션을 망가뜨리지 않기 위한 설계이고, 그 대가다.
 - **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다. 두 층이 한 스토어를
   공유한다는 주장은 각 층의 테스트로는 확인되지 않아 `scripts/smoke_product_stack.py`로 구동해
