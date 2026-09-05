@@ -295,6 +295,28 @@ def test_memory_types_covers_every_organizer_output():
     assert declared - set(MEMORY_TYPES) == set()
 
 
+def test_every_memory_type_declares_its_axis_and_update_policy():
+    """`MEMORY_TYPE_INFO` is the functional-axis and update-policy declaration
+    the flat tuple never carried (docs/research/agent-memory-axes-v1.md §2.1,
+    §7.2). It must stay exhaustive with `MEMORY_TYPES`, and the values are a
+    closed vocabulary — a new type gets a place on both axes or does not get
+    in."""
+    from agmem.core.types import MEMORY_TYPE_INFO, MEMORY_TYPES
+
+    assert set(MEMORY_TYPE_INFO) == set(MEMORY_TYPES)
+    axes = {"working", "episodic", "semantic", "procedural", "bookkeeping"}
+    updates = {"append_only", "supersede", "abstract", "none"}
+    for name, info in MEMORY_TYPE_INFO.items():
+        assert info.axis in axes and info.update in updates, name
+    # the pairings the research fixed: raw experience appends, facts supersede, procedures abstract
+    assert MEMORY_TYPE_INFO["episodic"].update == "append_only"
+    assert MEMORY_TYPE_INFO["facts"].update == "supersede"
+    assert MEMORY_TYPE_INFO["runbooks"].axis == "procedural"
+    assert MEMORY_TYPE_INFO["state"].axis == "bookkeeping"
+    # nothing is working memory yet: the facade has no such type (the research's §2.2 row)
+    assert not [n for n, i in MEMORY_TYPE_INFO.items() if i.axis == "working"]
+
+
 def test_put_item_lexical_text_overrides_the_bm25_channel(doc):
     """`lexical_text` decouples what the lexical channel indexes from what
     `content` renders — Graphiti indexes community nodes on the name alone

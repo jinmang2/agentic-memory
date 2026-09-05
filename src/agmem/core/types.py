@@ -48,6 +48,42 @@ MEMORY_TYPES = (
     "state",  # internal bookkeeping, not a memory: consolidate cursors (base.cursor_key)
 )
 
+
+@dataclass(frozen=True)
+class TypeInfo:
+    """What a memory type IS, on the two axes the vocabulary never declared.
+
+    ``axis`` is the functional kind (CoALA's working / episodic / semantic /
+    procedural; docs/research/agent-memory-axes-v1.md §1.3 for why that frame),
+    ``update`` the policy that kind implies: raw experience is appended and
+    never rewritten, facts are superseded by newer facts, procedures are
+    abstracted from several cases, and bookkeeping is neither. Declaration
+    only — nothing reads it yet. It exists so the next reader of the vocabulary
+    does not have to infer, from the paper each organizer cites, which of the
+    fourteen names are the same kind of thing (2026-09-04 §2.1 of that document
+    did exactly that, by hand)."""
+
+    axis: str  # "working" | "episodic" | "semantic" | "procedural" | "bookkeeping"
+    update: str  # "append_only" | "supersede" | "abstract" | "none"
+
+
+MEMORY_TYPE_INFO: dict[str, TypeInfo] = {
+    "episodic": TypeInfo("episodic", "append_only"),
+    "episodes": TypeInfo("episodic", "append_only"),
+    "pages": TypeInfo("episodic", "append_only"),
+    "derivatives": TypeInfo("episodic", "none"),  # anchors back to episodes, never served
+    "semantic": TypeInfo("semantic", "supersede"),
+    "notes": TypeInfo("semantic", "supersede"),
+    "entities": TypeInfo("semantic", "supersede"),
+    "facts": TypeInfo("semantic", "supersede"),  # bi-temporal: INVALIDATE, never delete
+    "communities": TypeInfo("semantic", "supersede"),
+    "strategies": TypeInfo("procedural", "abstract"),
+    "experiences": TypeInfo("procedural", "abstract"),
+    "playbook": TypeInfo("procedural", "abstract"),
+    "runbooks": TypeInfo("procedural", "abstract"),
+    "state": TypeInfo("bookkeeping", "none"),
+}
+
 # Types that stay servable after INVALIDATE, rendered with their validity range
 # instead of dropping out (Zep bi-temporal: facts are never deleted, only
 # invalidated). Every other type disappears from retrieval the moment it is
