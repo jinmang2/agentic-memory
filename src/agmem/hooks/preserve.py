@@ -27,6 +27,7 @@ and a daemon start is requested — the same absent-daemon shape `capture` has.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -68,7 +69,7 @@ def main() -> None:
             daemon_client.post("/hooks/preserve", body)
         else:
             spool(body, spool_path())
-            daemon_client.ensure_running()
+            daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):
             raise

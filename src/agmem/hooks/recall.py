@@ -37,6 +37,7 @@ from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
 
 MAX_EPISODES = 12
 MAX_CHARS = 2000
+MAX_RUNBOOKS = 5
 HEADER = (
     "Recent memory from previous sessions (agmem, most recent first). "
     "This is a recency listing, not a relevance search — no query existed yet at "
@@ -50,6 +51,61 @@ COMPACT_HEADER = (
     "PreCompact hook, most recent first). The transcript's raw steps are in memory under "
     "this session id; search memory for anything the summary lost."
 )
+
+
+RUNBOOK_HEADER = (
+    "Runbooks distilled from previous sessions in this project (agmem, newest first): "
+    "the task, how it ended, and the stage it reached. The steps behind each are in "
+    "memory under that session; search_memory / research_memory find them."
+)
+
+
+def recent_runbooks(store, namespace: str, project: str | None, limit: int = MAX_RUNBOOKS) -> list:
+    """The newest live runbooks written from `project` (research §6 #9: another
+    repository's experience is not this session's), newest session first.
+
+    This is the block the dogfood record (docs/23 §8) found missing: the
+    SessionStart listing showed the user's recent turns and nothing of what the
+    previous sessions had been distilled into, so a runbook reached the model
+    only when a prompt happened to retrieve it."""
+    rows = [d for d in store.list_items("runbooks", namespace=namespace) if not d.get("deleted")]
+    if project:
+        rows = [d for d in rows if same_project(item_cwd(d), project)]
+    rows.sort(key=lambda d: str((d.get("origin") or {}).get("ended_at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def render_runbooks(rows: list) -> str:
+    """One line per runbook. A session's runbooks share one session summary
+    (the organizer writes it once per session), so the summary follows the
+    first runbook of each session only; the keywords are per runbook."""
+    lines = []
+    seen_summaries: set[str] = set()
+    for d in rows:
+        when = str((d.get("origin") or {}).get("ended_at") or "")[:10] or "?"
+        name = " ".join(str(d.get("name") or "").split())
+        if not name:
+            continue
+        marks = " ".join(f"{k}:{d[k]}" for k in ("outcome", "stage") if d.get(k))
+        keywords = d.get("keywords") or []
+        if isinstance(keywords, list):
+            keywords = ", ".join(str(k) for k in keywords)
+        summary = " ".join(str(d.get("summary") or "").split())
+        if summary in seen_summaries:
+            summary = ""
+        elif summary:
+            seen_summaries.add(summary)
+        line = f"- ({when}) {name}" + (f" [{marks}]" if marks else "")
+        if keywords:
+            line += f" — {keywords}"
+        if summary:
+            line += f". {summary}"
+        if len(line) > 300:
+            line = line[:297] + "..."
+        lines.append(line)
+    if not lines:
+        return ""
+    return RUNBOOK_HEADER + "\n" + "\n".join(lines)
 
 
 def render(episodes: list, header: str = HEADER) -> str:
@@ -80,6 +136,7 @@ def main() -> None:
         namespace, store = open_doc_store()
         try:
             episodes = store.list_episodes(namespace=namespace)
+            runbooks = recent_runbooks(store, namespace, project)
         finally:
             close = getattr(store, "close", None)
             if close is not None:
@@ -114,7 +171,10 @@ def main() -> None:
         # `list_episodes` documents oldest-first, so the tail is the newest slice
         # and reversing it puts the most recent line first.
         episodes = list(episodes)[-MAX_EPISODES:][::-1]
-        emit_context(render(episodes), "SessionStart")
+        # Runbooks first: they are what the previous sessions concluded; the
+        # turns below them are what was said. Either block may be empty.
+        blocks = [b for b in (render_runbooks(runbooks), render(episodes)) if b]
+        emit_context("\n\n".join(blocks), "SessionStart")
         # Session start is where the daemon gets started if it is not up, so
         # the first capture of the session finds it warm. Non-blocking: this
         # returns as soon as the process is spawned, not when it is ready.

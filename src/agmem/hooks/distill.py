@@ -24,6 +24,7 @@ on its next start, exactly as `preserve` does.
 
 from __future__ import annotations
 
+import os
 import sys
 
 from agmem.hooks import daemon as daemon_client
@@ -42,7 +43,7 @@ def main() -> None:
             daemon_client.post("/hooks/distill", body)
         else:
             spool(body, spool_path().with_name(SPOOL_NAME))
-            daemon_client.ensure_running()
+            daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):
             raise

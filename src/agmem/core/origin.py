@@ -16,7 +16,9 @@ def item_cwd(item: Any) -> str | None:
     meta = getattr(item, "meta", None)
     if isinstance(meta, dict) and meta.get("cwd"):
         return str(meta["cwd"])
-    data = getattr(item, "data", None)
+    # A row from ``list_items``/``get_items`` is the data dict itself, not an
+    # object carrying one; the hooks read those rows without a memory open.
+    data = item if isinstance(item, dict) else getattr(item, "data", None)
     if isinstance(data, dict):
         if data.get("cwd"):
             return str(data["cwd"])

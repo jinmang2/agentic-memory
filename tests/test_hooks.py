@@ -428,3 +428,118 @@ def test_daemon_distill_makes_a_runbook_from_a_finished_session(tmp_path):
             assert len(reg.get("t").doc_store.list_items("runbooks", namespace="t")) == 1
         finally:
             reg.close_all()
+
+
+def _runbook(rid: str, name: str, cwd: str, ended: str, **extra) -> dict:
+    d = {
+        "id": rid,
+        "name": name,
+        "content": f"# Task: {name}\n{extra.pop('body', '')}",
+        "summary": extra.pop("summary", f"summary of {name}"),
+        "outcome": "success",
+        "stage": "implement",
+        "cwd": cwd,
+        "origin": {"cwd": cwd, "ended_at": ended, "session_id": f"s-{rid}"},
+    }
+    d.update(extra)
+    return d
+
+
+def _seed_runbooks(tmp_path, rows: list[dict]) -> None:
+    from agmem.stores.sqlite_doc import SqliteDocStore
+
+    path = tmp_path / "data" / "hooktest" / "memory.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    store = SqliteDocStore(path)
+    try:
+        for d in rows:
+            store.put_item(d["id"], "runbooks", "hooktest", d)
+    finally:
+        store.close()
+
+
+def test_recall_lists_this_projects_runbooks_newest_first(tmp_path):
+    """docs/23 §8 found the SessionStart listing carried the user's recent turns
+    and nothing of what earlier sessions had been distilled into. Now the newest
+    live runbooks of the same project lead the block: another project's runbook
+    and a superseded (deleted) one are not this session's memory."""
+    _seed_runbooks(
+        tmp_path,
+        [
+            _runbook("a1", "Wire the pnpm workspace", "/w/proj-a", "2026-09-01T10:00:00+00:00"),
+            _runbook("a2", "Fix the pnpm filter", "/w/proj-a", "2026-09-03T10:00:00+00:00"),
+            _runbook(
+                "a0", "Old and superseded", "/w/proj-a", "2026-08-01T10:00:00+00:00", deleted=True
+            ),
+            _runbook("b1", "Poetry lock dance", "/w/proj-b", "2026-09-04T10:00:00+00:00"),
+        ],
+    )
+    turn = _run(
+        "agmem.hooks.capture",
+        {"session_id": "a", "prompt": "what did we do about pnpm?", "cwd": "/w/proj-a"},
+        tmp_path,
+    )
+    assert turn.returncode == 0, turn.stderr[-2000:]
+    proc = _run("agmem.hooks.recall", {"cwd": "/w/proj-a/packages/x"}, tmp_path)
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "Runbooks distilled" in out
+    assert out.index("Fix the pnpm filter") < out.index("Wire the pnpm workspace")
+    assert "[outcome:success stage:implement]" in out
+    assert "Poetry lock" not in out and "superseded" not in out
+    # The turns block is still there, after the runbooks.
+    assert out.index("Wire the pnpm workspace") < out.index("what did we do about pnpm?")
+    everything = _run("agmem.hooks.recall", {}, tmp_path).stdout
+    assert "Poetry lock" in everything and "Fix the pnpm filter" in everything
+
+
+def test_recall_prompt_without_a_daemon_answers_from_the_store_by_keyword(tmp_path):
+    """The dogfood gap (docs/23 §8): a hook-spawned daemon takes ~20 s to come up
+    and the prompt hook used to emit nothing until then. With the daemon
+    unreachable (AGMEM_DAEMON_URL points at a closed port) the hook now serves
+    BM25 matches from the doc store — runbooks first, then the user's own past
+    turns — gated by project, under a header that says which path answered."""
+    _seed_runbooks(
+        tmp_path,
+        [
+            _runbook(
+                "a1",
+                "Fix the pnpm filter",
+                "/w/proj-a",
+                "2026-09-03T10:00:00+00:00",
+                body="pnpm --filter needs the package name, not the path",
+            ),
+            _runbook(
+                "b1",
+                "pnpm in proj-b",
+                "/w/proj-b",
+                "2026-09-04T10:00:00+00:00",
+                body="pnpm here too, but another repository",
+            ),
+        ],
+    )
+    for sid, prompt, cwd in (
+        ("a", "the pnpm filter flag keeps failing", "/w/proj-a"),
+        ("a", "unrelated: rename the CI job", "/w/proj-a"),
+        ("b", "pnpm filter in proj-b", "/w/proj-b"),
+    ):
+        r = _run("agmem.hooks.capture", {"session_id": sid, "prompt": prompt, "cwd": cwd}, tmp_path)
+        assert r.returncode == 0, r.stderr[-2000:]
+    proc = _run(
+        "agmem.hooks.recall_prompt",
+        {"session_id": "a", "prompt": "how do I use the pnpm filter?", "cwd": "/w/proj-a"},
+        tmp_path,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    out = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "keyword match" in out and "daemon was not answering" in out
+    assert "Fix the pnpm filter" in out and "pnpm filter flag keeps failing" in out
+    assert out.index("Fix the pnpm filter") < out.index("pnpm filter flag keeps failing")
+    assert "proj-b" not in out and "rename the CI job" not in out
+
+
+def test_recall_prompt_without_a_daemon_and_no_match_emits_nothing(tmp_path):
+    r = _run("agmem.hooks.capture", {"session_id": "a", "prompt": "hello", "cwd": "/w/a"}, tmp_path)
+    assert r.returncode == 0, r.stderr[-2000:]
+    proc = _run("agmem.hooks.recall_prompt", {"prompt": "zebra quantum", "cwd": "/w/a"}, tmp_path)
+    assert proc.returncode == 0 and proc.stdout.strip() == "", (proc.stdout, proc.stderr[-500:])
