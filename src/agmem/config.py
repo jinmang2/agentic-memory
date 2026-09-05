@@ -62,6 +62,10 @@ class AgmemConfig:
     llm_roles: dict[str, RoleConfig] = field(default_factory=dict)
     strict: bool = False
     sync_write: bool = True  # False -> background write worker (memory.py)
+    # Calls the experience organizer may spend on one session: 1 = one
+    # head-and-tail clipped prompt (the measured default); N = up to N
+    # contiguous segments, one call each, for sessions that outgrow a prompt.
+    distill_max_calls: int = 1
     use_guided_json: bool = True
     # Correction turns allowed for a malformed structured reply before the
     # call is dropped. 1 is what every arm measured before 2026-08-07 used;
@@ -257,6 +261,9 @@ def load_config(path: str | Path) -> AgmemConfig:
         llm_roles=llm_roles,
         strict=raw.get("profile", {}).get("strict", False),
         sync_write=raw.get("write", {}).get("sync", defaults.sync_write),
+        distill_max_calls=int(
+            raw.get("write", {}).get("distill_max_calls", defaults.distill_max_calls)
+        ),
         use_guided_json=raw.get("llm_options", {}).get("guided_json", defaults.use_guided_json),
         structured_reply_retries=raw.get("llm_options", {}).get(
             "structured_reply_retries", defaults.structured_reply_retries

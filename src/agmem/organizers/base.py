@@ -83,6 +83,15 @@ class Organizer:
     # must be listed first (see ZepGraphOrganizer: facts before entities).
     produces: tuple[str, ...] = ()
 
+    def apply_config(self, config: Any) -> None:
+        """Called once by the facade on an organizer it built BY NAME, with the
+        resolved `AgmemConfig`, so TOML knobs reach the organizer (the
+        experience organizer's `distill_max_calls`). An instance the caller
+        constructed is not touched: its constructor arguments are its config.
+        The default does nothing; declared here so the facade calls it
+        unconditionally rather than probing for it (docs/16: a getattr guard
+        turns a missing method into silent absence)."""
+
     # Whether this organizer's ``on_message`` READS the stores rather than only
     # inspecting the episode it was handed. Declared here, on the protocol, rather
     # than sniffed at the call site: a `getattr` guard would be one copy of a rule

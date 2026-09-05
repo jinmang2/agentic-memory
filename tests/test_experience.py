@@ -8,6 +8,7 @@ for the one structured call so nothing is spent.
 from __future__ import annotations
 
 import json
+from itertools import pairwise
 
 from helpers import StubLLM
 
@@ -400,3 +401,128 @@ def test_serving_and_feedback_count_on_the_runbook():
     (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
     assert item["helpful"] == 1 and item["harmful"] == 1 and item["served_count"] == 2
     mem.close()
+
+
+def _long_session(n: int = 30) -> SessionTrajectory:
+    traj = SessionTrajectory(
+        id="sess-long", host="claude-code", source_path="x", cwd="/home/u/proj"
+    )
+    traj.steps = []
+    for i in range(n):
+        kind = ("user", "assistant", "tool_call", "tool_result")[i % 4]
+        traj.steps.append(
+            Step(
+                kind=kind,
+                text=f"step {i} " + ("x" * 60),
+                tool_name="Bash" if kind.startswith("tool") else None,
+            )
+        )
+    return traj
+
+
+def _reply(name: str, first: int, last: int) -> dict:
+    return {
+        "summary": f"segment about {name}",
+        "tasks": [
+            {
+                "name": name,
+                "outcome": "success",
+                "procedure": [f"do {name}"],
+                "keywords": [name],
+                "steps": [first, last],
+            }
+        ],
+    }
+
+
+def test_segment_bounds_cover_the_session_contiguously_and_cap_the_calls():
+    from agmem.organizers.experience.organizer import segment_bounds
+
+    steps = _long_session(30).as_task_trajectory()
+    assert segment_bounds(steps, max_chars=10**6, max_calls=8) == [(0, 30)]
+    assert segment_bounds(steps, max_chars=500, max_calls=1) == [(0, 30)]
+    bounds = segment_bounds(steps, max_chars=500, max_calls=3)
+    assert len(bounds) == 3 and bounds[0][0] == 0 and bounds[-1][1] == 30
+    assert all(b[0] == a[1] for a, b in pairwise(bounds))  # contiguous, no gaps
+    # Windows the render needs, when fewer than the cap allows.
+    assert len(segment_bounds(steps, max_chars=2_000, max_calls=8)) < 8
+    assert segment_bounds([], max_chars=500, max_calls=3) == []
+
+
+def test_a_long_session_is_distilled_in_segments_with_global_step_labels():
+    """docs/23 §6: the single clipped call saw 6% of a four-day session. With
+    `max_calls` > 1 the session is split into contiguous windows, one call each;
+    the step labels stay global, so a citation from the third window points at
+    the same trajectory (and the same persisted episodes) as one from the first,
+    and a citation into steps that window did not show is refused as before."""
+    traj = _long_session(30)
+    steps = traj.as_task_trajectory()
+    from agmem.organizers.experience.organizer import segment_bounds
+
+    # 1000 chars: three windows are needed and each fits its call whole, so a
+    # citation anywhere inside a window is of text the model read.
+    bounds = segment_bounds(steps, max_chars=1000, max_calls=3)
+    (a0, b0), (a1, _), (a2, _) = bounds
+    llm = StubLLM(
+        {
+            "distill": [
+                _reply("first window", a0, b0 - 1),
+                _reply("second window", a1, a1 + 1),
+                _reply("third window cites the first", a0, a0 + 1),  # not shown in window 3
+            ]
+        }
+    )
+    mem = AgenticMemory(
+        namespace="t",
+        organizers=[ExperienceOrganizer(max_chars=1000, max_calls=3)],
+        embedder=FakeEmbedder(dim=128),
+    )
+    mem.structured = llm
+    mem._ctx.llm = llm
+    ingest = mem.add_session(traj)  # the daemon's path: episodes persisted, then distilled
+    mem.flush()
+    assert len(ingest.episode_ids) == 30 and ingest.dispatched
+
+    assert [r for r, _ in llm.calls] == ["distill"] * 3
+    p0, p1, p2 = (prompt for _, prompt in llm.calls)
+    assert "segment 1 of 3" in p0 and f"steps [{a0}] to [{b0 - 1}]" in p0
+    assert "segment 3 of 3" in p2 and f"[{a2}] " in p2 and f"[{a1}] " not in p2
+    assert "steps: 30, labelled [0] to [29]" in p1  # the session's totals, not the window's
+
+    ops = list(mem.log.tail(20))
+    adds = [op for op in ops if op.op is OpType.ADD and op.target_type == MEMORY_TYPE]
+    by_name = {op.payload["name"]: op.payload for op in adds}
+    assert set(by_name) == {"first window", "second window", "third window cites the first"}
+    assert by_name["first window"]["step_range"] == [a0, b0 - 1]
+    assert by_name["second window"]["step_range"] == [a1, a1 + 1]
+    assert by_name["second window"]["source_episode_ids"] == [
+        traj.episode_id(a1),
+        traj.episode_id(a1 + 1),
+    ]
+    assert by_name["third window cites the first"]["step_range"] is None  # refused citation
+    tags = [op for op in ops if op.op is OpType.TAG and op.target_type == MEMORY_TYPE]
+    assert len(tags) == 3 and all("tasks:3" in op.payload["tags"] for op in tags)
+    assert by_name["first window"]["summary"] == "segment about first window"
+
+
+def test_distill_max_calls_reaches_a_named_organizer_from_toml_but_not_an_instance(tmp_path):
+    from agmem.config import load_config
+
+    cfg_path = tmp_path / "agmem.toml"
+    cfg_path.write_text(
+        '[profile]\nname = "lite"\n[override]\nembedder = "FakeEmbedder"\n[write]\ndistill_max_calls = 4\n'
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.distill_max_calls == 4
+    mem = AgenticMemory(
+        namespace="t", organizers=["experience"], config=cfg, embedder=FakeEmbedder(dim=128)
+    )
+    assert mem.organizers[0].max_calls == 4
+    explicit = AgenticMemory(
+        namespace="t",
+        organizers=[ExperienceOrganizer(max_calls=2)],
+        config=cfg,
+        embedder=FakeEmbedder(dim=128),
+    )
+    assert explicit.organizers[0].max_calls == 2
+    assert ExperienceOrganizer().max_calls == 1

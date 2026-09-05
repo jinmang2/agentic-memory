@@ -225,7 +225,9 @@ class AgenticMemory:
             if isinstance(org, str):
                 if org not in ORGANIZERS:
                     raise KeyError(f"unknown organizer '{org}' (known: {sorted(ORGANIZERS)})")
-                self.organizers.append(ORGANIZERS[org]())
+                built = ORGANIZERS[org]()
+                built.apply_config(self.config)
+                self.organizers.append(built)
             else:
                 self.organizers.append(org)
         # Two instances of the same organizer would share one consolidate

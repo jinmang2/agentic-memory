@@ -33,10 +33,16 @@ instructions, and never storing secrets. What is deliberately NOT carried
 over is Codex's Phase 2 — the global consolidation agent — which the v1 plan
 leaves for after the measurement.
 
-COST. Exactly one structured call per session, role ``distill``, phase
+COST. One structured call per session by default, role ``distill``, phase
 ``experience``; the transcript is head-and-tail clipped to ``max_chars``
-before the call so a long session is a bounded prompt. No LLM configured
-means an explicit skip with a warning, never a silent empty memory.
+before the call so a long session is a bounded prompt. ``max_calls`` > 1
+lets a session that outgrows one prompt be distilled in that many contiguous
+segments instead (one call each, step labels global, citations checked
+against the segment the model actually read) — the dogfood session of
+docs/23 §8 rendered to 919,802 chars and the single call saw 6% of it. The
+default stays 1: most sessions fit, and the bill is the caller's to raise
+(`[write] distill_max_calls`). No LLM configured means an explicit skip with
+a warning, never a silent empty memory.
 
 WHAT IT WRITES. One ``runbooks`` item per task block. ``content`` is the
 block rendered as markdown (what a reader sees), ``embedding_text`` is the
@@ -71,6 +77,7 @@ OUTCOMES = ("success", "partial", "fail", "uncertain")
 STAGES = ("setup", "investigate", "implement", "verify", "cleanup", "other")
 
 DEFAULT_MAX_CHARS = 60_000  # ~15K tokens of transcript per call
+DEFAULT_MAX_CALLS = 1  # segments a session may be split into (each one call)
 
 SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -166,7 +173,7 @@ USER_TEMPLATE = """Session context:
 - host: {host}
 - cwd: {cwd}
 - session_id: {session_id}
-- steps: {n_steps}, labelled [0] to [{last_step}]
+- steps: {n_steps}, labelled [0] to [{last_step}]{segment}
 
 Transcript (steps in order, each prefixed by its step number in brackets; \
 USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
@@ -183,8 +190,15 @@ def _step_block(index: int, step: dict) -> str:
     return f"[{index}] {label}\n{text}"
 
 
-def render_transcript(trajectory: list[dict], max_chars: int) -> tuple[str, frozenset[int]]:
+def render_transcript(
+    trajectory: list[dict], max_chars: int, start: int = 0
+) -> tuple[str, frozenset[int]]:
     """The transcript the model reads, and WHICH steps are in it.
+
+    `start` is the session index of `trajectory[0]`: a segment of a longer
+    session is labelled with its global step numbers, so a citation from any
+    segment addresses the same trajectory and `source_episode_ids` needs no
+    translation. The visible set is global for the same reason.
 
     Clipping is by whole steps, head and tail, with a marker naming the omitted
     range — not by characters over the joined string, which cut steps in half
@@ -199,10 +213,10 @@ def render_transcript(trajectory: list[dict], max_chars: int) -> tuple[str, froz
     `{"role": ..., "content": ...}` shape other organizers get."""
     from agmem.sessions import clip_head_tail
 
-    blocks = [_step_block(i, step) for i, step in enumerate(trajectory)]
+    blocks = [_step_block(start + i, step) for i, step in enumerate(trajectory)]
     joined = "\n\n".join(blocks)
     if len(joined) <= max_chars:
-        return joined, frozenset(range(len(blocks)))
+        return joined, frozenset(range(start, start + len(blocks)))
 
     head_budget = max_chars * 2 // 3
     tail_budget = max_chars - head_budget
@@ -225,14 +239,44 @@ def render_transcript(trajectory: list[dict], max_chars: int) -> tuple[str, froz
             break
         tail.insert(0, i)
         used += len(blocks[i]) + 2
-    visible = frozenset(head) | frozenset(tail)
-    first_omitted = head[-1] + 1
-    last_omitted = (tail[0] - 1) if tail else len(blocks) - 1
+    visible = frozenset(start + i for i in head) | frozenset(start + i for i in tail)
+    first_omitted = start + head[-1] + 1
+    last_omitted = start + ((tail[0] - 1) if tail else len(blocks) - 1)
     parts = [blocks[i] for i in head]
     if first_omitted <= last_omitted:
         parts.append(f"…[steps {first_omitted}-{last_omitted} omitted]…")
     parts += [blocks[i] for i in tail]
     return "\n\n".join(parts), visible
+
+
+def segment_bounds(trajectory: list[dict], max_chars: int, max_calls: int) -> list[tuple[int, int]]:
+    """Contiguous [start, end) windows over the session, one call each.
+
+    One window when the whole render fits or only one call is allowed. Otherwise
+    as many windows as the render needs at `max_chars` each, capped at
+    `max_calls`, cut at the steps where the running size crosses an equal share
+    of the total — so a capped session spreads its calls over the whole
+    transcript, each window then head-and-tail clipped by `render_transcript`,
+    rather than reading the first `max_calls` windows and nothing after."""
+    n = len(trajectory)
+    if n == 0:
+        return []
+    sizes = [len(_step_block(i, step)) + 2 for i, step in enumerate(trajectory)]
+    total = sum(sizes)
+    wanted = -(-total // max_chars) if max_chars > 0 else 1
+    segments = max(1, min(int(max_calls), wanted, n))
+    if segments == 1:
+        return [(0, n)]
+    bounds: list[tuple[int, int]] = []
+    start, used, cut = 0, 0, 1
+    for i, size in enumerate(sizes):
+        used += size
+        if cut < segments and used >= total * cut / segments and i + 1 > start:
+            bounds.append((start, i + 1))
+            start, cut = i + 1, cut + 1
+    if start < n:
+        bounds.append((start, n))
+    return bounds
 
 
 def render_steps(trajectory: list[dict], max_chars: int) -> str:
@@ -416,8 +460,16 @@ class ExperienceOrganizer(Organizer):
     name = "experience"
     produces = (MEMORY_TYPE,)
 
-    def __init__(self, max_chars: int = DEFAULT_MAX_CHARS) -> None:
+    def __init__(
+        self, max_chars: int = DEFAULT_MAX_CHARS, max_calls: int = DEFAULT_MAX_CALLS
+    ) -> None:
         self.max_chars = max_chars
+        self.max_calls = max(1, int(max_calls))
+
+    def apply_config(self, config: Any) -> None:
+        """The TOML knob (`[write] distill_max_calls`) for an instance the
+        facade built by name; an instance a caller constructed keeps its own."""
+        self.max_calls = max(1, int(getattr(config, "distill_max_calls", self.max_calls)))
 
     def on_retrieval(
         self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
@@ -480,27 +532,67 @@ class ExperienceOrganizer(Organizer):
             )
             return []
         meta = _session_meta(trajectory, task)
-        transcript, visible = render_transcript(trajectory, self.max_chars)
-        prompt = USER_TEMPLATE.format(
-            host=meta["host"],
-            cwd=meta["cwd"] or "unknown",
-            session_id=meta["session_id"],
-            n_steps=len(trajectory),
-            last_step=max(len(trajectory) - 1, 0),
-            transcript=transcript,
-        )
-        result = ctx.llm.call(
-            "distill",
-            prompt,
-            SCHEMA,
-            required_keys=("summary", "tasks"),
-            system=SYSTEM_PROMPT,
-            phase="experience",
-        )
-        if result is None:
-            return []  # drop already counted by StructuredCaller
-        summary = str(result.get("summary") or "").strip()
-        tasks = [t for t in (result.get("tasks") or []) if isinstance(t, dict)]
+        windows = segment_bounds(trajectory, self.max_chars, self.max_calls)
+        replies: list[tuple[dict, frozenset[int]]] = []
+        for k, (a, b) in enumerate(windows):
+            transcript, visible = render_transcript(trajectory[a:b], self.max_chars, start=a)
+            segment = ""
+            if len(windows) > 1:
+                segment = (
+                    f"\n- this call covers segment {k + 1} of {len(windows)}: steps [{a}] to "
+                    f"[{b - 1}]. The other segments are distilled in separate calls; describe "
+                    "only what happens in this one and cite only its step labels."
+                )
+            prompt = USER_TEMPLATE.format(
+                host=meta["host"],
+                cwd=meta["cwd"] or "unknown",
+                session_id=meta["session_id"],
+                n_steps=len(trajectory),
+                last_step=max(len(trajectory) - 1, 0),
+                segment=segment,
+                transcript=transcript,
+            )
+            result = ctx.llm.call(
+                "distill",
+                prompt,
+                SCHEMA,
+                required_keys=("summary", "tasks"),
+                system=SYSTEM_PROMPT,
+                phase="experience",
+            )
+            if result is None:
+                continue  # drop already counted by StructuredCaller
+            replies.append((result, visible))
+        if not replies:
+            return []
+        ops: list[MemoryOp] = []
+        summary = ""
+        for result, visible in replies:
+            summary = str(result.get("summary") or "").strip()
+            tasks = [t for t in (result.get("tasks") or []) if isinstance(t, dict)]
+            ops += self._task_ops(tasks, summary, meta, trajectory, visible, outcome)
+        if not ops:
+            return [
+                MemoryOp(
+                    op=OpType.NOOP,
+                    target_type=MEMORY_TYPE,
+                    target_id=meta["session_id"] or new_id(),
+                    actor=self.name,
+                    payload={"reason": "no durable signal", "summary": summary},
+                )
+            ]
+        return ops + self._tag_ops(ops, meta)
+
+    def _task_ops(
+        self,
+        tasks: list[dict],
+        summary: str,
+        meta: dict[str, Any],
+        trajectory: list[dict],
+        visible: frozenset[int],
+        outcome: str,
+    ) -> list[MemoryOp]:
+        """One ADD per durable task block of one reply."""
         ops: list[MemoryOp] = []
         for raw in tasks:
             name = str(raw.get("name") or "").strip()
@@ -568,16 +660,11 @@ class ExperienceOrganizer(Organizer):
                     },
                 )
             )
-        if not ops:
-            return [
-                MemoryOp(
-                    op=OpType.NOOP,
-                    target_type=MEMORY_TYPE,
-                    target_id=meta["session_id"] or new_id(),
-                    actor=self.name,
-                    payload={"reason": "no durable signal", "summary": summary},
-                )
-            ]
+        return ops
+
+    def _tag_ops(self, ops: list[MemoryOp], meta: dict[str, Any]) -> list[MemoryOp]:
+        """One TAG per ADD, appended after all of them."""
+        tags: list[MemoryOp] = []
         # One TAG per runbook, after every ADD of the batch (the facade applies
         # ops in order, so the item exists by then). Labels are deterministic
         # signals only -- what the model claimed about the outcome, where the
@@ -588,7 +675,7 @@ class ExperienceOrganizer(Organizer):
         # and queryable, not buried in one payload). `TAG` had no emitter
         # before this (core/ops.py).
         n_tasks = len(ops)
-        for add in list(ops):
+        for add in ops:
             payload = add.payload
             cited = payload.get("cited_steps")
             labels = [
@@ -601,7 +688,7 @@ class ExperienceOrganizer(Organizer):
             ]
             if meta["cwd"]:
                 labels.append(f"cwd:{meta['cwd']}")
-            ops.append(
+            tags.append(
                 MemoryOp(
                     op=OpType.TAG,
                     target_type=MEMORY_TYPE,
@@ -610,7 +697,7 @@ class ExperienceOrganizer(Organizer):
                     payload={"tags": labels},
                 )
             )
-        return ops
+        return tags
 
 
 def _session_meta(trajectory: list[dict], task: str) -> dict[str, Any]:
@@ -641,6 +728,7 @@ def to_json(ops: list[MemoryOp]) -> str:
 
 
 __all__ = [
+    "DEFAULT_MAX_CALLS",
     "DEFAULT_MAX_CHARS",
     "MEMORY_TYPE",
     "OUTCOMES",
@@ -654,6 +742,7 @@ __all__ = [
     "render_source_line",
     "render_steps",
     "render_transcript",
+    "segment_bounds",
     "source_episode_ids",
     "specificity_of",
     "to_json",
