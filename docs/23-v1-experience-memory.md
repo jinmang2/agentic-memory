@@ -98,7 +98,7 @@ LAFS 이득 0 — 우리 점들은 전부 참조 프런티어 아래다. 격차�
 
 ## 7. 다음
 
-1. 새 세션의 SessionStart `recall`(source=startup)이 이 runbook들을 보여 주는지 사용자 확인(§8에서 미관찰).
+1. 새 세션을 열어 SessionStart 블록에 runbook 3건이 뜨는지 사용자 확인(§8: 훅 출력은 확인, Claude Code 호출은 미관찰).
 2. 분산 재실행(raw+explorer) 결과로 §5 갱신, 필요하면 §0의 문장을 약하게.
 3. 긴 세션의 구간별 증류 여부 결정(§6).
 
@@ -115,4 +115,15 @@ qwen3.5-9b), 이 세션의 트랜스크립트(10 MB, 4일)에 `distill` 훅을 �
 | 압축 | `/compact` 직전 PreCompact `preserve`가 트랜스크립트를 보존, 압축 뒤 SessionStart `recall`(source=compact)이 이 세션의 지난 턴 12줄을 되돌려 줌 |
 | 주입 | 다음 프롬프트에서 UserPromptSubmit `recall_prompt`가 runbook 3건과 지난 턴을 주입, 세 runbook의 `served_count`가 0 → 1 |
 
-미관찰: 새 세션의 시작 시 복원(source=startup), 다른 프로젝트 cwd에서의 게이팅(파이프 테스트만 통과). 비용: 증류 1콜, 9B 기준 $0.01 미만.
+비용: 증류 1콜, 9B 기준 $0.01 미만.
+
+이어서 실제 스토어와 살아 있는 데몬에 훅 페이로드를 직접 넣어 미관찰 항목을 시험했고, 결함 셋을 찾아 고쳤다.
+
+| 관찰 | 원인 | 조치 |
+|---|---|---|
+| 세션 시작 recall(source=startup)이 지난 턴 12줄만 보여 주고 runbook은 없음 | 시작 목록은 최근성 목록이었고 runbook은 프롬프트 검색이 우연히 꺼낼 때만 도달 | 같은 프로젝트의 최신 live runbook을 이름·outcome·stage·키워드로 먼저 나열(세션 요약은 세션당 한 번), 그 뒤에 지난 턴 |
+| 데몬이 유휴 30분으로 내려간 뒤 첫 프롬프트의 recall_prompt가 빈 출력 | 훅이 띄운 데몬은 기동에 약 20초(모델 적재 + backfill)이고, 콜드 데몬의 첫 질의 자체는 0.17초. 그 20초 안의 프롬프트는 health 실패로 조용히 0바이트 | 데몬이 없으면 doc store만 열어(0.18초) BM25로 runbook → 지난 턴 순으로 답하고 헤더에 어느 경로가 답했는지 명시. FTS는 토큰 OR이라 "the"만 겹쳐도 맞으므로 4자 이상 토큰 겹침으로 거름 |
+| `~/.agmem/daemon.log` 미생성 | distill·preserve 훅이 capture와 달리 로그 경로를 데몬에 넘기지 않음 | 세 훅 모두 `AGMEM_DAEMON_LOG` 전달, settings env에 경로 등록 |
+
+다른 프로젝트 cwd의 게이팅은 데몬 경로와 폴백 경로 모두 빈 결과로 확인했다. 새 세션의 SessionStart(startup) 실행 자체는 Claude Code가 부르는 것이라
+이 세션에서는 훅 출력까지만 확인했다.
