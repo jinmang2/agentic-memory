@@ -136,8 +136,10 @@ uv run agmem-mcp --organizers nemori,reasoning_bank   # namespace: $AGMEM_NAMESP
 MCP exposes memory as *tools*, which the model has to decide to call. The hooks
 in `src/agmem/hooks/` fire whether or not anyone decided anything — `recall` on
 `SessionStart` (recency, reads the doc store only), `recall_prompt` on
-`UserPromptSubmit` (the prompt as the query, top-5 injected) and `capture` on
-`UserPromptSubmit` (`async`). None of them loads a model: they talk to the
+`UserPromptSubmit` (the prompt as the query, top-5 injected), `capture` on
+`UserPromptSubmit` (`async`) and `preserve` on `PreCompact` (the transcript's
+raw steps kept under the session id before the harness compacts; after
+compaction `recall` lists what this session said). None of them loads a model: they talk to the
 same `agmem-mcp --transport http` process over loopback, which the first hook
 of a session starts and which exits when idle (`docs/05-api-design.md` §2.3.1).
 Wiring is §2.4. Both layers resolve *which* store through the same

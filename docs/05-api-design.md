@@ -271,14 +271,24 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
                   { "type": "command",
                     "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.capture",
                     "async": true }] }
+    ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command",
+                    "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.preserve",
+                    "timeout": 10 }] }
     ]
   }
 }
 ```
 
-훅은 셋이다. `recall`(SessionStart, 최근성 12줄), **`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서
-top-5를 주입 — 2026-09-02 신설)**, `capture`(UserPromptSubmit, 비동기). 같은 이벤트에서 recall_prompt가 capture보다
-앞에 와야 자기 프롬프트를 자기에게 되돌려주지 않는다. Codex의 `~/.codex/hooks.json`도 같은 계약이라 그대로 붙는다.
+훅은 넷이다. `recall`(SessionStart, 최근성 12줄; `source=compact`이면 **이 세션이 압축 전에 말한 턴**을 대신 돌려준다),
+**`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서 top-5를 주입 — 2026-09-02 신설)**, `capture`(UserPromptSubmit, 비동기),
+**`preserve`(PreCompact, 2026-09-05 신설 — 압축 직전 트랜스크립트 원문을 세션 id 아래 에피소드로 보존, 모델 호출 없음; 데몬이 없으면
+스풀에 적고 데몬이 다음 기동 때 처리)**. 같은 이벤트에서 recall_prompt가 capture보다 앞에 와야 자기 프롬프트를 자기에게
+되돌려주지 않는다. Codex의 `~/.codex/hooks.json`도 같은 계약이라 그대로 붙는다.
+
+읽기 훅과 MCP `search_memory`는 세션의 cwd로 **프로젝트 게이팅**한다: 다른 프로젝트 트리에서 쓰인 항목(origin)은 서빙하지
+않고, cwd를 모르는 항목은 통과한다(`docs/research/agent-memory-axes-v1.md` §6 #9).
 
 - 네임스페이스·저장 위치·설정 파일은 `AGMEM_NAMESPACE`/`AGMEM_DATA_DIR`/`AGMEM_CONFIG`로 준다
   (기본 `main`, `~/.agmem/data`, 없음). **서버와 같은 변수, 같은 기본값**(§2.2 표, `agmem.env`).

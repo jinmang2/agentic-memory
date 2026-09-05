@@ -114,6 +114,7 @@ def test_schema_matches_codex_raw_memory_and_agentrunbook_fields():
         "procedure",
         "keywords",
         "steps",
+        "stage",
     }
     assert SCHEMA["properties"]["tasks"]["items"]["properties"]["steps"] == {
         "type": "array",
@@ -324,6 +325,78 @@ def test_each_runbook_is_tagged_with_deterministic_labels():
     assert ops.index(tags[0]) > ops.index(adds[0])  # the item exists when the tag lands
     (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
     assert item["tags"] == sorted(
-        ["outcome:success", "host:claude-code", "cited:3", "tasks:1", "cwd:/home/u/proj"]
+        [
+            "outcome:success",
+            "stage:other",
+            "specificity:mixed",
+            "host:claude-code",
+            "cited:3",
+            "tasks:1",
+            "cwd:/home/u/proj",
+        ]
     )
+    mem.close()
+
+
+def test_stage_and_specificity_are_item_attributes():
+    """Research §6 #4 (the stage of the work, per item) and #5 (abstraction
+    level as an attribute, by a deterministic proxy: the share of reusable
+    lines carrying a concrete token). Both land in the payload and the tags."""
+    from agmem.organizers.experience.organizer import specificity_of
+
+    assert specificity_of(
+        {"procedure": ["run `uv run pytest -q`", "open src/agmem/memory.py"]}
+    ) == (1.0, "high")
+    assert specificity_of(
+        {"procedure": ["read the failing test first", "shorten the timeout"]}
+    ) == (0.0, "low")
+    assert (
+        specificity_of({"reusable_knowledge": ["port 8765 is the daemon", "ask before spending"]})[
+            1
+        ]
+        == "mixed"
+    )
+    assert specificity_of({}) == (0.0, "low")
+
+    reply = _distilled()
+    reply["tasks"][0]["stage"] = "verify"
+    llm = StubLLM({"distill": [reply]})
+    mem = _mem(llm)
+    traj = _session()
+    mem.add_task_result(
+        trajectory=traj.as_task_trajectory(), outcome="unknown", task=traj.task_text
+    )
+    mem.flush()
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["stage"] == "verify" and item["specificity_bucket"] in {"high", "mixed", "low"}
+    assert "stage:verify" in item["tags"] and any(
+        t.startswith("specificity:") for t in item["tags"]
+    )
+    assert "which stage of the work this block belongs to" in SYSTEM_PROMPT
+    mem.close()
+
+
+def test_serving_and_feedback_count_on_the_runbook():
+    """Research §6 #12: served_count bumps on every search that serves the
+    runbook (on_retrieval), helpful/harmful on report_feedback. Recorded,
+    not ranked on."""
+    llm = StubLLM({"distill": [_distilled()]})
+    mem = _mem(llm)
+    traj = _session()
+    mem.add_task_result(
+        trajectory=traj.as_task_trajectory(), outcome="unknown", task=traj.task_text
+    )
+    mem.flush()
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["served_count"] == 0 and item["helpful"] == 0
+    mem.search("idle timeout", memory_types=[MEMORY_TYPE], k=3)
+    mem.search("flaky daemon test", memory_types=[MEMORY_TYPE], k=3)
+    mem.flush()
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["served_count"] == 2 and item["last_served_at"]
+    assert mem.report_feedback([item["id"]], helpful=True) == 1
+    assert mem.report_feedback([item["id"]], helpful=False) == 1
+    mem.flush()
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["helpful"] == 1 and item["harmful"] == 1 and item["served_count"] == 2
     mem.close()

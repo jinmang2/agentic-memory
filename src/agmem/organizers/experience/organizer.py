@@ -53,6 +53,8 @@ evolution log records that the session was judged and not that it was missed.
 from __future__ import annotations
 
 import logging
+import re
+from datetime import UTC, datetime
 from typing import Any
 
 from agmem.core.ops import MemoryOp, OpType
@@ -63,6 +65,10 @@ logger = logging.getLogger("agmem.organizers.experience")
 
 MEMORY_TYPE = "runbooks"
 OUTCOMES = ("success", "partial", "fail", "uncertain")
+# The stage of the work a task block belongs to. Coarse on purpose: a label
+# the model can assign from the transcript alone, and one a reader can
+# filter on ("show me the verify steps"), not a taxonomy to argue about.
+STAGES = ("setup", "investigate", "implement", "verify", "cleanup", "other")
 
 DEFAULT_MAX_CHARS = 60_000  # ~15K tokens of transcript per call
 
@@ -83,6 +89,9 @@ SCHEMA: dict[str, Any] = {
                     "references": {"type": "array", "items": {"type": "string"}},
                     "procedure": {"type": "array", "items": {"type": "string"}},
                     "keywords": {"type": "array", "items": {"type": "string"}},
+                    # Which stage of the work the block belongs to (research §6
+                    # #4: sub-task granularity with the stage named per item).
+                    "stage": {"type": "string", "enum": list(STAGES)},
                     # Inclusive [start, end] over the `[i]` labels in the rendered
                     # transcript. Optional, and validated against the trajectory
                     # length before it is trusted — the model is citing, not
@@ -143,6 +152,8 @@ with flags, file paths, function names, exact error strings, ids.
 - procedure: 4-8 imperative steps a future agent could follow to redo this task in this \
 workspace. Only if the task succeeded or partially succeeded. Empty otherwise.
 - keywords: discriminative search handles (tool names, error strings, repo concepts).
+- stage: which stage of the work this block belongs to — setup | investigate | implement \
+| verify | cleanup | other.
 Keep the user's wording. Generalize only enough to be reusable; never so far that the \
 concrete request disappears. Omit any list that would be empty.
 
@@ -244,6 +255,39 @@ def _strings(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(v).strip() for v in value if str(v).strip()]
+
+
+_CONCRETE = re.compile(
+    r"(/[\w.\-]+){2,}"  # a path with at least two segments
+    r"|https?://\S+"  # a URL
+    r"|\b[0-9a-f]{7,}\b"  # a hash or id
+    r"|\b\d{3,}\b"  # a port, a line number, a count
+    r"|(?<!\w)--?[a-z][\w-]+"  # a flag
+    r"|`[^`]+`"  # a quoted literal
+)
+
+
+def specificity_of(block: dict[str, Any]) -> tuple[float, str]:
+    """How concrete a block's reusable lines are, as a deterministic proxy for
+    its abstraction level (research §6 #5, from 2604.14004: low-level
+    trajectories transfer negatively, high-level insight generalizes). The
+    share of procedure/knowledge/reference lines that carry a concrete token
+    — a path, a URL, a hash, a big number, a flag, a quoted literal — and the
+    bucket: ``high`` (>= 0.6, this workspace's exact incantation), ``low``
+    (< 0.25, a general practice), ``mixed`` between. A proxy, declared as one:
+    a model's judgement of abstraction was the alternative and the research
+    was wary of it."""
+    lines = [
+        line
+        for key in ("procedure", "reusable_knowledge", "references")
+        for line in block.get(key, [])
+        if str(line).strip()
+    ]
+    if not lines:
+        return 0.0, "low"
+    ratio = sum(1 for line in lines if _CONCRETE.search(str(line))) / len(lines)
+    bucket = "high" if ratio >= 0.6 else "low" if ratio < 0.25 else "mixed"
+    return round(ratio, 3), bucket
 
 
 def render_runbook(
@@ -375,6 +419,51 @@ class ExperienceOrganizer(Organizer):
     def __init__(self, max_chars: int = DEFAULT_MAX_CHARS) -> None:
         self.max_chars = max_chars
 
+    def on_retrieval(
+        self, hits: list[tuple[str, str, float]], ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Usage feedback, read side (research §6 #12): every runbook served
+        gets `served_count` bumped and `last_served_at` stamped — Codex's
+        `usage_count`, and the count SkillJuror shows is not the same as
+        usefulness, which is why it is recorded and not used to rank."""
+        ids = [item_id for item_id, memory_type, _ in hits if memory_type == MEMORY_TYPE]
+        if not ids:
+            return []
+        now = datetime.now(UTC).isoformat()
+        return [
+            MemoryOp(
+                op=OpType.UPDATE,
+                target_type=MEMORY_TYPE,
+                target_id=str(item["id"]),
+                actor=self.name,
+                payload={
+                    "served_count": int(item.get("served_count", 0)) + 1,
+                    "last_served_at": now,
+                },
+            )
+            for item in ctx.doc_store.get_items(ids, MEMORY_TYPE)
+            if item.get("id") and not item.get("deleted")
+        ]
+
+    def on_feedback(
+        self, memory_ids: list[str], helpful: bool, ctx: OrganizerContext
+    ) -> list[MemoryOp]:
+        """Usage feedback, outcome side: `AgenticMemory.report_feedback` names
+        the runbooks a session found helpful or not; the counters are the
+        record, ranking does not read them yet."""
+        key = "helpful" if helpful else "harmful"
+        return [
+            MemoryOp(
+                op=OpType.UPDATE,
+                target_type=MEMORY_TYPE,
+                target_id=str(item["id"]),
+                actor=self.name,
+                payload={key: int(item.get(key, 0)) + 1},
+            )
+            for item in ctx.doc_store.get_items(list(memory_ids), MEMORY_TYPE)
+            if item.get("id") and not item.get("deleted")
+        ]
+
     def on_task_end(
         self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
@@ -428,6 +517,9 @@ class ExperienceOrganizer(Organizer):
                 "procedure": _strings(raw.get("procedure")),
                 "keywords": _strings(raw.get("keywords")),
             }
+            stage = str(raw.get("stage") or "").strip().lower()
+            block["stage"] = stage if stage in STAGES else "other"
+            block["specificity"], block["specificity_bucket"] = specificity_of(block)
             if not any(
                 block[k]
                 for k in ("preference_signals", "reusable_knowledge", "failures", "procedure")
@@ -467,6 +559,11 @@ class ExperienceOrganizer(Organizer):
                         # points at, kept so a reader can tell the two apart.
                         "cited_steps": cited,
                         "source_episode_ids": episode_ids,
+                        # Usage feedback (research §6 #12, Codex's usage_count):
+                        # bumped by on_retrieval / on_feedback, never by a model.
+                        "served_count": 0,
+                        "helpful": 0,
+                        "harmful": 0,
                         **block,
                     },
                 )
@@ -496,6 +593,8 @@ class ExperienceOrganizer(Organizer):
             cited = payload.get("cited_steps")
             labels = [
                 f"outcome:{payload['outcome']}",
+                f"stage:{payload['stage']}",
+                f"specificity:{payload['specificity_bucket']}",
                 f"host:{meta['host'] or 'unknown'}",
                 f"cited:{len(cited) if cited else 0}",
                 f"tasks:{n_tasks}",
@@ -546,6 +645,7 @@ __all__ = [
     "MEMORY_TYPE",
     "OUTCOMES",
     "SCHEMA",
+    "STAGES",
     "SYSTEM_PROMPT",
     "ExperienceOrganizer",
     "cited_steps",
@@ -555,6 +655,7 @@ __all__ = [
     "render_steps",
     "render_transcript",
     "source_episode_ids",
+    "specificity_of",
     "to_json",
     "validated_step_range",
 ]
