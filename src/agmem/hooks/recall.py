@@ -71,7 +71,16 @@ def recent_runbooks(store, namespace: str, project: str | None, limit: int = MAX
     rows = [d for d in store.list_items("runbooks", namespace=namespace) if not d.get("deleted")]
     if project:
         rows = [d for d in rows if same_project(item_cwd(d), project)]
-    rows.sort(key=lambda d: str((d.get("origin") or {}).get("ended_at") or ""), reverse=True)
+    # Newest session first; inside a session, the latest work first — a
+    # segmented distillation (docs/23 §8) leaves thirty-odd runbooks with one
+    # ended_at, and the five shown should be where the session left off.
+    rows.sort(
+        key=lambda d: (
+            str((d.get("origin") or {}).get("ended_at") or ""),
+            (d.get("step_range") or [-1])[0],
+        ),
+        reverse=True,
+    )
     return rows[:limit]
 
 

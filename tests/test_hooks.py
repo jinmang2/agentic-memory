@@ -468,6 +468,21 @@ def test_recall_lists_this_projects_runbooks_newest_first(tmp_path):
         [
             _runbook("a1", "Wire the pnpm workspace", "/w/proj-a", "2026-09-01T10:00:00+00:00"),
             _runbook("a2", "Fix the pnpm filter", "/w/proj-a", "2026-09-03T10:00:00+00:00"),
+            # Same session as a2 (same ended_at): the later step range leads.
+            _runbook(
+                "a3",
+                "Then tidy the lockfile",
+                "/w/proj-a",
+                "2026-09-03T10:00:00+00:00",
+                step_range=[40, 55],
+            ),
+            _runbook(
+                "a4",
+                "First set up pnpm",
+                "/w/proj-a",
+                "2026-09-03T10:00:00+00:00",
+                step_range=[0, 12],
+            ),
             _runbook(
                 "a0", "Old and superseded", "/w/proj-a", "2026-08-01T10:00:00+00:00", deleted=True
             ),
@@ -485,6 +500,8 @@ def test_recall_lists_this_projects_runbooks_newest_first(tmp_path):
     out = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
     assert "Runbooks distilled" in out
     assert out.index("Fix the pnpm filter") < out.index("Wire the pnpm workspace")
+    assert out.index("Then tidy the lockfile") < out.index("First set up pnpm")
+    assert out.index("First set up pnpm") < out.index("Wire the pnpm workspace")
     assert "[outcome:success stage:implement]" in out
     assert "Poetry lock" not in out and "superseded" not in out
     # The turns block is still there, after the runbooks.
