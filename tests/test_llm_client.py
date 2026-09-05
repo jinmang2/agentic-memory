@@ -69,3 +69,29 @@ def test_max_tokens_key_default_is_unchanged():
     c.chat("generate", [{"role": "user", "content": "hi"}])
     assert stub.last_kwargs["max_tokens"] == 500
     assert "max_completion_tokens" not in stub.last_kwargs
+
+
+def test_an_unset_env_key_is_demanded_at_first_use_not_at_load(tmp_path, monkeypatch):
+    """`api_key = "env:NAME"` with NAME unset used to raise inside load_config —
+    in every process that loads the file, including the read-only hooks that
+    never call a model (docs/23 §8). Now the loader keeps the literal and the
+    client raises, naming the variable, when the role is first used."""
+    from agmem.config import load_config
+
+    monkeypatch.delenv("AGMEM_TEST_UNSET_KEY", raising=False)
+    cfg_path = tmp_path / "agmem.toml"
+    cfg_path.write_text(
+        '[profile]\nname = "lite"\n[llm.distill]\nendpoint = "http://127.0.0.1:1/v1"\n'
+        'model = "m"\napi_key = "env:AGMEM_TEST_UNSET_KEY"\n'
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.llm_roles["distill"].api_key == "env:AGMEM_TEST_UNSET_KEY"
+    client = LLMClient(cfg.llm_roles)
+    try:
+        client._client_for(cfg.llm_roles["distill"])
+    except ValueError as exc:
+        assert "AGMEM_TEST_UNSET_KEY" in str(exc)
+    else:
+        raise AssertionError("an unset env: key must fail at first use")
+    monkeypatch.setenv("AGMEM_TEST_UNSET_KEY", "sk-test")
+    assert load_config(cfg_path).llm_roles["distill"].api_key == "sk-test"

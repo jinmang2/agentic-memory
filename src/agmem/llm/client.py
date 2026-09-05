@@ -96,7 +96,14 @@ class LLMClient:
         if key not in self._clients:
             from openai import OpenAI
 
-            self._clients[key] = OpenAI(base_url=cfg.endpoint, api_key=cfg.api_key)
+            from agmem.config import resolve_api_key
+
+            # An ``env:NAME`` the loader could not resolve is resolved here, at
+            # the first call of the role, so the ValueError names the variable
+            # in the process that actually needs it (the daemon), not in a
+            # read-only hook that loaded the same file.
+            api_key = resolve_api_key(cfg.api_key)
+            self._clients[key] = OpenAI(base_url=cfg.endpoint, api_key=api_key)
         return self._clients[key]
 
     def has_role(self, role: str) -> bool:

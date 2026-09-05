@@ -192,7 +192,9 @@ def main() -> None:
     except BaseException as exc:  # every failure path exits 0 — see fail_open
         if isinstance(exc, SystemExit):
             raise
-        fail_open(exc)
+        fail_open(
+            exc, notice="agmem: session-start recall failed, this session runs without memory"
+        )
     sys.exit(0)
 
 

@@ -189,15 +189,21 @@ class AgmemConfig:
         )
 
 
-def _resolve_api_key(value: str) -> str:
+def resolve_api_key(value: str) -> str:
     """Resolve the ``env:NAME`` indirection `agmem.example.toml` documents.
 
     The convention existed in the example file long before any code honored it:
     a literal ``"env:OPENAI_API_KEY"`` was passed straight through to the
     OpenAI client and failed as a 401 at the first call, far from the config
-    that caused it. Resolution happens here, at load time, so an unset variable
-    fails loudly where it is named. Any other value — including the
-    ``"not-needed"`` default local servers ignore — passes through untouched."""
+    that caused it. This raises with the variable's name instead. Any other
+    value — including the ``"not-needed"`` default local servers ignore — passes
+    through untouched.
+
+    Called at load time when the variable is set, and again by the LLM client
+    when it is not: a config with a distill key is also the config the
+    read-only hooks load (docs/05 §2.4), and the dogfood of docs/23 §8 showed
+    what a load-time raise does there — the session-start hook died on a key
+    it never uses, silently, and the model got no memory at all."""
     if value.startswith("env:"):
         name = value[len("env:") :]
         resolved = os.environ.get(name)
@@ -207,6 +213,15 @@ def _resolve_api_key(value: str) -> str:
             )
         return resolved
     return value
+
+
+def _resolve_api_key(value: str) -> str:
+    """Load-time resolution: the value when the variable is set, the ``env:``
+    literal itself when it is not, for `resolve_api_key` to raise at first use."""
+    try:
+        return resolve_api_key(value)
+    except ValueError:
+        return value
 
 
 def load_config(path: str | Path) -> AgmemConfig:

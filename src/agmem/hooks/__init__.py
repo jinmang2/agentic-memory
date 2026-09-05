@@ -105,13 +105,25 @@ def emit_context(text: str, event_name: str) -> None:
     sys.stdout.write("\n")
 
 
-def fail_open(exc: BaseException) -> None:
-    """Exit 0, silently, after routing the reason somewhere a human can find it.
+def fail_open(exc: BaseException, notice: str | None = None) -> None:
+    """Exit 0 after routing the reason somewhere a human can find it.
 
     The session must survive anything this package does to it. Diagnostics go to
     AGMEM_HOOK_LOG when set — stderr would surface in the transcript and train
     the user to ignore hook output, which is exactly when a real failure hides.
+
+    `notice` is the exception to the silence: one `systemMessage` line the
+    harness shows the user (not the model). The session-start hook passes it,
+    because that hook failing means the whole session runs without memory, and
+    the dogfood of docs/23 §8 found exactly that — a config the hooks could not
+    load made every hook exit 0 for a day with no sign anywhere.
     """
+    if notice:
+        try:
+            json.dump({"systemMessage": f"{notice}: {type(exc).__name__}: {exc}"}, sys.stdout)
+            sys.stdout.flush()
+        except OSError:
+            pass
     log = os.environ.get("AGMEM_HOOK_LOG")
     if log:
         try:

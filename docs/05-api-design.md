@@ -318,8 +318,11 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
   SessionEnd마다 하는 `experience` 증류 1콜(설정에 `[llm.distill]`이 있을 때만; 없으면 원문 보존만). 서버를 손으로
   띄울 때의 기본 `--organizers nemori,reasoning_bank`와 훅이 띄울 때의 `experience`는 그래서 다르고, LLM 엔드포인트가
   없으면 어느 쪽도 과금되지 않는다.
-- **우리 머신의 도그푸드 설정(2026-09-05, `docs/23` §8)**: `~/.claude/settings.json`의 `env`에 `AGMEM_CONFIG=~/.agmem/agmem.toml`,
-  `AGMEM_DAEMON_LOG=~/.agmem/daemon.log`, 그리고 증류 키(`OPENROUTER_API_KEY`)를 두고, 그 toml은 다음과 같다.
+- **우리 머신의 도그푸드 설정(2026-09-05, `docs/23` §8)**: 훅 5개와 `env`의 `AGMEM_CONFIG=~/.agmem/agmem.toml`·`AGMEM_DAEMON_LOG=~/.agmem/daemon.log`는
+  **`~/.claude/settings.json`에 직접 쓰지 않는다** — 그 파일은 `~/ai-agent-dotfiles/install.sh`가 `claude/settings.json`과 호스트 오버레이
+  (`local/hosts/<host>/settings-overlay.json`)를 병합해 생성하므로, 직접 쓴 편집은 다음 설치 때 사라진다(2026-09-05 21:24에 실제로 사라져
+  다음 세션이 메모리 없이 떴다). 오버레이에 넣는다. 증류 키는 git에 닿는 어느 파일에도 두지 않고 toml에 직접 적어 600으로 둔다(`env:` 간접
+  참조도 되지만, 그 변수는 데몬을 띄우는 훅의 환경에 있어야 한다). 그 toml은 다음과 같다.
 
   ```toml
   [profile]
@@ -334,7 +337,7 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
   [llm.distill]                       # SessionEnd 증류 (없으면 원문 보존만)
   endpoint = "https://openrouter.ai/api/v1"
   model = "qwen/qwen3.5-9b"
-  api_key = "env:OPENROUTER_API_KEY"  # 값이 아니라 변수 이름 — 데몬이 기동할 때 푼다
+  api_key = "sk-or-…"                 # 이 파일(600)에 직접. "env:NAME"이면 그 변수가 없을 때 첫 모델 호출에서 이름을 대고 실패한다(훅은 영향 없음)
   temperature = 0.1
   max_tokens = 4096                   # 2048이면 runbook JSON이 잘린다 (docs/23 §4)
 
@@ -355,7 +358,8 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
 - **예산 실측(2026-08-08, 인프로세스)**: recall **0.18초**(doc store만), capture **10.8초**(임베더를 프로세스마다
   올리던 때). 2026-09-02 재측정은 웜 12.9~19초, 콜드 캐시 56초였고, 그래서 §2.3.1의 데몬으로 갔다. 데몬 경로의
   수치는 `scripts/smoke_product_stack.py --daemon`이 출력한다.
-- 진단은 `AGMEM_HOOK_LOG=/path/to/log`(훅 자신), `AGMEM_DAEMON_LOG`(훅이 띄운 데몬). 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
+- 진단은 `AGMEM_HOOK_LOG=/path/to/log`(훅 자신), `AGMEM_DAEMON_LOG`(훅이 띄운 데몬). 예외 하나: SessionStart `recall`이 실패하면 `systemMessage` 한 줄로
+  사용자에게 보인다(모델에는 가지 않는다) — 그 훅의 실패는 세션 전체가 메모리 없이 돈다는 뜻이라서다(2026-09-06). 나머지 훅은 모든 실패 경로에서 exit 0이므로 로그를 켜지 않으면
   고장이 침묵으로 나타난다 — 세션을 망가뜨리지 않기 위한 설계이고, 그 대가다.
 - **교차 검증됨**: capture가 쓴 에피소드가 MCP `search_memory`로 조회된다. 두 층이 한 스토어를
   공유한다는 주장은 각 층의 테스트로는 확인되지 않아 `scripts/smoke_product_stack.py`로 구동해

@@ -188,8 +188,31 @@ def test_recall_refuses_a_config_whose_doc_store_it_cannot_read(tmp_path):
     log = tmp_path / "hook.log"
     got = _run("agmem.hooks.recall", {}, tmp_path, {"AGMEM_HOOK_LOG": str(log)})
     assert got.returncode == 0
-    assert got.stdout.strip() == ""
     assert "PostgresDocStore" in log.read_text()
+    # Not silent any more (docs/23 §8): the user sees one line, the model nothing.
+    out = json.loads(got.stdout)
+    assert "systemMessage" in out and "PostgresDocStore" in out["systemMessage"]
+    assert "hookSpecificOutput" not in out
+
+
+def test_a_distill_key_the_hook_cannot_resolve_does_not_cost_the_session_its_memory(tmp_path):
+    """The dogfood gap: the config with `[llm.distill] api_key = "env:X"` is
+    the same file the read-only hooks load, and an unset X used to kill
+    session-start recall at config load. Now the hook loads it and answers;
+    the variable is only demanded by the process that calls the model."""
+    cfg = tmp_path / "agmem.toml"
+    cfg.write_text(
+        '[profile]\nname = "lite"\n[override]\nembedder = "FakeEmbedder"\n'
+        '[llm.distill]\nendpoint = "http://127.0.0.1:1/v1"\nmodel = "m"\n'
+        'api_key = "env:AGMEM_TEST_KEY_THAT_IS_NOT_SET"\n'
+    )
+    r = _run(
+        "agmem.hooks.capture", {"session_id": "a", "prompt": "remember the pnpm flag"}, tmp_path
+    )
+    assert r.returncode == 0, r.stderr[-2000:]
+    got = _run("agmem.hooks.recall", {"cwd": str(tmp_path)}, tmp_path)
+    assert got.returncode == 0, got.stderr[-2000:]
+    assert "pnpm flag" in got.stdout and "systemMessage" not in got.stdout
 
 
 def test_capture_ignores_a_prompt_with_no_text(tmp_path):
