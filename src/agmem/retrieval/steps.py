@@ -1037,7 +1037,11 @@ def default_read_steps(
     memmachine_backend: str = "declarative",
     task_graph_expansion_cap: int = 5,
     task_graph_insight_cap: int = 10,
-    runbook_cited_top_r: int = 2,
+    # 0 = off. Measured off: with the step on, experience+vector on LongMemEval-V2
+    # web small went 27.1 -> 23.8 (paired 17:9, p=0.17, 2026-09-05) — the cited
+    # steps ate the reader's budget without paying for it. Kept as an option
+    # because the setting (a 9B reader, a 12K-token context) is one point.
+    runbook_cited_top_r: int = 0,
 ) -> dict[str, ReadStep]:
     """The methodology-faithful default registry, memory type -> step.
 

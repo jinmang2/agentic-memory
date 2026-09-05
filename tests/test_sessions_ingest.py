@@ -678,7 +678,9 @@ def test_a_runbook_hit_carries_the_transcript_steps_it_cites():
     traj = _session()
     mem.add_session(traj)
     mem.flush()
-    assert isinstance(mem.pipeline.read_steps.get("runbooks"), AttachCitedSteps)
+    # Off by default (measured to cost accuracy on LME-V2 web small); on when asked.
+    assert "runbooks" not in mem.pipeline.read_steps
+    mem.pipeline.read_steps["runbooks"] = AttachCitedSteps(top_r=2)
     bundle = mem.search("idle timeout", memory_types=["runbooks"], k=3)
     (hit,) = bundle.items
     messages = hit.item.data["_source_messages"]
@@ -689,6 +691,7 @@ def test_a_runbook_hit_carries_the_transcript_steps_it_cites():
 
     whole = StubLLM({"distill": [_distilled(None)]})
     mem = _experience_mem(whole)
+    mem.pipeline.read_steps["runbooks"] = AttachCitedSteps(top_r=2)
     mem.add_session(_session())
     mem.flush()
     (hit,) = mem.search("idle timeout", memory_types=["runbooks"], k=3).items
