@@ -63,6 +63,8 @@ DEFAULT_MAX_STATE_CHARS = 12_000
 # `max_state_chars`; a context of a dozen states cannot carry that much each).
 DEFAULT_SLICE_RADIUS = 1
 DEFAULT_RENDER_STATE_CHARS = 5_000
+# Reader output per question assumed by `estimate` (see there).
+READER_OUT_TOKENS = 3_000
 # Keys of memory_params that name where THIS process keeps its files. They are
 # left out of the persisted memory_config so a `--load-memory-dir` run, whose
 # paths differ, still matches the saved config (upstream requires equality).
@@ -719,7 +721,11 @@ def estimate(args: argparse.Namespace) -> dict[str, Any]:
     pin, pout = _price(args.reader_model)
     context = args.budget_tokens if args.read == "vector" else args.explorer_budget_tokens
     context = min(context, args.memory_context_max_tokens)
-    cost = n_q * (context + 500) * pin / 1e6 + n_q * 1_000 * pout / 1e6
+    # 3K output tokens per question, not 1K: the reader thinks before it
+    # answers (web small, 2026-09-04: 2.1K on "unknown", 3.4K on an answer,
+    # 22 of 240 at the 20K cap). The 1K figure under-priced the first full
+    # run by a fifth.
+    cost = n_q * (context + 500) * pin / 1e6 + n_q * READER_OUT_TOKENS * pout / 1e6
     lines["reader"] = {"model": args.reader_model, "calls": n_q, "usd": round(cost, 4)}
     total += cost
     lines["judge"] = {
