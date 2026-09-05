@@ -169,15 +169,17 @@ def test_recall_prompt_hook_injects_the_relevant_episode(daemon):
     assert "semantic search" in payload["hookSpecificOutput"]["additionalContext"]
 
 
-def test_recall_prompt_emits_nothing_when_the_daemon_is_down(daemon):
-    """No daemon, no injection, exit 0 — and no embedder loaded to compensate
-    (the hook finishing in well under model-load time is the evidence)."""
+def test_recall_prompt_answers_by_keyword_when_the_daemon_is_down(daemon):
+    """No daemon: the hook answers from the doc store by BM25 (docs/23 §8 — the
+    ~20 s startup window used to be a silent gap), exit 0, and no embedder is
+    loaded to compensate (finishing in well under model-load time is the
+    evidence). The header names the path that answered."""
     env = dict(daemon["env"], AGMEM_DAEMON_URL=f"http://127.0.0.1:{_free_port()}")
     started = time.perf_counter()
     got = _run_hook("agmem.hooks.recall_prompt", {"prompt": "Berlin"}, env)
     elapsed = time.perf_counter() - started
-    assert got.returncode == 0
-    assert got.stdout.strip() == ""
+    assert got.returncode == 0, got.stderr[-1500:]
+    assert "keyword match" in got.stdout and "Berlin" in got.stdout
     assert elapsed < 5.0, f"recall_prompt took {elapsed:.1f}s without a daemon"
 
 
@@ -249,3 +251,38 @@ def test_idle_timeout_stops_a_daemon_nobody_uses(tmp_path):
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+def test_a_hook_that_fires_while_the_daemon_is_still_starting_does_not_spawn_a_second(
+    tmp_path, monkeypatch
+):
+    """The startup window is ~20 s and /health fails throughout it; two hooks
+    in that window used to start two daemons, and the second died on the kuzu
+    file lock (dogfood log, 2026-09-05). A spawn is now noted in a marker file
+    and trusted for SPAWN_GRACE_S; a stale marker does not block."""
+    from agmem.hooks import daemon as daemon_client
+
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}"
+    monkeypatch.delenv("AGMEM_NO_DAEMON", raising=False)
+    monkeypatch.setattr(
+        daemon_client, "spawn_command", lambda *a, **k: [sys.executable, "-c", "pass"]
+    )
+    spawned: list[list[str]] = []
+    real_popen = daemon_client.subprocess.Popen
+
+    def counting_popen(argv, **kwargs):
+        spawned.append(argv)
+        return real_popen(argv, **kwargs)
+
+    monkeypatch.setattr(daemon_client.subprocess, "Popen", counting_popen)
+    marker = daemon_client.spawn_marker(url)
+    marker.unlink(missing_ok=True)
+
+    assert daemon_client.ensure_running(url) is False
+    assert daemon_client.ensure_running(url) is False  # inside the grace window
+    assert len(spawned) == 1 and marker.exists()
+    os.utime(marker, (time.time() - 3600, time.time() - 3600))  # a stale marker
+    assert daemon_client.ensure_running(url) is False
+    assert len(spawned) == 2
+    marker.unlink(missing_ok=True)

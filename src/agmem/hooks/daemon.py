@@ -27,6 +27,8 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -116,6 +118,25 @@ def spawn_command(
     ]
 
 
+SPAWN_GRACE_S = 60.0
+
+
+def spawn_marker(url: str | None = None) -> Path:
+    """Where a hook notes that it just spawned the daemon for `url`. One file
+    per port in the temp dir: the hooks of every session on this machine that
+    share a daemon share the marker."""
+    parsed = urlparse(resolve_daemon_url(url))
+    return Path(tempfile.gettempdir()) / f"agmem-daemon-{parsed.port or 8765}.spawn"
+
+
+def spawn_in_progress(url: str | None = None, grace_s: float = SPAWN_GRACE_S) -> bool:
+    """True while a spawn noted less than `grace_s` ago may still be coming up."""
+    try:
+        return time.time() - spawn_marker(url).stat().st_mtime < grace_s
+    except OSError:
+        return False
+
+
 def ensure_running(
     url: str | None = None, log_path: str | Path | None = None, idle_timeout_s: int | None = None
 ) -> bool:
@@ -124,14 +145,30 @@ def ensure_running(
     Detached (`start_new_session`) so the hook can exit while the daemon keeps
     running, with stdout/stderr appended to `log_path` (or discarded) — a hook
     must not inherit a pipe that would hold the harness open. The caller does
-    not wait for readiness: the daemon takes ~10 s to load the embedder, and a
-    hook has no business blocking on that. The next hook finds it up."""
+    not wait for readiness: the daemon takes ~20 s to load the embedder and
+    repair the store, and a hook has no business blocking on that. The next
+    hook finds it up.
+
+    Those ~20 s are also why the spawn is noted in `spawn_marker`: `/health`
+    fails for the whole window, and every hook that fires in it — the prompt
+    hook a few seconds after session start, a second session's hooks — would
+    otherwise start a daemon of its own. The dogfood log (2026-09-05 20:43)
+    shows what that does: the loser dies on the kuzu file lock with a
+    traceback, after loading a 1.7 GB model for nothing, and a spool it may
+    have accepted is left for whoever starts next. A spawn noted less than
+    `SPAWN_GRACE_S` ago is trusted to be coming up instead."""
     if health(url) is not None:
         return True
     if os.environ.get("AGMEM_NO_DAEMON") == "1":
         # Tests, and machines that run the daemon some other way: report
         # "not up" honestly and do not start anything.
         return False
+    if spawn_in_progress(url):
+        return False
+    try:
+        spawn_marker(url).write_text(f"{os.getpid()} {time.time():.0f}\n")
+    except OSError:
+        pass  # a marker that cannot be written costs at most the old race
     env = dict(os.environ)
     env.setdefault("AGMEM_DAEMON_SPAWNED_BY", "hook")
     log_target = open(log_path, "ab") if log_path else subprocess.DEVNULL  # noqa: SIM115
