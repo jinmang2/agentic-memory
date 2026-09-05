@@ -27,7 +27,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from agmem.sessions import iter_claude_code_sessions, iter_codex_sessions, load
+from agmem.sessions import SessionAdmission, iter_claude_code_sessions, iter_codex_sessions, load
 
 # One model call per session, so an unbounded run is an unbounded bill. 20 is a
 # dogfooding batch; a larger backfill is a decision to make deliberately, in a
@@ -179,6 +179,7 @@ def _ingest(args) -> int:
             )
             return 2
         processed = 0
+        admission = SessionAdmission(min_user_turns=args.min_user_turns, min_steps=args.min_steps)
         for traj in _load_lazily(paths):
             if not traj.steps:
                 # Same line the dry run prints, and the same accounting: an
@@ -188,8 +189,18 @@ def _ingest(args) -> int:
                 print(f"{traj.host:11s} {traj.id[:24]:24s} steps=    0 user=   0 empty, skipped")
                 continue
             before = mem.log.count()
-            ingest = mem.add_session(traj, outcome=args.outcome, distill=distill, force=args.force)
+            ingest = mem.add_session(
+                traj, outcome=args.outcome, distill=distill, force=args.force, admit=admission
+            )
             mem.flush()
+            if not ingest.admitted:
+                # Refused before anything was stored: no episodes, no call, and
+                # not a slot of the limit — the same accounting as an empty session.
+                print(
+                    f"{traj.host:11s} {traj.id[:24]:24s} steps={len(traj.steps):5d} "
+                    f"user={traj.user_turns:4d} refused ({ingest.reason})"
+                )
+                continue
             state = (
                 "already ingested"
                 if ingest.already_ingested and not ingest.dispatched
@@ -243,6 +254,15 @@ def main() -> int:
     ingest.add_argument("--force", action="store_true", help="re-persist and re-distil")
     ingest.add_argument("--dry-run", action="store_true", help="print the plan, write nothing")
     ingest.add_argument("--outcome", default="unknown", help="caller's label for the session")
+    ingest.add_argument(
+        "--min-user-turns",
+        type=int,
+        default=1,
+        help="refuse sessions with fewer user turns (admission; default 1: nobody typed)",
+    )
+    ingest.add_argument(
+        "--min-steps", type=int, default=2, help="refuse sessions with fewer steps (default 2)"
+    )
     ingest.add_argument(
         "--trace",
         default=None,

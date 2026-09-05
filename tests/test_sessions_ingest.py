@@ -617,3 +617,50 @@ def test_force_keeps_the_earlier_runbook_when_the_redistillation_drops(caplog):
     assert not [op for op in ops if op.op is OpType.DELETE and op.target_type == MEMORY_TYPE]
     assert any("produced nothing" in r.getMessage() for r in caplog.records)
     mem.close()
+
+
+def test_session_admission_refuses_before_anything_is_stored_or_called():
+    """Session-level admission: the place for "is this session worth remembering
+    at all", which the message-level gates never had (research §7.1). A
+    refused session leaves no episodes, makes no call, and says why."""
+    from agmem.sessions import SessionAdmission
+
+    policy = SessionAdmission(min_user_turns=1, min_steps=2)
+    traj = _session()
+    assert policy(traj) is None
+    tool_only = SessionTrajectory(id="s-tools", host="claude-code", source_path="x", steps=[
+        Step(kind="tool_call", text="ls", tool_name="Bash", timestamp=TS),
+        Step(kind="tool_result", text="a b", tool_name="Bash", timestamp=TS),
+    ])  # fmt: skip
+    assert policy(tool_only) == "0 user turn(s) < min_user_turns 1"
+    assert SessionAdmission(min_steps=10)(traj) == f"{len(traj.steps)} step(s) < min_steps 10"
+
+    llm = StubLLM({"distill": [_distilled([2, 4])]})
+    mem = _experience_mem(llm)
+    ingest = mem.add_session(tool_only, admit=policy)
+    mem.flush()
+    assert not ingest.admitted and ingest.reason.startswith("0 user turn(s)")
+    assert ingest.episode_ids == [] and not ingest.dispatched
+    assert mem.doc_store.count_episodes() == 0 and llm.calls == []
+    admitted = mem.add_session(traj, admit=policy)
+    assert (
+        admitted.admitted
+        and admitted.reason is None
+        and len(admitted.episode_ids) == len(traj.steps)
+    )
+    mem.close()
+
+
+def test_cli_admission_flags_refuse_without_consuming_the_limit(tmp_path):
+    first = _claude_session_file(tmp_path)  # one user turn, two steps
+    second = _second_session_file(tmp_path)
+    proc = _run_cli(
+        ["ingest", str(first), str(second), "--no-distill", "--limit", "1", "--namespace", "cli",
+         "--min-user-turns", "2"],
+        tmp_path,
+    )  # fmt: skip
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.count("refused (1 user turn(s) < min_user_turns 2)") == 2
+    assert "0 session(s) ingested this run" in proc.stdout
+    ok = _run_cli(["ingest", str(first), "--no-distill", "--namespace", "cli"], tmp_path)
+    assert "persisted=2" in ok.stdout  # the default floors admit it

@@ -486,9 +486,33 @@ def load(path: str | Path, host: str | None = None) -> SessionTrajectory:
     raise ValueError(f"unknown host {host!r}")
 
 
+@dataclass(frozen=True)
+class SessionAdmission:
+    """Which sessions are worth taking in at all — the session-level admission
+    the message-level gates (`organizers/gated.py`) have no place for.
+
+    Deterministic and free: a session with fewer user turns or steps than the
+    floor is refused before anything is persisted or distilled. The defaults
+    refuse only what cannot teach a future agent anything — a session nobody
+    typed into (hook noise, a summary-only file) or one with a single step.
+    Callable so `add_session(admit=...)` takes any policy with the same shape:
+    return the reason to refuse, or None to admit."""
+
+    min_user_turns: int = 1
+    min_steps: int = 2
+
+    def __call__(self, traj: SessionTrajectory) -> str | None:
+        if len(traj.steps) < self.min_steps:
+            return f"{len(traj.steps)} step(s) < min_steps {self.min_steps}"
+        if traj.user_turns < self.min_user_turns:
+            return f"{traj.user_turns} user turn(s) < min_user_turns {self.min_user_turns}"
+        return None
+
+
 __all__ = [
     "HOST_CLAUDE_CODE",
     "HOST_CODEX",
+    "SessionAdmission",
     "SessionTrajectory",
     "Step",
     "claude_code_project_key",

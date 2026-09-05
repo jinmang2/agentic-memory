@@ -72,6 +72,10 @@ class SessionIngest:
     episode_ids: list[str]
     already_ingested: bool
     dispatched: bool
+    # False when an ``admit`` policy refused the session: nothing was
+    # persisted or distilled, and ``reason`` says why (the policy's words).
+    admitted: bool = True
+    reason: str | None = None
 
 
 def _without_episode_ids(trajectory: list[dict]) -> list[dict]:
@@ -563,9 +567,16 @@ class AgenticMemory:
         distill: bool = True,
         force: bool = False,
         batch_size: int = 128,
+        admit: Callable[[SessionTrajectory], str | None] | None = None,
     ) -> SessionIngest:
         """Ingest one coding-agent session: its raw steps into the store, then the
         distillation over them.
+
+        ``admit`` is a session-level admission policy (``sessions.SessionAdmission``
+        or anything with its shape): called first, and a non-None reason refuses
+        the session outright — no episodes, no model call, ``admitted=False``. It
+        is the place for "is this session worth remembering at all", which the
+        message-level gates never had (docs/research/agent-memory-axes-v1.md §7.1).
 
         This is the entry point ``add_task_result`` could not be. A session log has
         a durable identity — host, session id, step position — so every step becomes
@@ -620,6 +631,15 @@ class AgenticMemory:
         ``outcome`` is the caller's label for the whole session and is a hint only —
         the ``experience`` organizer labels each task block it finds itself.
         """
+        if admit is not None:
+            reason = admit(traj)
+            if reason is not None:
+                logger.info(
+                    "add_session: %s/%s refused by admission: %s", traj.host, traj.id, reason
+                )
+                return SessionIngest(
+                    traj.id, traj.host, [], False, False, admitted=False, reason=reason
+                )
         episode_ids = [traj.episode_id(i) for i in range(len(traj.steps))]
         if not traj.steps:
             # Nothing to point at and nothing to distil. Returning early keeps a
@@ -731,7 +751,7 @@ class AgenticMemory:
                         actor="ingest",
                         payload={"reason": "re-distillation", "session_id": session_id},
                     )
-                    )
+                )
         if ops:
             self._apply_ops(ops, actor="ingest")
         return len(ops)
