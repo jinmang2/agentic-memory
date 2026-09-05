@@ -468,13 +468,43 @@ class ExperienceOrganizer(Organizer):
                 )
             )
         if not ops:
-            ops.append(
+            return [
                 MemoryOp(
                     op=OpType.NOOP,
                     target_type=MEMORY_TYPE,
                     target_id=meta["session_id"] or new_id(),
                     actor=self.name,
                     payload={"reason": "no durable signal", "summary": summary},
+                )
+            ]
+        # One TAG per runbook, after every ADD of the batch (the facade applies
+        # ops in order, so the item exists by then). Labels are deterministic
+        # signals only -- what the model claimed about the outcome, where the
+        # session ran, how much of the transcript the block cites, and how many
+        # blocks the session yielded -- never an abstraction grade a model
+        # would have to judge (docs/research/agent-memory-axes-v1.md §9: the
+        # attributes a runbook needs, expressed as TAG so they are in the log
+        # and queryable, not buried in one payload). `TAG` had no emitter
+        # before this (core/ops.py).
+        n_tasks = len(ops)
+        for add in list(ops):
+            payload = add.payload
+            cited = payload.get("cited_steps")
+            labels = [
+                f"outcome:{payload['outcome']}",
+                f"host:{meta['host'] or 'unknown'}",
+                f"cited:{len(cited) if cited else 0}",
+                f"tasks:{n_tasks}",
+            ]
+            if meta["cwd"]:
+                labels.append(f"cwd:{meta['cwd']}")
+            ops.append(
+                MemoryOp(
+                    op=OpType.TAG,
+                    target_type=MEMORY_TYPE,
+                    target_id=add.target_id,
+                    actor=self.name,
+                    payload={"tags": labels},
                 )
             )
         return ops

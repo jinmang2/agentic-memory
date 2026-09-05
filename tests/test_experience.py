@@ -299,3 +299,31 @@ def test_an_enumeration_of_steps_is_a_citation_too():
     assert source_episode_ids(trajectory, [1, 3, 8]) == ["e1", "e3", "e8"]
     assert source_episode_ids(trajectory, [1, 3]) == ["e1", "e2", "e3"]
     assert source_episode_ids(trajectory, None) == [f"e{i}" for i in range(10)]
+
+
+def test_each_runbook_is_tagged_with_deterministic_labels():
+    """`TAG` had no emitter (core/ops.py). The experience organizer now tags
+    every runbook it adds with what is known without judgement: the block's
+    outcome, the host and cwd, how many transcript steps it cites (0 = fell
+    back to the whole session), and how many blocks the session yielded. The
+    facade merges them into the item's `tags`, so they are queryable and in
+    the evolution log."""
+    reply = _distilled()
+    reply["tasks"][0]["steps"] = [2, 4]
+    llm = StubLLM({"distill": [reply]})
+    mem = _mem(llm)
+    traj = _session()
+    mem.add_task_result(
+        trajectory=traj.as_task_trajectory(), outcome="unknown", task=traj.task_text
+    )
+    mem.flush()
+    ops = list(mem.log.tail(10))
+    adds = [op for op in ops if op.op is OpType.ADD and op.target_type == MEMORY_TYPE]
+    tags = [op for op in ops if op.op is OpType.TAG and op.target_type == MEMORY_TYPE]
+    assert len(adds) == 1 and len(tags) == 1 and tags[0].target_id == adds[0].target_id
+    assert ops.index(tags[0]) > ops.index(adds[0])  # the item exists when the tag lands
+    (item,) = mem.doc_store.list_items(MEMORY_TYPE, namespace="t")
+    assert item["tags"] == sorted(
+        ["outcome:success", "host:claude-code", "cited:3", "tasks:1", "cwd:/home/u/proj"]
+    )
+    mem.close()
