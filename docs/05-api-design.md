@@ -78,8 +78,11 @@ mem.stats()                                    # 항목 수, LLM calls/tokens �
 mem.capabilities()                             # 감지 결과 + 활성 어댑터 + 강등 이력
 ```
 
-`add_session(traj, *, outcome, persist_steps, distill, force, batch_size)`는 `agmem.sessions.SessionTrajectory`
-하나를 받아 **원문과 증류물을 함께** 남긴다. `add_task_result`는 태스크 한 줄만 저장하고 궤적을
+`add_session(traj, *, outcome, persist_steps, distill, force, batch_size, admit)`는 `agmem.sessions.SessionTrajectory`
+하나를 받아 **원문과 증류물을 함께** 남긴다. `admit`은 세션 단위 admission 정책(`agmem.sessions.SessionAdmission` 또는
+같은 모양의 콜러블)으로, 거부 사유를 돌려주면 저장도 증류도 하지 않고 `SessionIngest.admitted=False`로 알린다.
+`experience` organizer는 runbook마다 결정적 라벨(`outcome:`·`host:`·`cwd:`·`cited:`·`tasks:`)을 `TAG`로 발행하고, 읽기 쪽에서는
+`AttachCitedSteps`가 상위 runbook 히트에 인용 스텝 원문을 Source Messages로 붙인다. `add_task_result`는 태스크 한 줄만 저장하고 궤적을
 버리지만(벤치 하네스와 MCP 도구가 넘기는 궤적에는 가리킬 만한 영속 id가 없기 때문에 그대로 둔다),
 세션 로그에는 호스트·세션 id·스텝 위치라는 지속적인 신원이 있으므로 스텝마다 `Episode` 하나를
 결정적 id(`SessionTrajectory.episode_id`)로 저장하고, organizer가 쓴 runbook이 자기가 읽은 스텝을
