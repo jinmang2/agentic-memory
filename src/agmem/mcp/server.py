@@ -153,8 +153,62 @@ class _Registry:
 
     def backfill_all(self) -> int:
         return sum(
-            self.backfill(ns) + self.drain_preserve_queue(ns) for ns in self.open_namespaces()
+            self.backfill(ns) + self.drain_preserve_queue(ns) + self.drain_distill_queue(ns)
+            for ns in self.open_namespaces()
         )
+
+    def distill(self, transcript_path: str, namespace: str | None = None) -> dict[str, Any]:
+        """Ingest one finished session and distil it (`agmem.hooks.distill`):
+        raw steps under the session id, then the active organizers' task-end
+        hooks — one model call for `experience`, when `[llm.distill]` is
+        configured, else an explicit skip. Idempotent on the session's steps."""
+        from agmem.sessions import SessionAdmission, load
+
+        mem = self.get(namespace)
+        traj = load(transcript_path)
+        ingest = mem.add_session(traj, distill=True, admit=SessionAdmission())
+        mem.flush()
+        live = [
+            i
+            for i in mem.doc_store.list_items("runbooks", namespace=mem.namespace)
+            if i.get("session_id") == ingest.session_id and not i.get("invalid_at")
+        ]
+        return {
+            "session_id": ingest.session_id,
+            "episodes": len(ingest.episode_ids),
+            "admitted": ingest.admitted,
+            "reason": ingest.reason,
+            "dispatched": ingest.dispatched,
+            "runbooks": len(live),
+        }
+
+    def drain_distill_queue(self, namespace: str | None = None) -> int:
+        """Distil every session the hook spooled while no daemon ran."""
+        return self._drain_queue(namespace, "distill-queue.jsonl", self.distill)
+
+    def _drain_queue(self, namespace: str | None, name: str, action: Any) -> int:
+        """Run `action(path, namespace)` for every spooled transcript that still
+        exists, then truncate the spool. Returns how many were taken in."""
+        mem = self.get(namespace)
+        root = Path(mem.config.data_dir) if mem.config.data_dir else None
+        if root is None:
+            return 0
+        spool = root / mem.namespace / name
+        if not spool.exists():
+            return 0
+        lines = [line for line in spool.read_text(encoding="utf-8").splitlines() if line.strip()]
+        done = 0
+        for line in lines:
+            try:
+                body = json.loads(line)
+                path = str(body.get("transcript_path") or "")
+                if path and Path(path).is_file():
+                    action(path, mem.namespace)
+                    done += 1
+            except Exception:
+                logger.exception("agmem daemon: a spooled transcript (%s) failed", name)
+        spool.write_text("", encoding="utf-8")
+        return done
 
     def preserve(self, transcript_path: str, namespace: str | None = None) -> dict[str, Any]:
         """Ingest one transcript's raw steps under its session id, no model
@@ -174,28 +228,8 @@ class _Registry:
         }
 
     def drain_preserve_queue(self, namespace: str | None = None) -> int:
-        """Preserve every transcript the hook spooled while no daemon ran, then
-        truncate the spool. Returns how many were taken in."""
-        mem = self.get(namespace)
-        root = Path(mem.config.data_dir) if mem.config.data_dir else None
-        if root is None:
-            return 0
-        spool = root / mem.namespace / "preserve-queue.jsonl"
-        if not spool.exists():
-            return 0
-        lines = [line for line in spool.read_text(encoding="utf-8").splitlines() if line.strip()]
-        done = 0
-        for line in lines:
-            try:
-                body = json.loads(line)
-                path = str(body.get("transcript_path") or "")
-                if path and Path(path).is_file():
-                    self.preserve(path, mem.namespace)
-                    done += 1
-            except Exception:
-                logger.exception("agmem daemon: preserve of a spooled transcript failed")
-        spool.write_text("", encoding="utf-8")
-        return done
+        """Preserve every transcript the hook spooled while no daemon ran."""
+        return self._drain_queue(namespace, "preserve-queue.jsonl", self.preserve)
 
     def close_all(self) -> None:
         with self._lock:
@@ -481,6 +515,29 @@ async def hooks_preserve(request: Request) -> JSONResponse:
     except Exception as exc:
         logger.exception("hooks/preserve failed")
         return JSONResponse({"error": str(exc)}, status_code=500)
+
+
+@mcp.custom_route("/hooks/distill", methods=["POST"])
+async def hooks_distill(request: Request) -> JSONResponse:
+    """The SessionEnd hook's request: `{transcript_path, session_id?, cwd?, namespace?}`.
+    Answers at once with `queued`; the distillation (a model call, tens of
+    seconds) runs on its own thread, and its outcome goes to the daemon log."""
+    body = await request.json()
+    path = body.get("transcript_path")
+    if not isinstance(path, str) or not Path(path).is_file():
+        return JSONResponse(
+            {"error": "transcript_path must name an existing file"}, status_code=400
+        )
+    namespace = body.get("namespace") or None
+
+    def _work() -> None:
+        try:
+            logger.info("hooks/distill: %s", _registry.distill(path, namespace))
+        except Exception:
+            logger.exception("hooks/distill failed for %s", path)
+
+    threading.Thread(target=_work, name="agmem-distill", daemon=True).start()
+    return JSONResponse({"queued": True, "transcript_path": path})
 
 
 @mcp.custom_route("/hooks/recall", methods=["POST"])

@@ -107,6 +107,12 @@ def spawn_command(
         str(parsed.port or 8765),
         "--idle-timeout",
         str(idle_timeout_s),
+        # v1: the daemon the hooks run is the one that distils sessions into
+        # runbooks (`agmem.hooks.distill`), so it carries the experience
+        # organizer. The server's own `--organizers` default is unchanged for
+        # stdio use.
+        "--organizers",
+        "experience",
     ]
 
 

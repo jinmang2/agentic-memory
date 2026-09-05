@@ -355,3 +355,76 @@ def test_daemon_preserve_ingests_a_transcript_and_drains_the_spool(tmp_path):
         assert spool.read_text() == "" and mem.doc_store.count_episodes() == 2  # idempotent
     finally:
         reg.close_all()
+
+
+def test_distill_without_a_daemon_spools_the_session_for_the_next_daemon(tmp_path):
+    """SessionEnd: the hook never calls a model; with no daemon it spools the
+    transcript path (its own queue, apart from preserve's) and asks for one."""
+    transcript = tmp_path / "s-end.jsonl"
+    transcript.write_text("{}\n")
+    proc = _run(
+        "agmem.hooks.distill",
+        {
+            "session_id": "s-end",
+            "transcript_path": str(transcript),
+            "cwd": "/w/p",
+            "reason": "exit",
+        },
+        tmp_path,
+    )
+    assert proc.returncode == 0 and proc.stdout == "", proc.stderr[-1000:]
+    spool = tmp_path / "data" / "hooktest" / "distill-queue.jsonl"
+    (line,) = spool.read_text().splitlines()
+    assert json.loads(line)["transcript_path"] == str(transcript)
+    assert not (tmp_path / "data" / "hooktest" / "preserve-queue.jsonl").exists()
+
+
+def test_the_hooks_daemon_runs_the_experience_organizer():
+    from agmem.hooks.daemon import spawn_command
+
+    argv = spawn_command()
+    assert argv[argv.index("--organizers") + 1] == "experience"
+
+
+def test_daemon_distill_makes_a_runbook_from_a_finished_session(tmp_path):
+    """The daemon side of the missing link: a transcript in, raw steps and one
+    distillation call out, a runbook in the store; the spool drains the same
+    way. The model is a local stub."""
+    from helpers import openai_stub
+
+    from agmem.config import AgmemConfig
+    from agmem.llm.client import RoleConfig
+    from agmem.mcp.server import _Registry
+
+    transcript = tmp_path / "done-1.jsonl"
+    records = [
+        {"type": "user", "uuid": "u1", "isSidechain": False, "timestamp": "2026-09-05T01:00:00.000Z",
+         "cwd": "/w/p", "sessionId": "done-1", "message": {"role": "user", "content": "fix the flaky daemon test"}},
+        {"type": "assistant", "uuid": "u2", "isSidechain": False, "timestamp": "2026-09-05T01:00:01.000Z",
+         "cwd": "/w/p", "sessionId": "done-1", "message": {"role": "assistant", "content": [{"type": "text", "text": "shortened --idle-timeout to 2; green."}]}},
+    ]  # fmt: skip
+    transcript.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    runbook = json.dumps({"summary": "fixed the flaky test", "tasks": [{"name": "Fix the flaky daemon test", "outcome": "success",
+        "procedure": ["run the test", "shorten --idle-timeout"], "keywords": ["idle-timeout"], "stage": "verify", "steps": [0, 1]}]})  # fmt: skip
+    with openai_stub([runbook, runbook]) as (url, requests):
+        reg = _Registry()
+        reg.start("t", ["experience"], AgmemConfig(profile="lite", data_dir=tmp_path / "data", sync_write=True,
+                                                    overrides={"embedder": "FakeEmbedder"},
+                                                    llm_roles={"distill": RoleConfig(endpoint=url, model="stub", api_key="stub")}))  # fmt: skip
+        try:
+            result = reg.distill(str(transcript), "t")
+            assert (
+                result["session_id"] == "done-1"
+                and result["episodes"] == 2
+                and result["dispatched"]
+            )
+            assert result["runbooks"] == 1 and len(requests) == 1
+            items = reg.get("t").doc_store.list_items("runbooks", namespace="t")
+            assert items[0]["origin"]["cwd"] == "/w/p" and "stage:verify" in items[0]["tags"]
+            spool = tmp_path / "data" / "t" / "distill-queue.jsonl"
+            spool.write_text(json.dumps({"transcript_path": str(transcript)}) + "\n")
+            assert reg.drain_distill_queue("t") == 1
+            assert len(requests) == 1  # already ingested: no second call, no second runbook
+            assert len(reg.get("t").doc_store.list_items("runbooks", namespace="t")) == 1
+        finally:
+            reg.close_all()

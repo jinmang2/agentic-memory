@@ -276,12 +276,19 @@ MCP는 도구라서 모델이 **부르기로 결정해야** 동작한다. 훅은
       { "hooks": [{ "type": "command",
                     "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.preserve",
                     "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command",
+                    "command": "/absolute/path/to/.venv/bin/python -m agmem.hooks.distill",
+                    "timeout": 5 }] }
     ]
   }
 }
 ```
 
-훅은 넷이다. `recall`(SessionStart, 최근성 12줄; `source=compact`이면 **이 세션이 압축 전에 말한 턴**을 대신 돌려준다),
+훅은 다섯이다. **`distill`(SessionEnd, 2026-09-05 신설)** 은 끝난 세션의 트랜스크립트를 데몬에 넘기고 즉시 종료하며, 데몬이
+백그라운드에서 `add_session(distill=True)`로 원문 보존 + `experience` 증류 1콜을 수행한다(`[llm.distill]`이 없으면 원문만 남고
+증류는 명시적으로 건너뛴다). 훅이 띄우는 데몬은 `--organizers experience`로 뜬다. 나머지 넷: `recall`(SessionStart, 최근성 12줄; `source=compact`이면 **이 세션이 압축 전에 말한 턴**을 대신 돌려준다),
 **`recall_prompt`(UserPromptSubmit, 프롬프트를 질의로 데몬에서 top-5를 주입 — 2026-09-02 신설)**, `capture`(UserPromptSubmit, 비동기),
 **`preserve`(PreCompact, 2026-09-05 신설 — 압축 직전 트랜스크립트 원문을 세션 id 아래 에피소드로 보존, 모델 호출 없음; 데몬이 없으면
 스풀에 적고 데몬이 다음 기동 때 처리)**. 같은 이벤트에서 recall_prompt가 capture보다 앞에 와야 자기 프롬프트를 자기에게
