@@ -249,6 +249,20 @@ def test_the_prompt_requires_a_step_range_and_says_how_many_steps_there_are():
     mem.close()
 
 
+def test_the_prompt_and_schema_require_keywords_on_every_block():
+    """The 2026-09-06 dogfood: a session distilled three runbooks and all three
+    came back with `keywords: []`, so the startup block served three lines a
+    reader could not tell apart. The prompt had ended with "Omit any list that
+    would be empty", which licensed exactly that, and the schema had asked for
+    the field without requiring it. Both now say the field is mandatory — the
+    same fix `steps` needed, for the same reason."""
+    item = SCHEMA["properties"]["tasks"]["items"]
+    assert "keywords" in item["required"]
+    assert item["properties"]["keywords"]["minItems"] == 1
+    assert "except keywords, which every block must carry" in SYSTEM_PROMPT
+    assert "Required, and never empty" in SYSTEM_PROMPT
+
+
 def test_a_list_field_returned_as_a_string_is_kept_not_dropped():
     """The 2026-09-04 smoke, third call: qwen3.5-9b returned every list field
     but `procedure` as one string, and `_strings` turned "not a list" into

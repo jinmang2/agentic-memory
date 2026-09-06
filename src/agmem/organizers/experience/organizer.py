@@ -95,7 +95,15 @@ SCHEMA: dict[str, Any] = {
                     "failures": {"type": "array", "items": {"type": "string"}},
                     "references": {"type": "array", "items": {"type": "string"}},
                     "procedure": {"type": "array", "items": {"type": "string"}},
-                    "keywords": {"type": "array", "items": {"type": "string"}},
+                    # Required, and required non-empty: this is the only field
+                    # that reaches a reader as the one-line tail of a startup
+                    # runbook, and a session whose blocks came back without it
+                    # served three lines a reader could not tell apart.
+                    "keywords": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                    },
                     # Which stage of the work the block belongs to (research §6
                     # #4: sub-task granularity with the stage named per item).
                     "stage": {"type": "string", "enum": list(STAGES)},
@@ -110,7 +118,7 @@ SCHEMA: dict[str, Any] = {
                         "minItems": 1,
                     },
                 },
-                "required": ["name", "outcome"],
+                "required": ["name", "outcome", "keywords"],
             },
         },
     },
@@ -158,11 +166,14 @@ and last visible label.
 with flags, file paths, function names, exact error strings, ids.
 - procedure: 4-8 imperative steps a future agent could follow to redo this task in this \
 workspace. Only if the task succeeded or partially succeeded. Empty otherwise.
-- keywords: discriminative search handles (tool names, error strings, repo concepts).
+- keywords: 3-6 discriminative search handles (tool names, error strings, repo \
+concepts). Required, and never empty: this is the only line a reader sees when the \
+block is listed at session start.
 - stage: which stage of the work this block belongs to — setup | investigate | implement \
 | verify | cleanup | other.
 Keep the user's wording. Generalize only enough to be reusable; never so far that the \
-concrete request disappears. Omit any list that would be empty.
+concrete request disappears. Omit any list that would be empty, except keywords, which \
+every block must carry.
 
 summary: 1-3 sentences on what the session was and how it ended, epistemically honest \
 ("the user asked…", "the assistant proposed…", "verified by…").
