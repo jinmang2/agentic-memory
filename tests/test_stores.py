@@ -1,4 +1,5 @@
 import os
+import sqlite3
 from importlib.util import find_spec
 
 import pytest
@@ -161,6 +162,51 @@ def test_a_rare_type_is_found_under_many_rows_of_another(vec_cls):
     hits = store.search(query, k=10, memory_type="runbooks", namespace="t")
     assert len(hits) == 5  # the pool really holds five
     assert len(store.search(query, k=3, namespace="t")) == 3  # unfiltered: still one query's worth
+    store.close()
+
+
+def test_widening_stops_at_the_knn_limit_instead_of_raising():
+    """sqlite-vec's own cap, which the row-count bound did not cover.
+
+    `search` widens the knn until `k` rows pass the filter or the table is
+    exhausted, and bounded that widening by the row count alone. sqlite-vec
+    refuses a `v.k` above 4096, so once a store passed that many vectors the
+    widening raised `OperationalError` — measured on the dogfood store at 4,571
+    vectors, where 3 of 10 real prompts died and reached the model as no memory
+    at all (2026-09-06). Past the ceiling a filtered search now returns what
+    the nearest `MAX_KNN_K` held, which is what this index can honestly say."""
+    import random
+
+    from agmem.stores.sqlite_vec import MAX_KNN_K, _serialize
+
+    rng = random.Random(7)
+    dim = 8
+    store = SqliteVecStore(None, dim=dim)
+    query = [1.0] + [0.0] * (dim - 1)
+
+    # The cap belongs to the extension, not to us: assert it where it lives, so
+    # a sqlite-vec that raises it later fails this test rather than the store.
+    store.add("probe", query, memory_type="episodic", namespace="t")
+    store._conn.execute(
+        "SELECT v.rowid FROM vectors v WHERE v.embedding MATCH ? AND v.k = ?",
+        (_serialize(query), MAX_KNN_K),
+    ).fetchall()
+    with pytest.raises(sqlite3.OperationalError, match="too large"):
+        store._conn.execute(
+            "SELECT v.rowid FROM vectors v WHERE v.embedding MATCH ? AND v.k = ?",
+            (_serialize(query), MAX_KNN_K + 1),
+        ).fetchall()
+
+    for i in range(MAX_KNN_K + 4):  # past the ceiling, all close to the query
+        v = [1.0] + [rng.uniform(-0.05, 0.05) for _ in range(dim - 1)]
+        store.add(f"ep-{i}", v, memory_type="episodic", namespace="t")
+    far = [0.0] * dim
+    far[1] = 1.0
+    store.add("rb-0", far, memory_type="runbooks", namespace="t")
+
+    # The widening has to give up here, and giving up is returning, not raising.
+    assert store.search(query, k=3, memory_type="runbooks", namespace="t") == []
+    assert len(store.search(query, k=3, namespace="t")) == 3
     store.close()
 
 

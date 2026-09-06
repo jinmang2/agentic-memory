@@ -13,6 +13,11 @@ from pathlib import Path
 
 from agmem.capabilities.requires import Requires
 
+# sqlite-vec refuses a knn query whose `k` exceeds this ("k value in knn query
+# too large, provided N and the limit is 4096"). It is the extension's own cap,
+# not ours, so it bounds how far `search` may widen.
+MAX_KNN_K = 4096
+
 
 def _serialize(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
@@ -105,11 +110,22 @@ class SqliteVecStore:
         fewer than ``k`` results must mean the pool holds fewer than ``k``,
         never that they were outranked by rows the caller did not ask for. The
         widening is geometric and bounded by the row count, so the common case
-        is still one query, and the rare-type case is a few."""
+        is still one query, and the rare-type case is a few.
+
+        The widening is also bounded by ``MAX_KNN_K``, which the row count
+        alone did not cover: sqlite-vec refuses ``v.k`` above 4096, so once
+        this store passed that many vectors the widening raised
+        ``OperationalError`` instead of returning rows — 3 of 10 real prompts
+        in the 2026-09-06 dogfood, each one reaching the model as no memory at
+        all. Past the ceiling a filtered search returns what the nearest 4096
+        held, which is the honest answer this index can give."""
         filtered = bool(memory_type or namespace)
-        fetch_k = k * 4 if filtered else k
         with self._lock:
             total = self._conn.execute("SELECT count(*) FROM vec_map").fetchone()[0]
+            if total == 0:
+                return []
+            ceiling = min(total, MAX_KNN_K)
+            fetch_k = min(k * 4 if filtered else k, ceiling)
             while True:
                 rows = self._conn.execute(
                     "SELECT v.rowid, v.distance, m.item_id, m.namespace, m.memory_type"
@@ -126,9 +142,9 @@ class SqliteVecStore:
                     out.append((item_id, 1.0 - float(dist)))  # cosine distance -> similarity
                     if len(out) >= k:
                         break
-                if not filtered or len(out) >= k or len(rows) < fetch_k or fetch_k >= total:
+                if not filtered or len(out) >= k or len(rows) < fetch_k or fetch_k >= ceiling:
                     return out
-                fetch_k = min(fetch_k * 4, total)
+                fetch_k = min(fetch_k * 4, ceiling)
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
         if not ids:
