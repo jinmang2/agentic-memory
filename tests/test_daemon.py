@@ -34,9 +34,10 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _health(url: str) -> dict | None:
+def _health(url: str, pending: bool = False) -> dict | None:
     try:
-        with urllib.request.urlopen(f"{url}/health", timeout=0.5) as resp:
+        query = "?pending=1" if pending else ""
+        with urllib.request.urlopen(f"{url}/health{query}", timeout=0.5) as resp:
             return json.loads(resp.read())
     except Exception:  # noqa: BLE001 — "down" is a normal answer here
         return None
@@ -137,8 +138,11 @@ def test_health_reports_the_store_it_resolved(daemon):
     assert payload["ok"] is True
     assert payload["default_namespace"] == "daemontest"
     assert payload["open_namespaces"] == ["daemontest"]
-    assert payload["pending_embed"] == {"daemontest": 0}
     assert payload["pid"] == daemon["proc"].pid
+    # Liveness only by default: the scan behind `pending_embed` is over the
+    # hooks' 0.3 s budget on a real store, so it is asked for explicitly.
+    assert "pending_embed" not in payload
+    assert _health(daemon["url"], pending=True)["pending_embed"] == {"daemontest": 0}
 
 
 def test_capture_hook_takes_the_daemon_path_and_the_write_is_searchable(daemon):
@@ -148,7 +152,7 @@ def test_capture_hook_takes_the_daemon_path_and_the_write_is_searchable(daemon):
         "agmem.hooks.capture", {"session_id": "s1", "prompt": "I moved to Berlin"}, daemon["env"]
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
-    assert _health(daemon["url"])["pending_embed"] == {"daemontest": 0}
+    assert _health(daemon["url"], pending=True)["pending_embed"] == {"daemontest": 0}
     reply = _post(daemon["url"], "/hooks/recall", {"query": "Berlin", "k": 3})
     assert reply["namespace"] == "daemontest"
     assert any("Berlin" in it["text"] for it in reply["items"]), reply
@@ -202,7 +206,7 @@ def test_capture_without_daemon_persists_and_the_daemon_backfills_the_vector(dae
     # and, with --backfill-period 1, repairs it within a few seconds.
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
-        if _health(daemon["url"])["pending_embed"]["daemontest"] == 0:
+        if _health(daemon["url"], pending=True)["pending_embed"]["daemontest"] == 0:
             reply = _post(daemon["url"], "/hooks/recall", {"query": "Lima office", "k": 3})
             if any("Lima" in it["text"] for it in reply["items"]):
                 break

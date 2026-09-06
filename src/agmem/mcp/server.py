@@ -444,24 +444,34 @@ def _item_timestamp(item) -> str | None:
 
 
 @mcp.custom_route("/health", methods=["GET"])
-async def health(_: Request) -> JSONResponse:
+async def health(request: Request) -> JSONResponse:
     """What a hook checks before deciding which path to take (`agmem.hooks.daemon.health`).
 
-    `pending_embed` is reported per open namespace so a reader can tell that
-    memories written while the daemon was down are not searchable yet."""
+    Liveness only, and touching no store: `agmem.hooks.daemon` budgets 0.3 s
+    for this call because it blocks a turn, and describes it as "a local socket
+    round trip". It was not one. `pending_embed` derives its answer by listing
+    every episode and asking the vector store for every id (`_missing_vector_ids`),
+    which measured 1.0 s against 4,532 episodes with nothing actually pending —
+    over budget on every call and growing with the store, so `recall_prompt`
+    read `health() is None` and took its BM25 fallback in every turn of a
+    healthy session. The scan now answers `GET /health?pending=1`, which is
+    where its readers were: a human asking whether writes made while the daemon
+    was down are searchable yet, and the backfill tests polling for zero.
+    Neither is on a hook's path."""
     now = time.monotonic()
-    open_ns = _registry.open_namespaces()
-    return JSONResponse(
-        {
-            "ok": True,
-            "pid": os.getpid(),
-            "default_namespace": _registry.default,
-            "open_namespaces": open_ns,
-            "pending_embed": {ns: _registry.pending_embed(ns) for ns in open_ns},
-            "uptime_s": round(now - _started_at, 1),
-            "idle_s": round(now - _last_activity, 1),
+    payload = {
+        "ok": True,
+        "pid": os.getpid(),
+        "default_namespace": _registry.default,
+        "open_namespaces": _registry.open_namespaces(),
+        "uptime_s": round(now - _started_at, 1),
+        "idle_s": round(now - _last_activity, 1),
+    }
+    if request.query_params.get("pending"):
+        payload["pending_embed"] = {
+            ns: _registry.pending_embed(ns) for ns in payload["open_namespaces"]
         }
-    )
+    return JSONResponse(payload)
 
 
 @mcp.custom_route("/hooks/capture", methods=["POST"])

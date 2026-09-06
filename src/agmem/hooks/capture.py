@@ -35,7 +35,7 @@ and exits. The episode is visible to the recency hook at once and to semantic
 search after the daemon's backfill gives it a vector, which happens on the
 daemon's next start and every minute after. What issue #2 warned against was
 an episode with no vector *forever*; a delayed one is the trade this design
-makes, and `/health` reports how many are waiting.
+makes, and `/health?pending=1` reports how many are waiting.
 """
 
 from __future__ import annotations
