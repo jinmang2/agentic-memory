@@ -54,7 +54,7 @@ HEADER = (
 )
 FALLBACK_HEADER = (
     "Memory relevant to this prompt (agmem, keyword match over the local store: the "
-    "memory daemon was not answering, so this is BM25 over runbooks and past turns "
+    "memory daemon did not answer this search, so this is BM25 over runbooks and past turns "
     "rather than the vector search; runbooks first, then best match first). These are "
     "retrieved, not verified: treat them as leads and check the code or the user when "
     "it matters."
@@ -161,9 +161,20 @@ def main() -> None:
             sys.exit(0)
         k = int(os.environ.get("AGMEM_RECALL_K") or K)
         if daemon_client.health() is not None:
-            reply = daemon_client.post("/hooks/recall", request_body(event, query, k))
-            emit_context(render(list(reply.get("items") or [])), "UserPromptSubmit")
-            sys.exit(0)
+            # A daemon that answers /health can still fail this one search, and
+            # the branch used to have no way back: the raise reached `fail_open`
+            # and the turn got no memory and no notice. Measured in the
+            # 2026-09-06 dogfood at 3 prompts in 10, all of them the
+            # `MAX_KNN_K` refusal. The fallback below is already the answer for
+            # a daemon that is not there; a daemon that cannot answer is not a
+            # better case.
+            try:
+                reply = daemon_client.post("/hooks/recall", request_body(event, query, k))
+            except daemon_client.DaemonUnavailable:
+                pass
+            else:
+                emit_context(render(list(reply.get("items") or [])), "UserPromptSubmit")
+                sys.exit(0)
         project = str(event.get("cwd") or "") or None
         namespace, store = open_doc_store()
         try:

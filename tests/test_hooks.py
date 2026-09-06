@@ -533,6 +533,62 @@ def test_recall_lists_this_projects_runbooks_newest_first(tmp_path):
     assert "Poetry lock" in everything and "Fix the pnpm filter" in everything
 
 
+def test_recall_prompt_falls_back_when_the_daemon_answers_health_but_not_the_search(tmp_path):
+    """A daemon that is up can still fail one search, and that branch had no
+    way back: the raise reached `fail_open`, so the turn got no memory and no
+    notice. Measured in the 2026-09-06 dogfood at 3 prompts in 10 -- every one
+    of them the sqlite-vec knn refusal on a store past `MAX_KNN_K`. The hook
+    now takes the same keyword path it takes for a daemon that is not there."""
+    import http.server
+    import threading
+
+    class _Stub(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # /health: up and well
+            body = json.dumps({"ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):  # /hooks/recall: up, and unable to answer
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_error(500, "search failed")
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        _seed_runbooks(
+            tmp_path,
+            [
+                _runbook(
+                    "a1",
+                    "Fix the pnpm filter",
+                    "/w/proj-a",
+                    "2026-09-03T10:00:00+00:00",
+                    body="pnpm --filter needs the package name, not the path",
+                )
+            ],
+        )
+        proc = _run(
+            "agmem.hooks.recall_prompt",
+            {"session_id": "a", "prompt": "how do I use the pnpm filter?", "cwd": "/w/proj-a"},
+            tmp_path,
+            {"AGMEM_DAEMON_URL": url},
+        )
+        assert proc.returncode == 0, proc.stderr[-2000:]
+        assert proc.stdout.strip(), "a failed daemon search left the turn with no memory at all"
+        out = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        assert "keyword match" in out and "Fix the pnpm filter" in out
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def test_recall_prompt_without_a_daemon_answers_from_the_store_by_keyword(tmp_path):
     """The dogfood gap (docs/23 §8): a hook-spawned daemon takes ~20 s to come up
     and the prompt hook used to emit nothing until then. With the daemon
@@ -572,7 +628,7 @@ def test_recall_prompt_without_a_daemon_answers_from_the_store_by_keyword(tmp_pa
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
     out = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert "keyword match" in out and "daemon was not answering" in out
+    assert "keyword match" in out and "daemon did not answer this search" in out
     assert "Fix the pnpm filter" in out and "pnpm filter flag keeps failing" in out
     assert out.index("Fix the pnpm filter") < out.index("pnpm filter flag keeps failing")
     assert "proj-b" not in out and "rename the CI job" not in out
