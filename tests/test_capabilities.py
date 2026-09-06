@@ -143,12 +143,18 @@ def test_load_config_plumbs_role_transport_fields_and_reply_retries(tmp_path, mo
     assert load_config(bare).structured_reply_retries == 1
 
 
-def test_load_config_env_api_key_unset_fails_at_load_not_at_first_call(tmp_path, monkeypatch):
-    """An unset variable must fail HERE, where the config names it — the raw
-    `env:NAME` string used to travel to the endpoint and die as a 401."""
+def test_load_config_env_api_key_unset_survives_load_and_raises_at_first_use(tmp_path, monkeypatch):
+    """An unset variable must fail where the config names it, but not at load.
+
+    The raw `env:NAME` string used to travel to the endpoint and die as a 401,
+    so resolution moved to load time — and that broke the read-only hooks,
+    which load the same config and never call a model: the session-start hook
+    died on a distill key it never uses and the model got no memory at all
+    (ee18f2d, docs/23 §8). The loader now keeps the literal, and
+    `resolve_api_key` raises with the variable's name at the role's first use."""
     import pytest
 
-    from agmem.config import load_config
+    from agmem.config import load_config, resolve_api_key
 
     monkeypatch.delenv("AGMEM_TEST_MISSING_KEY", raising=False)
     path = tmp_path / "agmem.toml"
@@ -158,8 +164,10 @@ def test_load_config_env_api_key_unset_fails_at_load_not_at_first_call(tmp_path,
         'model = "m"\n'
         'api_key = "env:AGMEM_TEST_MISSING_KEY"\n'
     )
+    cfg = load_config(path)
+    assert cfg.llm_roles["judge"].api_key == "env:AGMEM_TEST_MISSING_KEY"
     with pytest.raises(ValueError, match="AGMEM_TEST_MISSING_KEY"):
-        load_config(path)
+        resolve_api_key(cfg.llm_roles["judge"].api_key)
 
 
 def test_load_config_literal_api_key_passes_through_untouched(tmp_path):
