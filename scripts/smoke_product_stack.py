@@ -147,7 +147,7 @@ def daemon_path(env: dict, data_dir: Path) -> bool:
 
     started = time.perf_counter()
     while time.perf_counter() - started < 60:
-        health = _http_json(url, "/health", timeout=2)
+        health = _http_json(url, "/health?pending=1", timeout=2)
         if all(n == 0 for n in health["pending_embed"].values()):
             break
         time.sleep(0.5)
