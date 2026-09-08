@@ -112,6 +112,48 @@ LoCoMo and LongMemEval harnesses are implemented, and reproduction artifacts are
 
 ## Quickstart
 
+### Install on another machine
+
+Requires Git, uv, and Python 3.12+ (uv can provision Python). The core install
+and test suite are verified on Linux; macOS and Windows are not currently in CI.
+
+```bash
+git clone https://github.com/jinmang2/agentic-memory.git
+cd agentic-memory
+uv sync --locked --no-default-groups --group dev
+uv run --locked --no-default-groups --group dev pytest tests/ -q
+uv run --locked --no-default-groups --group dev agmem-mcp --help
+```
+
+If you already have `~/.agmem/upstream/longmemeval-v2`, its integration test also
+requires the `lme-v2` extra (`uv sync --locked --no-default-groups --group dev
+--extra lme-v2`). A fresh clone without that external checkout skips the test.
+
+For real semantic search, add the local embedder (the first run downloads model
+weights). Run these commands from the cloned repository:
+
+```bash
+uv sync --locked --no-default-groups --group dev --group embed
+uv run --no-sync python scripts/smoke_product_stack.py --daemon
+uv run --no-sync agmem-mcp --profile lite --organizers ""
+```
+
+The last command serves MCP over stdio without an LLM organizer. For session
+runbook distillation, configure `[llm.distill]` using
+[`agmem.example.toml`](agmem.example.toml), set `AGMEM_CONFIG` to that file's
+absolute path, and use `--organizers experience`. Supply your own endpoint and
+API key; the example's localhost endpoint requires a separately running server.
+
+Register MCP and hooks in each host using the **new machine's** absolute
+`.venv/bin/agmem-mcp` and `.venv/bin/python` paths (Windows uses `.venv/Scripts`),
+following [the registration guide](docs/05-api-design.md#24-claude-code-훅-등록).
+Cloning does not install host hooks or copy API keys, `~/.agmem/data`, model
+caches, benchmark datasets, or upstream checkouts. A new machine starts with an
+empty memory store unless you transfer it separately. Hooks and MCP must receive
+the same `AGMEM_CONFIG`, `AGMEM_DATA_DIR`, and `AGMEM_NAMESPACE` values.
+
+### Development and examples
+
 ```bash
 uv sync                     # full install (real vector/graph backends + local embedder)
 uv sync --no-default-groups --group dev   # core-only: suite still runs, heavy paths skip
