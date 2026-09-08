@@ -54,7 +54,9 @@ def _reply_defect(text: str, parsed: Any, required_keys: tuple[str, ...]) -> str
         json.loads(text)
     except json.JSONDecodeError as exc:
         snippet = text[max(0, exc.pos - 40) : exc.pos + 40].replace("\n", " ")
-        return f" (parse error: {exc.msg} at line {exc.lineno} column {exc.colno}, near: {snippet!r})"
+        return (
+            f" (parse error: {exc.msg} at line {exc.lineno} column {exc.colno}, near: {snippet!r})"
+        )
     return ""
 
 
