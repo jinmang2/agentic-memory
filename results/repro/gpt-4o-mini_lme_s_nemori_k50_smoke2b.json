@@ -1,0 +1,163 @@
+{
+  "stamp": {
+    "dataset": "s",
+    "data_file": "/home/jinmang2/.agmem/datasets/longmemeval_s_cleaned.json",
+    "data_sha256": "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442",
+    "release": "longmemeval-cleaned",
+    "reader": "gpt-4o-mini",
+    "reading_method": "con",
+    "judge_model": "gpt-4o-2024-08-06",
+    "judge_pinned": true,
+    "n_population": 2,
+    "n_answered": 2,
+    "n_judged": 2,
+    "complete": true,
+    "missing_question_ids": [],
+    "workers": 2,
+    "full_context": false,
+    "haystack_sorted_by_date": true,
+    "max_sessions": null,
+    "max_history_tokens": null,
+    "organizers": [
+      "nemori"
+    ],
+    "read_path": "retrieval_top50",
+    "retrieval_k": 50,
+    "k_scope": "total",
+    "k_total": 50,
+    "budget_tokens": 20000,
+    "embed_batch": 128,
+    "history_format": "json",
+    "embedder": "text-embedding-3-small",
+    "gen_max_tokens": 800,
+    "gen_temperature": 0.0,
+    "deviations": [
+      "D2_ingest_per_turn"
+    ],
+    "git_sha": "c19a480092ddf70e1b63067520928bd6a931acff",
+    "utc_started": "2026-08-19T14:58:54.390930+00:00",
+    "utc_finished": "2026-08-19T15:33:35.570877+00:00",
+    "dry_run": false,
+    "resumed_from_records": 0,
+    "max_spend_usd": 0.7,
+    "prior_spend_usd": 0.0
+  },
+  "aggregate": {
+    "by_type": {
+      "single-session-user": {
+        "acc": 100.0,
+        "n": 2
+      }
+    },
+    "task_averaged": 100.0,
+    "overall": 100.0,
+    "abstention": null,
+    "n": 2
+  },
+  "aggregate_partial": null,
+  "llm_budget": {
+    "extract/segment": {
+      "calls": 1033,
+      "tokens_in": 1015191,
+      "tokens_out": 13176,
+      "latency_ms_avg": 938.9,
+      "errors": 0
+    },
+    "distill/narrate": {
+      "calls": 326,
+      "tokens_in": 322572,
+      "tokens_out": 73720,
+      "latency_ms_avg": 3137.4,
+      "errors": 0
+    },
+    "distill/predict_calibrate": {
+      "calls": 604,
+      "tokens_in": 383485,
+      "tokens_out": 80037,
+      "latency_ms_avg": 2349.5,
+      "errors": 0
+    },
+    "generate": {
+      "calls": 2,
+      "tokens_in": 15511,
+      "tokens_out": 281,
+      "latency_ms_avg": 3389.2,
+      "errors": 0
+    },
+    "judge": {
+      "calls": 2,
+      "tokens_in": 521,
+      "tokens_out": 4,
+      "latency_ms_avg": 760.9,
+      "errors": 0
+    },
+    "embed": {
+      "calls": 1618,
+      "tokens_in": 375767,
+      "tokens_out": 0,
+      "latency_ms_avg": 339.1,
+      "errors": 0
+    }
+  },
+  "llm_budget_by_row": {
+    "extract/segment": {
+      "calls": 1033,
+      "tokens_in": 1015191,
+      "tokens_out": 13176,
+      "latency_ms_avg": 938.9,
+      "errors": 0
+    },
+    "distill/narrate": {
+      "calls": 326,
+      "tokens_in": 322572,
+      "tokens_out": 73720,
+      "latency_ms_avg": 3137.4,
+      "errors": 0
+    },
+    "distill/predict_calibrate": {
+      "calls": 604,
+      "tokens_in": 383485,
+      "tokens_out": 80037,
+      "latency_ms_avg": 2349.5,
+      "errors": 0
+    },
+    "generate|118b2229": {
+      "calls": 1,
+      "tokens_in": 7747,
+      "tokens_out": 146,
+      "latency_ms_avg": 4327.2,
+      "errors": 0
+    },
+    "judge|118b2229": {
+      "calls": 1,
+      "tokens_in": 269,
+      "tokens_out": 2,
+      "latency_ms_avg": 884.9,
+      "errors": 0
+    },
+    "generate|e47becba": {
+      "calls": 1,
+      "tokens_in": 7764,
+      "tokens_out": 135,
+      "latency_ms_avg": 2451.3,
+      "errors": 0
+    },
+    "judge|e47becba": {
+      "calls": 1,
+      "tokens_in": 252,
+      "tokens_out": 2,
+      "latency_ms_avg": 636.9,
+      "errors": 0
+    }
+  },
+  "timing": {
+    "eval_s": 2081.2
+  },
+  "records_file": "gpt-4o-mini_lme_s_nemori_k50_smoke2b.records.jsonl",
+  "trace_file": "gpt-4o-mini_lme_s_nemori_k50_smoke2b.llm-trace.jsonl.gz",
+  "embed_trace_file": "gpt-4o-mini_lme_s_nemori_k50_smoke2b.embed-trace.jsonl",
+  "memory_file": "gpt-4o-mini_lme_s_nemori_k50_smoke2b.memory.jsonl.gz",
+  "memory_ops_file": "gpt-4o-mini_lme_s_nemori_k50_smoke2b.memory.ops.jsonl.gz",
+  "cost_usd": 0.3697,
+  "cost_usd_this_process": 0.3697
+}

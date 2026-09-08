@@ -1,0 +1,68 @@
+{
+  "arms": [
+    "gpt-4o-mini_lme_s_nemori_k50",
+    "gpt-4o-mini_lme_s_con_k50_batched"
+  ],
+  "note": "prefix analysis of an arm that never reached 500 rows; see docs/20 Pre-registration III",
+  "organizer_rows_on_disk": 221,
+  "unjudged": [
+    "0ea62687",
+    "3fe836c9",
+    "67e0d0f2"
+  ],
+  "type_counts_common": {
+    "single-session-user": 70,
+    "multi-session": 118,
+    "single-session-preference": 30
+  },
+  "type_complete": [
+    "single-session-preference",
+    "single-session-user"
+  ],
+  "registered_type_complete": {
+    "n": 100,
+    "ta": {
+      "delta_pp": 4.2857,
+      "lo": -3.0952,
+      "hi": 11.9048,
+      "p_boot": 0.269,
+      "excludes_zero": false
+    },
+    "ov": {
+      "delta_pp": 2.0,
+      "lo": -3.0,
+      "hi": 7.0,
+      "p_boot": 0.5784,
+      "excludes_zero": false
+    },
+    "mcnemar": {
+      "a_only": 5,
+      "b_only": 3,
+      "discordant": 8,
+      "p_exact": 0.726562
+    }
+  },
+  "exploratory_all_common": {
+    "n": 218,
+    "ta": {
+      "delta_pp": 3.4221,
+      "lo": -2.1523,
+      "hi": 9.2282,
+      "p_boot": 0.236,
+      "excludes_zero": false
+    },
+    "ov": {
+      "delta_pp": 1.8349,
+      "lo": -3.211,
+      "hi": 6.8807,
+      "p_boot": 0.533,
+      "excludes_zero": false
+    },
+    "mcnemar": {
+      "a_only": 18,
+      "b_only": 14,
+      "discordant": 32,
+      "p_exact": 0.596615
+    }
+  }
+}

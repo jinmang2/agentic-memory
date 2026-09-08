@@ -1,6 +1,6 @@
 # LongMemEval audit scripts — every measurement in `docs/research/longmemeval.md`
 
-All eleven scripts spend **$0**: no model call, no network except where noted. They exist so the
+All twelve scripts spend **$0**: no model call, no network except where noted. They exist so the
 numbers in the research doc can be re-derived rather than trusted, which is the same standard
 `scripts/repro/defects/` holds upstream claims to.
 
@@ -25,6 +25,7 @@ Run them from the repo root (`uv run python scripts/repro/lme_audit/<name>.py`).
 | `abs_evidence.py` | whether abstention questions carry evidence sessions | dataset |
 | `dup_sessions.py` | independent check of upstream issue #54 — duplicate `haystack_session_id` | dataset |
 | `gold_issue_check.py` | independent check of upstream issues #41 and #22 — gold defects | dataset |
+| `turn_path_defects.py` | two defects only the turn-level `prepare_prompt` branches reach: `--useronly true`+`flat-turn` raises TypeError (:144), and `orig-turn`/`oracle-turn` render `has_answer` into the prompt (:181-183 never fires) | `oracle` |
 | `m_stats.py` | `_m` scale, whether the streamed instances are the array's real elements, whether upstream's cap binds | `_m` + `_s` (+ `tiktoken` for `LME_EXACT_TOKENS=1`) |
 
 Three of them pull an ephemeral dependency rather than adding one to the project: run
