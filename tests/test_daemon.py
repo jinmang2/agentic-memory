@@ -187,6 +187,188 @@ def test_recall_prompt_answers_by_keyword_when_the_daemon_is_down(daemon):
     assert elapsed < 5.0, f"recall_prompt took {elapsed:.1f}s without a daemon"
 
 
+def test_codex_hooks_round_trip_through_the_http_daemon_with_fake_llm(tmp_path):
+    from helpers import openai_stub
+
+    runbook = json.dumps(
+        {
+            "summary": "kept Codex hook memory",
+            "tasks": [
+                {
+                    "name": "Keep Codex hook memory",
+                    "outcome": "success",
+                    "procedure": ["capture the prompt", "distill the rollout"],
+                    "keywords": ["codex-hook-e2e"],
+                    "stage": "verify",
+                    "steps": [0, 1],
+                }
+            ],
+        }
+    )
+    with openai_stub([runbook]) as (llm_url, requests):
+        cfg = tmp_path / "agmem.toml"
+        cfg.write_text(
+            '[profile]\nname = "lite"\n\n[override]\nembedder = "FakeEmbedder"\n'
+            f'\n[llm.distill]\nendpoint = "{llm_url}"\nmodel = "stub"\napi_key = "stub"\n'
+        )
+        port = _free_port()
+        url = f"http://127.0.0.1:{port}"
+        env = {
+            **_base_env(tmp_path, url),
+            "AGMEM_CONFIG": str(cfg),
+            "AGMEM_HOOK_SOURCE": "codex",
+        }
+        proc = _spawn_daemon(env, port, "--organizers", "experience")
+        try:
+            _wait_health(url)
+            capture = _run_hook(
+                "agmem.hooks.capture",
+                {
+                    "session_id": "codex-capture",
+                    "prompt": "remember codex-hook-e2e prompt capture",
+                    "cwd": str(tmp_path),
+                },
+                env,
+            )
+            assert capture.returncode == 0, capture.stderr[-1500:]
+            recalled = _run_hook(
+                "agmem.hooks.recall_prompt",
+                {
+                    "session_id": "codex-capture",
+                    "prompt": "what did codex-hook-e2e capture?",
+                    "cwd": str(tmp_path),
+                },
+                env,
+            )
+            assert recalled.returncode == 0, recalled.stderr[-1500:]
+            assert "codex-hook-e2e prompt capture" in recalled.stdout
+
+            ts = "2026-09-07T10:00:00.000Z"
+            compact_rollout = tmp_path / "rollout-2026-09-07T10-00-00-codex-compact.jsonl"
+            compact_rollout.write_text(
+                "\n".join(
+                    json.dumps(record)
+                    for record in [
+                        {
+                            "timestamp": ts,
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "codex-compact",
+                                "session_id": "codex-compact",
+                                "timestamp": ts,
+                                "cwd": str(tmp_path),
+                                "thread_source": "user",
+                                "source": "cli",
+                            },
+                        },
+                        {
+                            "timestamp": ts,
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_text",
+                                        "text": "preserve codex compact rollout",
+                                    }
+                                ],
+                            },
+                        },
+                        {
+                            "timestamp": ts,
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "preserved"}],
+                            },
+                        },
+                    ]
+                )
+                + "\n"
+            )
+            preserve = _run_hook(
+                "agmem.hooks.preserve",
+                {"session_id": "codex-compact", "transcript_path": str(compact_rollout)},
+                env,
+            )
+            assert preserve.returncode == 0, preserve.stderr[-1500:]
+
+            end_rollout = tmp_path / "rollout-2026-09-07T10-01-00-codex-end.jsonl"
+            end_rollout.write_text(
+                "\n".join(
+                    json.dumps(record)
+                    for record in [
+                        {
+                            "timestamp": ts,
+                            "type": "session_meta",
+                            "payload": {
+                                "id": "codex-end",
+                                "session_id": "codex-end",
+                                "timestamp": ts,
+                                "cwd": str(tmp_path),
+                                "thread_source": "user",
+                                "source": "cli",
+                            },
+                        },
+                        {
+                            "timestamp": ts,
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "user",
+                                "content": [
+                                    {"type": "input_text", "text": "distill codex-hook-e2e rollout"}
+                                ],
+                            },
+                        },
+                        {
+                            "timestamp": ts,
+                            "type": "response_item",
+                            "payload": {
+                                "type": "message",
+                                "role": "assistant",
+                                "content": [{"type": "output_text", "text": "done"}],
+                            },
+                        },
+                    ]
+                )
+                + "\n"
+            )
+            distill = _run_hook(
+                "agmem.hooks.distill",
+                {"session_id": "codex-end", "transcript_path": str(end_rollout)},
+                {**env, "AGMEM_HOOK_TIMEOUT_SEC": "1.5"},
+            )
+            assert distill.returncode == 0, distill.stderr[-1500:]
+
+            from agmem.stores.sqlite_doc import SqliteDocStore
+
+            store = SqliteDocStore(tmp_path / "data" / "daemontest" / "memory.db")
+            try:
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    episodes = store.list_episodes(namespace="daemontest")
+                    runbooks = store.list_items("runbooks", namespace="daemontest")
+                    if requests and runbooks:
+                        break
+                    time.sleep(0.2)
+                else:
+                    raise AssertionError("Codex distill hook did not produce a fake-LLM runbook")
+                assert any("preserve codex compact rollout" in ep.content for ep in episodes)
+                assert runbooks[0]["name"] == "Keep Codex hook memory"
+                assert len(requests) == 1
+            finally:
+                store.close()
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
 def test_capture_without_daemon_persists_and_the_daemon_backfills_the_vector(daemon):
     """The absent-daemon contract from the Phase 2 spec: the episode is written
     without a vector (fast, no model), shows up as pending on the next daemon,

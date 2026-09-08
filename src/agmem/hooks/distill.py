@@ -40,7 +40,10 @@ def main() -> None:
         if body is None:
             sys.exit(0)
         if daemon_client.health() is not None:
-            daemon_client.post("/hooks/distill", body)
+            try:
+                daemon_client.post("/hooks/distill", body)
+            except daemon_client.DaemonUnavailable:
+                spool(body, spool_path().with_name(SPOOL_NAME))
         else:
             spool(body, spool_path().with_name(SPOOL_NAME))
             daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))

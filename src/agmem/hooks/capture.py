@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import fail_open, open_doc_store, read_event
@@ -49,7 +50,7 @@ from agmem.hooks import fail_open, open_doc_store, read_event
 MAX_CHARS = 8000
 
 
-def prompt_of(event: dict) -> str:
+def prompt_of(event: dict[str, Any]) -> str:
     """The user's text, across the field names the harness has used for it.
 
     Checked in order rather than assuming one: a payload whose shape moved would
@@ -63,7 +64,7 @@ def prompt_of(event: dict) -> str:
     return ""
 
 
-def write_without_daemon(text: str, meta: dict) -> None:
+def write_without_daemon(text: str, meta: dict[str, Any]) -> None:
     """The absent-daemon path: persist the episode without a vector and request a daemon.
 
     `pending_embed` in `meta` is informational — the daemon derives what to
@@ -104,9 +105,12 @@ def main() -> None:
             "cwd": str(event.get("cwd") or "") or None,
         }
         if daemon_client.health() is not None:
-            daemon_client.post(
-                "/hooks/capture", {"content": text[:MAX_CHARS], "role": "user", "meta": meta}
-            )
+            try:
+                daemon_client.post(
+                    "/hooks/capture", {"content": text[:MAX_CHARS], "role": "user", "meta": meta}
+                )
+            except daemon_client.DaemonUnavailable:
+                write_without_daemon(text[:MAX_CHARS], meta)
         else:
             write_without_daemon(text[:MAX_CHARS], meta)
     except BaseException as exc:  # every failure path exits 0 — see fail_open

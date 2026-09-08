@@ -30,6 +30,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from agmem.hooks import _resolve, fail_open, read_event
 from agmem.hooks import daemon as daemon_client
@@ -42,7 +43,7 @@ def spool_path(namespace: str | None = None, data_dir: str | None = None) -> Pat
     return root / ns / SPOOL_NAME
 
 
-def request_body(event: dict) -> dict | None:
+def request_body(event: dict[str, Any]) -> dict[str, Any] | None:
     """What the daemon needs, or None when the event names no transcript."""
     path = str(event.get("transcript_path") or "")
     if not path:
@@ -54,7 +55,7 @@ def request_body(event: dict) -> dict | None:
     return body
 
 
-def spool(body: dict, path: Path) -> None:
+def spool(body: dict[str, Any], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fp:
         fp.write(json.dumps(body, ensure_ascii=False) + "\n")
@@ -66,7 +67,10 @@ def main() -> None:
         if body is None:
             sys.exit(0)
         if daemon_client.health() is not None:
-            daemon_client.post("/hooks/preserve", body)
+            try:
+                daemon_client.post("/hooks/preserve", body)
+            except daemon_client.DaemonUnavailable:
+                spool(body, spool_path())
         else:
             spool(body, spool_path())
             daemon_client.ensure_running(log_path=os.environ.get("AGMEM_DAEMON_LOG"))

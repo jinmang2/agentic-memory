@@ -51,6 +51,7 @@ def _run(module: str, payload: dict, tmp_path, extra_env: dict | None = None):
         text=True,
         env=_env(tmp_path, extra_env),
         timeout=120,
+        check=False,
     )
 
 
@@ -149,6 +150,7 @@ def test_hooks_survive_malformed_stdin(tmp_path):
             text=True,
             env=_env(tmp_path),
             timeout=120,
+            check=False,
         )
         assert proc.returncode == 0, f"{module}: {proc.stderr[-1500:]}"
 
@@ -170,6 +172,7 @@ def test_hooks_and_server_agree_on_the_default_namespace(tmp_path):
         text=True,
         env=env,
         timeout=120,
+        check=False,
     )
     assert proc.returncode == 0, proc.stderr[-1500:]
     written = sorted(p.name for p in (tmp_path / "data").iterdir() if p.is_dir())
@@ -222,6 +225,40 @@ def test_capture_ignores_a_prompt_with_no_text(tmp_path):
     assert proc.returncode == 0
     got = _run("agmem.hooks.recall", {}, tmp_path)
     assert got.stdout.strip() == ""
+
+
+def test_capture_writes_without_daemon_when_health_succeeds_but_post_fails(tmp_path, monkeypatch):
+    from agmem.hooks import capture, open_doc_store
+    from agmem.hooks import daemon as daemon_client
+
+    event = {
+        "session_id": "codex-capture",
+        "prompt": "remember a service restart prompt",
+        "cwd": "/w/p",
+    }
+    monkeypatch.setenv("AGMEM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("AGMEM_NAMESPACE", "hooktest")
+    monkeypatch.setenv("AGMEM_HOOK_SOURCE", "codex")
+    monkeypatch.setattr(capture, "read_event", lambda: event)
+    monkeypatch.setattr(daemon_client, "health", lambda: {"ok": True})
+
+    def fail_post(_path, _payload):
+        raise daemon_client.DaemonUnavailable("post failed")
+
+    monkeypatch.setattr(daemon_client, "post", fail_post)
+
+    with pytest.raises(SystemExit) as raised:
+        capture.main()
+
+    assert raised.value.code == 0
+    namespace, store = open_doc_store()
+    try:
+        (episode,) = store.list_episodes(namespace=namespace)
+    finally:
+        store.close()
+    assert episode.content == "remember a service restart prompt"
+    assert episode.meta["source"] == "codex"
+    assert episode.meta["pending_embed"] is True
 
 
 def test_recall_stays_fast_enough_for_a_blocking_hook(seeded):
@@ -304,6 +341,36 @@ def test_preserve_without_a_daemon_spools_the_transcript_for_the_next_daemon(tmp
     # an event without a transcript is a no-op
     assert _run("agmem.hooks.preserve", {"session_id": "x"}, tmp_path).returncode == 0
     assert len(spool.read_text().splitlines()) == 1
+
+
+def test_preserve_spools_when_daemon_health_succeeds_but_post_fails(tmp_path, monkeypatch):
+    from agmem.hooks import daemon as daemon_client
+    from agmem.hooks import preserve
+
+    transcript = tmp_path / "health-then-post-fails.jsonl"
+    transcript.write_text("{}\n")
+    event = {
+        "transcript_path": str(transcript),
+        "session_id": "s-compact",
+        "cwd": "/w/p",
+    }
+    monkeypatch.setenv("AGMEM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("AGMEM_NAMESPACE", "hooktest")
+    monkeypatch.setattr(preserve, "read_event", lambda: event)
+    monkeypatch.setattr(daemon_client, "health", lambda: {"ok": True})
+
+    def fail_post(_path, _payload):
+        raise daemon_client.DaemonUnavailable("post failed")
+
+    monkeypatch.setattr(daemon_client, "post", fail_post)
+
+    with pytest.raises(SystemExit) as raised:
+        preserve.main()
+
+    assert raised.value.code == 0
+    spool = tmp_path / "data" / "hooktest" / "preserve-queue.jsonl"
+    (line,) = spool.read_text().splitlines()
+    assert json.loads(line) == event
 
 
 def test_recall_after_compaction_restores_this_sessions_own_turns(tmp_path):
@@ -402,11 +469,58 @@ def test_distill_without_a_daemon_spools_the_session_for_the_next_daemon(tmp_pat
     assert not (tmp_path / "data" / "hooktest" / "preserve-queue.jsonl").exists()
 
 
+def test_distill_spools_when_daemon_health_succeeds_but_post_fails(tmp_path, monkeypatch):
+    from agmem.hooks import daemon as daemon_client
+    from agmem.hooks import distill
+
+    transcript = tmp_path / "session-end.jsonl"
+    transcript.write_text("{}\n")
+    event = {
+        "transcript_path": str(transcript),
+        "session_id": "s-end",
+        "cwd": "/w/p",
+    }
+    monkeypatch.setenv("AGMEM_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("AGMEM_NAMESPACE", "hooktest")
+    monkeypatch.setattr(distill, "read_event", lambda: event)
+    monkeypatch.setattr(daemon_client, "health", lambda: {"ok": True})
+
+    def fail_post(_path, _payload):
+        raise daemon_client.DaemonUnavailable("post failed")
+
+    monkeypatch.setattr(daemon_client, "post", fail_post)
+
+    with pytest.raises(SystemExit) as raised:
+        distill.main()
+
+    assert raised.value.code == 0
+    spool = tmp_path / "data" / "hooktest" / "distill-queue.jsonl"
+    (line,) = spool.read_text().splitlines()
+    assert json.loads(line) == event
+    assert not (tmp_path / "data" / "hooktest" / "preserve-queue.jsonl").exists()
+
+
 def test_the_hooks_daemon_runs_the_experience_organizer():
     from agmem.hooks.daemon import spawn_command
 
     argv = spawn_command()
     assert argv[argv.index("--organizers") + 1] == "experience"
+
+
+def test_daemon_post_uses_a_bounded_hook_timeout_from_the_environment(monkeypatch):
+    from agmem.hooks import daemon as daemon_client
+
+    monkeypatch.delenv("AGMEM_HOOK_TIMEOUT_SEC", raising=False)
+    assert daemon_client.request_timeout_s() == 5.0
+
+    monkeypatch.setenv("AGMEM_HOOK_TIMEOUT_SEC", "2.25")
+    assert daemon_client.request_timeout_s() == 2.25
+
+    monkeypatch.setenv("AGMEM_HOOK_TIMEOUT_SEC", "30")
+    assert daemon_client.request_timeout_s() == 5.0
+
+    monkeypatch.setenv("AGMEM_HOOK_TIMEOUT_SEC", "0.01")
+    assert daemon_client.request_timeout_s() == 0.1
 
 
 def test_daemon_distill_makes_a_runbook_from_a_finished_session(tmp_path):

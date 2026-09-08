@@ -41,6 +41,9 @@ from agmem.env import resolve_daemon_url
 # and recall_prompt blocks the turn. Health is a local socket round trip.
 HEALTH_TIMEOUT_S = 0.3
 REQUEST_TIMEOUT_S = 5.0
+REQUEST_TIMEOUT_MIN_S = 0.1
+REQUEST_TIMEOUT_MAX_S = 5.0
+REQUEST_TIMEOUT_ENV = "AGMEM_HOOK_TIMEOUT_SEC"
 DEFAULT_IDLE_TIMEOUT_S = 1800
 
 
@@ -50,6 +53,17 @@ class DaemonUnavailable(Exception):
 
 def _url(path: str, url: str | None = None) -> str:
     return f"{resolve_daemon_url(url)}{path}"
+
+
+def request_timeout_s(value: str | None = None) -> float:
+    raw = os.environ.get(REQUEST_TIMEOUT_ENV) if value is None else value
+    if raw is None or not raw.strip():
+        return REQUEST_TIMEOUT_S
+    try:
+        parsed = float(raw)
+    except ValueError:
+        return REQUEST_TIMEOUT_S
+    return min(REQUEST_TIMEOUT_MAX_S, max(REQUEST_TIMEOUT_MIN_S, parsed))
 
 
 def health(url: str | None = None, timeout: float = HEALTH_TIMEOUT_S) -> dict[str, Any] | None:
@@ -66,7 +80,7 @@ def health(url: str | None = None, timeout: float = HEALTH_TIMEOUT_S) -> dict[st
 
 
 def post(
-    path: str, payload: dict[str, Any], url: str | None = None, timeout: float = REQUEST_TIMEOUT_S
+    path: str, payload: dict[str, Any], url: str | None = None, timeout: float | None = None
 ) -> dict[str, Any]:
     """POST JSON to the daemon and return its JSON reply; `DaemonUnavailable` on any failure."""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -77,7 +91,8 @@ def post(
         headers={"Content-Type": "application/json", "Accept": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        request_timeout = request_timeout_s() if timeout is None else timeout
+        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
             reply = json.loads(resp.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise DaemonUnavailable(str(exc)) from exc
@@ -171,19 +186,27 @@ def ensure_running(
         pass  # a marker that cannot be written costs at most the old race
     env = dict(os.environ)
     env.setdefault("AGMEM_DAEMON_SPAWNED_BY", "hook")
-    log_target = open(log_path, "ab") if log_path else subprocess.DEVNULL  # noqa: SIM115
-    try:
+    if log_path:
+        with open(log_path, "ab") as log_target:
+            subprocess.Popen(
+                spawn_command(
+                    url, DEFAULT_IDLE_TIMEOUT_S if idle_timeout_s is None else idle_timeout_s
+                ),
+                stdin=subprocess.DEVNULL,
+                stdout=log_target,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                env=env,
+            )
+    else:
         subprocess.Popen(
             spawn_command(
                 url, DEFAULT_IDLE_TIMEOUT_S if idle_timeout_s is None else idle_timeout_s
             ),
             stdin=subprocess.DEVNULL,
-            stdout=log_target,
+            stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
             start_new_session=True,
             env=env,
         )
-    finally:
-        if log_target is not subprocess.DEVNULL:
-            log_target.close()
     return False
