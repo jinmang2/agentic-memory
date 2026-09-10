@@ -26,14 +26,15 @@ and a daemon start is requested — the same absent-daemon shape `capture` has.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
+from agmem.env import resolve_namespace
 from agmem.hooks import _resolve, fail_open, read_event
 from agmem.hooks import daemon as daemon_client
+from agmem.hooks.spool import append_spool
 
 SPOOL_NAME = "preserve-queue.jsonl"
 
@@ -48,7 +49,11 @@ def request_body(event: dict[str, Any]) -> dict[str, Any] | None:
     path = str(event.get("transcript_path") or "")
     if not path:
         return None
-    body = {"transcript_path": path, "session_id": str(event.get("session_id") or "")}
+    body = {
+        "transcript_path": path,
+        "session_id": str(event.get("session_id") or ""),
+        "namespace": resolve_namespace(),
+    }
     cwd = str(event.get("cwd") or "")
     if cwd:
         body["cwd"] = cwd
@@ -56,9 +61,7 @@ def request_body(event: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def spool(body: dict[str, Any], path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as fp:
-        fp.write(json.dumps(body, ensure_ascii=False) + "\n")
+    append_spool(body, path)
 
 
 def main() -> None:

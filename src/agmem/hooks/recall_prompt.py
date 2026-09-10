@@ -38,15 +38,32 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections.abc import Mapping
+from typing import TypedDict
 
+from agmem.control import is_auto_injection_eligible, memory_display_text
 from agmem.core.origin import item_cwd, same_project
+from agmem.env import resolve_namespace
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
 from agmem.hooks.capture import prompt_of
 
+
+class RecallItem(TypedDict):
+    id: str | None
+    memory_type: str
+    score: float
+    timestamp: str
+    text: str
+
+
+RequestPayload = dict[str, str | int]
+
 K = 5
 MIN_SCORE = 0.0
 MAX_CHARS = 2000
+# Bound daemon-less BM25 widening to keep the blocking hook within its latency budget.
+MAX_FALLBACK_LIMIT = 4096
 HEADER = (
     "Memory relevant to this prompt (agmem, semantic search over past turns, "
     "best match first). These are retrieved, not verified: treat them as leads "
@@ -61,49 +78,80 @@ FALLBACK_HEADER = (
 )
 
 
-def fallback_items(store, namespace: str, query: str, k: int, project: str | None) -> list[dict]:
+def fallback_items(
+    store, namespace: str, query: str, k: int, project: str | None
+) -> list[RecallItem]:
     """The daemon-less answer: BM25 over runbooks, then over past user turns,
     each gated by project the way the daemon path is. Rendered by `render`, so
     the shape matches what `/hooks/recall` returns."""
-    items: list[dict] = []
-    rb_scores = dict(store.search_lexical_items(query, "runbooks", k=k, namespace=namespace))
-    for d in store.get_items(list(rb_scores), "runbooks"):
-        if project and not same_project(item_cwd(d), project):
-            continue
-        text = d.get("content") or d.get("summary") or d.get("name") or ""
-        items.append(
-            {
-                "id": d.get("id"),
-                "memory_type": "runbooks",
-                "score": rb_scores.get(str(d.get("id")), 0.0),
-                "timestamp": (d.get("origin") or {}).get("ended_at") or "",
-                "text": text,
-            }
+    if k <= 0:
+        return []
+
+    limit = min(k, MAX_FALLBACK_LIMIT)
+    items: list[RecallItem] = []
+    while True:
+        rb_scores: dict[str, float] = dict(
+            store.search_lexical_items(query, "runbooks", k=limit, namespace=namespace)
         )
-    ep_scores = dict(store.search_lexical(query, k=k, namespace=namespace))
-    turns: list[dict] = []
-    for ep in store.get_episodes(list(ep_scores)):
-        if getattr(ep, "role", "user") != "user":
-            continue
-        if project and not same_project(item_cwd(ep), project):
-            continue
-        turns.append(
-            {
-                "id": ep.id,
-                "memory_type": "episodic",
-                "score": ep_scores.get(ep.id, 0.0),
-                "timestamp": ep.timestamp.isoformat(),
-                "text": ep.content,
-            }
+        items = []
+        for d in store.get_items(list(rb_scores), "runbooks"):
+            if not is_auto_injection_eligible(d):
+                continue
+            if project and not same_project(item_cwd(d), project):
+                continue
+            items.append(
+                {
+                    "id": str(d.get("id")) if d.get("id") is not None else None,
+                    "memory_type": "runbooks",
+                    "score": rb_scores.get(str(d.get("id")), 0.0),
+                    "timestamp": str((d.get("origin") or {}).get("ended_at") or ""),
+                    "text": memory_display_text(d),
+                }
+            )
+        pruned_items = _prune(query, items)
+        if len(pruned_items) >= k:
+            return pruned_items[:k]
+        if len(rb_scores) < limit or limit >= MAX_FALLBACK_LIMIT:
+            break
+        limit = min(limit * 2, MAX_FALLBACK_LIMIT)
+
+    turn_k = k - len(pruned_items)
+    limit = min(turn_k, MAX_FALLBACK_LIMIT)
+    turns: list[RecallItem] = []
+    while True:
+        ep_scores: dict[str, float] = dict(
+            store.search_lexical(query, k=limit, namespace=namespace)
         )
-    return (_prune(query, items) + _prune(query, turns))[:k]
+        turns = []
+        for ep in store.get_episodes(list(ep_scores)):
+            if not is_auto_injection_eligible(ep):
+                continue
+            if getattr(ep, "role", "user") != "user":
+                continue
+            if project and not same_project(item_cwd(ep), project):
+                continue
+            turns.append(
+                {
+                    "id": ep.id,
+                    "memory_type": "episodic",
+                    "score": ep_scores.get(ep.id, 0.0),
+                    "timestamp": ep.timestamp.isoformat(),
+                    "text": ep.content,
+                }
+            )
+        pruned_turns = _prune(query, turns)
+        if len(pruned_turns) >= turn_k or len(ep_scores) < limit or limit >= MAX_FALLBACK_LIMIT:
+            break
+        limit = min(limit * 2, MAX_FALLBACK_LIMIT)
+
+    return (pruned_items + pruned_turns)[:k]
 
 
 MIN_TOKEN_CHARS = 4
 _TOKEN = re.compile(r"\w+", re.UNICODE)
 
 
-def _prune(query: str, group: list[dict]) -> list[dict]:
+def _prune(query: str, group: list[RecallItem]) -> list[RecallItem]:
     """Best first, and only hits that share a real word with the prompt. The
     store's FTS query is an OR over every token, so "how do I use the pnpm
     filter" also matches a turn that merely contains "the"; in a small store
@@ -120,18 +168,19 @@ def _prune(query: str, group: list[dict]) -> list[dict]:
     ]
 
 
-def request_body(event: dict, query: str, k: int) -> dict:
+def request_body(event: Mapping[str, str], query: str, k: int) -> RequestPayload:
     """What the daemon is asked: the prompt as the query, and the session's
     cwd so the daemon gates the answer by project (research §6 #9) — memory
     from another repository is not a lead for this one."""
-    body: dict = {"query": query, "k": k}
+    body: RequestPayload = {"query": query, "k": k}
+    body["namespace"] = resolve_namespace()
     cwd = str(event.get("cwd") or "")
     if cwd:
         body["cwd"] = cwd
     return body
 
 
-def render(items: list[dict], header: str = HEADER) -> str:
+def render(items: list[RecallItem], header: str = HEADER) -> str:
     lines = []
     used = 0
     for it in items:
@@ -168,11 +217,12 @@ def main() -> None:
             # `MAX_KNN_K` refusal. The fallback below is already the answer for
             # a daemon that is not there; a daemon that cannot answer is not a
             # better case.
+            reply = None
             try:
                 reply = daemon_client.post("/hooks/recall", request_body(event, query, k))
             except daemon_client.DaemonUnavailable:
-                pass
-            else:
+                reply = None
+            if reply is not None:
                 emit_context(render(list(reply.get("items") or [])), "UserPromptSubmit")
                 sys.exit(0)
         project = str(event.get("cwd") or "") or None

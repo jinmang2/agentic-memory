@@ -42,16 +42,23 @@ import argparse
 import json
 import logging
 import os
+import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from agmem import __version__
 from agmem.config import AgmemConfig, load_config
+from agmem.control import is_auto_injection_eligible
+from agmem.core.origin import item_cwd, same_project
+from agmem.core.types import ScoredItem
 from agmem.env import (
     ENV_CONFIG,
     ENV_DATA_DIR,
@@ -61,10 +68,25 @@ from agmem.env import (
     resolve_namespace,
     validate_namespace,
 )
+from agmem.hooks.spool import SpoolValue, append_spool, drain_spool, spool_status
+from agmem.mcp.management import register_management_tools
 from agmem.memory import AgenticMemory
 from agmem.retrieval.planned import searcher_for
+from agmem.runtime_diagnostics import RuntimeFingerprint, runtime_fingerprint
 
 logger = logging.getLogger("agmem.mcp")
+
+PRESERVE_QUEUE = "preserve-queue.jsonl"
+DISTILL_QUEUE = "distill-queue.jsonl"
+QUEUE_NAMES = (PRESERVE_QUEUE, DISTILL_QUEUE)
+
+
+class RetryableHookJobError(RuntimeError):
+    pass
+
+
+class InvalidHookJobError(RuntimeError):
+    pass
 
 
 class _Registry:
@@ -79,6 +101,11 @@ class _Registry:
     def __init__(self) -> None:
         self.default: str | None = None
         self.config: AgmemConfig | None = None
+        self.config_path: str | None = None
+        self.runtime_fingerprint: RuntimeFingerprint = {
+            "source_sha256": {},
+            "config_sha256": None,
+        }
         self.organizers: list[str] = []
         self._mems: dict[str, AgenticMemory] = {}
         self._lock = threading.Lock()
@@ -108,6 +135,25 @@ class _Registry:
     def open_namespaces(self) -> list[str]:
         with self._lock:
             return sorted(self._mems)
+
+    def _data_root(self) -> Path | None:
+        assert self.config is not None, "server not initialized"
+        return Path(self.config.data_dir) if self.config.data_dir else None
+
+    def _queue_path(self, namespace: str | None, name: str) -> Path | None:
+        mem = self.get(namespace)
+        root = self._data_root()
+        if root is None:
+            return None
+        return root / mem.namespace / name
+
+    def queue_status(self, namespace: str | None = None) -> dict[str, dict[str, int]]:
+        preserve = self._queue_path(namespace, PRESERVE_QUEUE)
+        distill = self._queue_path(namespace, DISTILL_QUEUE)
+        return {
+            "preserve": spool_status(preserve).as_dict() if preserve is not None else {},
+            "distill": spool_status(distill).as_dict() if distill is not None else {},
+        }
 
     def pending_embed(self, namespace: str | None = None) -> int:
         """Episodes in `namespace`'s doc store that have no vector yet.
@@ -154,8 +200,60 @@ class _Registry:
     def backfill_all(self) -> int:
         return sum(
             self.backfill(ns) + self.drain_preserve_queue(ns) + self.drain_distill_queue(ns)
-            for ns in self.open_namespaces()
+            for ns in self._queue_namespaces()
         )
+
+    def _queue_namespaces(self) -> list[str]:
+        names = set(self.open_namespaces())
+        root = self._data_root()
+        if root is None or not root.exists():
+            return sorted(names)
+        for child in root.iterdir():
+            if child.is_symlink() or not child.is_dir():
+                continue
+            try:
+                ns = validate_namespace(child.name)
+            except ValueError:
+                continue
+            if any(self._queue_exists(child / name) for name in QUEUE_NAMES):
+                names.add(ns)
+        return sorted(names)
+
+    @staticmethod
+    def _queue_exists(path: Path) -> bool:
+        return (
+            path.exists()
+            or path.with_name(f"{path.name}.processing").exists()
+            or path.with_name(f"{path.name}.bad").exists()
+        )
+
+    def accept_preserve_job(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._accept_hook_job(body, PRESERVE_QUEUE)
+
+    def accept_distill_job(self, body: dict[str, Any]) -> dict[str, Any]:
+        return self._accept_hook_job(body, DISTILL_QUEUE)
+
+    def _accept_hook_job(self, body: dict[str, Any], queue_name: str) -> dict[str, Any]:
+        transcript_path = body["transcript_path"]
+        if not isinstance(transcript_path, str) or not Path(transcript_path).is_file():
+            raise InvalidHookJobError("transcript_path must name an existing file")
+        namespace = body.get("namespace") or None
+        if namespace is not None and not isinstance(namespace, str):
+            raise InvalidHookJobError("namespace must be a string")
+        queue = self._queue_path(namespace if isinstance(namespace, str) else None, queue_name)
+        if queue is None:
+            raise RetryableHookJobError("hook queue requires a configured data directory")
+        mem = self.get(namespace if isinstance(namespace, str) else None)
+        row: dict[str, SpoolValue] = {
+            "transcript_path": transcript_path,
+            "session_id": str(body.get("session_id") or ""),
+            "namespace": mem.namespace,
+        }
+        cwd = body.get("cwd")
+        if isinstance(cwd, str) and cwd:
+            row["cwd"] = cwd
+        append_spool(row, queue)
+        return {"queued": True, "transcript_path": transcript_path, "namespace": mem.namespace}
 
     def distill(self, transcript_path: str, namespace: str | None = None) -> dict[str, Any]:
         """Ingest one finished session and distil it (`agmem.hooks.distill`):
@@ -168,6 +266,9 @@ class _Registry:
         traj = load(transcript_path)
         ingest = mem.add_session(traj, distill=True, admit=SessionAdmission())
         mem.flush()
+        status = mem.session_distill_status(traj)
+        if status in {"failed", "started"}:
+            raise RetryableHookJobError(f"session distill ended with retryable status {status}")
         live = [
             i
             for i in mem.doc_store.list_items("runbooks", namespace=mem.namespace)
@@ -179,36 +280,27 @@ class _Registry:
             "admitted": ingest.admitted,
             "reason": ingest.reason,
             "dispatched": ingest.dispatched,
+            "distill_status": status,
             "runbooks": len(live),
         }
 
     def drain_distill_queue(self, namespace: str | None = None) -> int:
         """Distil every session the hook spooled while no daemon ran."""
-        return self._drain_queue(namespace, "distill-queue.jsonl", self.distill)
+        return self._drain_queue(namespace, DISTILL_QUEUE, self.distill)
 
-    def _drain_queue(self, namespace: str | None, name: str, action: Any) -> int:
-        """Run `action(path, namespace)` for every spooled transcript that still
-        exists, then truncate the spool. Returns how many were taken in."""
+    def _drain_queue[T](
+        self, namespace: str | None, name: str, action: Callable[[str, str], T]
+    ) -> int:
         mem = self.get(namespace)
-        root = Path(mem.config.data_dir) if mem.config.data_dir else None
+        root = self._data_root()
         if root is None:
             return 0
         spool = root / mem.namespace / name
-        if not spool.exists():
-            return 0
-        lines = [line for line in spool.read_text(encoding="utf-8").splitlines() if line.strip()]
-        done = 0
-        for line in lines:
-            try:
-                body = json.loads(line)
-                path = str(body.get("transcript_path") or "")
-                if path and Path(path).is_file():
-                    action(path, mem.namespace)
-                    done += 1
-            except Exception:
-                logger.exception("agmem daemon: a spooled transcript (%s) failed", name)
-        spool.write_text("", encoding="utf-8")
-        return done
+
+        def run(path: str) -> None:
+            action(path, mem.namespace)
+
+        return drain_spool(spool, run)
 
     def preserve(self, transcript_path: str, namespace: str | None = None) -> dict[str, Any]:
         """Ingest one transcript's raw steps under its session id, no model
@@ -229,7 +321,7 @@ class _Registry:
 
     def drain_preserve_queue(self, namespace: str | None = None) -> int:
         """Preserve every transcript the hook spooled while no daemon ran."""
-        return self._drain_queue(namespace, "preserve-queue.jsonl", self.preserve)
+        return self._drain_queue(namespace, PRESERVE_QUEUE, self.preserve)
 
     def close_all(self) -> None:
         with self._lock:
@@ -274,6 +366,8 @@ def get_searcher(namespace: str | None = None):
 
 
 mcp = FastMCP("agmem")
+
+register_management_tools(mcp, get_mem)
 
 
 @mcp.tool()
@@ -331,7 +425,7 @@ def search_memory(
     another project tree is not served (origin gating).
     Returns rendered context plus item provenance."""
     types = tuple(t.strip() for t in memory_types.split(",") if t.strip()) or None
-    metrics: dict = {}
+    metrics: dict[str, Any] = {}
     bundle = get_searcher(namespace).search(
         query, memory_types=types, k=k, metrics=metrics, project=project
     )
@@ -438,9 +532,34 @@ def _item_text(item) -> str:
     return text if isinstance(text, str) else str(item)
 
 
+def _item_id(item) -> str | None:
+    item_id = getattr(item, "id", None)
+    if isinstance(item_id, str):
+        return item_id
+    data = getattr(item, "data", None)
+    if isinstance(data, dict):
+        data_id = data.get("id")
+        if isinstance(data_id, str):
+            return data_id
+    return None
+
+
 def _item_timestamp(item) -> str | None:
     stamp = getattr(item, "timestamp", None)
+    if stamp is None:
+        return None
     return stamp.isoformat() if hasattr(stamp, "isoformat") else None
+
+
+def _hook_recall_filter(project: str | None) -> Callable[[ScoredItem], bool]:
+    def eligible(scored: ScoredItem) -> bool:
+        if not is_auto_injection_eligible(scored.item):
+            return False
+        if scored.memory_type == "episodic" and getattr(scored.item, "role", "user") != "user":
+            return False
+        return project is None or same_project(item_cwd(scored.item), project)
+
+    return eligible
 
 
 @mcp.custom_route("/health", methods=["GET"])
@@ -459,18 +578,25 @@ async def health(request: Request) -> JSONResponse:
     was down are searchable yet, and the backfill tests polling for zero.
     Neither is on a hook's path."""
     now = time.monotonic()
-    payload = {
+    payload: dict[str, Any] = {
         "ok": True,
         "pid": os.getpid(),
+        "package_version": __version__,
+        "module_path": __file__,
+        "interpreter": sys.executable,
+        "data_dir": str(_registry.config.data_dir) if _registry.config is not None else None,
+        "config_path": _registry.config_path,
+        "runtime_fingerprint": _registry.runtime_fingerprint,
         "default_namespace": _registry.default,
         "open_namespaces": _registry.open_namespaces(),
         "uptime_s": round(now - _started_at, 1),
         "idle_s": round(now - _last_activity, 1),
     }
     if request.query_params.get("pending"):
-        payload["pending_embed"] = {
-            ns: _registry.pending_embed(ns) for ns in payload["open_namespaces"]
-        }
+        open_namespaces = _registry.open_namespaces()
+        payload["pending_embed"] = {ns: _registry.pending_embed(ns) for ns in open_namespaces}
+    if request.query_params.get("queues"):
+        payload["queues"] = {ns: _registry.queue_status(ns) for ns in _registry._queue_namespaces()}
     return JSONResponse(payload)
 
 
@@ -481,7 +607,7 @@ async def hooks_capture(request: Request) -> JSONResponse:
     Body: `{content, role?, meta?, namespace?}`. Runs on a worker thread because
     the write embeds synchronously and must not block the event loop for the
     other hook that is waiting on `/hooks/recall`."""
-    import anyio
+    from anyio import to_thread
 
     body = await request.json()
     content = body.get("content")
@@ -497,7 +623,7 @@ async def hooks_capture(request: Request) -> JSONResponse:
         return {"stored": True, "episode_id": episode.id, "namespace": mem.namespace}
 
     try:
-        return JSONResponse(await anyio.to_thread.run_sync(_write))
+        return JSONResponse(await to_thread.run_sync(_write))
     except Exception as exc:
         logger.exception("hooks/capture failed")
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -510,7 +636,7 @@ async def hooks_preserve(request: Request) -> JSONResponse:
     is done — the hook's timeout is generous enough for a transcript, and a
     reply that says what was stored is worth more than a queued acknowledgement
     nobody reads. No model is called."""
-    import anyio
+    from anyio import to_thread
 
     body = await request.json()
     path = body.get("transcript_path")
@@ -518,9 +644,16 @@ async def hooks_preserve(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "transcript_path must name an existing file"}, status_code=400
         )
-    namespace = body.get("namespace") or None
     try:
-        result = await anyio.to_thread.run_sync(lambda: _registry.preserve(path, namespace))
+        accepted = _registry.accept_preserve_job(body)
+        namespace = accepted["namespace"]
+        done = await to_thread.run_sync(lambda: _registry.drain_preserve_queue(namespace))
+        if done < 1:
+            status = _registry.queue_status(namespace)["preserve"]
+            return JSONResponse(
+                {"error": "preserve job retained", "queue": status}, status_code=500
+            )
+        result = await to_thread.run_sync(lambda: _registry.preserve(path, namespace))
         return JSONResponse({"stored": True, **result})
     except Exception as exc:
         logger.exception("hooks/preserve failed")
@@ -538,16 +671,21 @@ async def hooks_distill(request: Request) -> JSONResponse:
         return JSONResponse(
             {"error": "transcript_path must name an existing file"}, status_code=400
         )
-    namespace = body.get("namespace") or None
+    try:
+        accepted = _registry.accept_distill_job(body)
+    except (InvalidHookJobError, RetryableHookJobError) as exc:
+        logger.exception("hooks/distill accept failed")
+        return JSONResponse({"error": str(exc)}, status_code=500)
 
     def _work() -> None:
         try:
-            logger.info("hooks/distill: %s", _registry.distill(path, namespace))
+            done = _registry.drain_distill_queue(accepted["namespace"])
+            logger.info("hooks/distill: drained %d durable job(s)", done)
         except Exception:
             logger.exception("hooks/distill failed for %s", path)
 
     threading.Thread(target=_work, name="agmem-distill", daemon=True).start()
-    return JSONResponse({"queued": True, "transcript_path": path})
+    return JSONResponse(accepted)
 
 
 @mcp.custom_route("/hooks/recall", methods=["POST"])
@@ -556,35 +694,50 @@ async def hooks_recall(request: Request) -> JSONResponse:
 
     Returns the items rather than a rendered block so the hook, which owns the
     words the model sees, decides the header and the truncation."""
-    import anyio
+    from anyio import to_thread
 
     body = await request.json()
     query = body.get("query")
     if not isinstance(query, str) or not query.strip():
         return JSONResponse({"error": "query required"}, status_code=400)
-    k = int(body.get("k") or 5)
+    raw_k = body.get("k")
+    try:
+        k = 5 if raw_k is None or raw_k == "" else int(raw_k)
+    except (TypeError, ValueError):
+        return JSONResponse({"error": "k must be an integer"}, status_code=400)
+    if k < 0:
+        return JSONResponse({"error": "k must be non-negative"}, status_code=400)
     namespace = body.get("namespace") or None
-    project = body.get("cwd") or None  # the hook's session cwd: gate by project
+    raw_project = body.get("cwd")
+    project = raw_project if isinstance(raw_project, str) and raw_project else None
 
     def _search():
         mem = get_mem(namespace)
-        bundle = get_searcher(namespace).search(query, k=k, project=project)
+        if k == 0:
+            return {"namespace": mem.namespace, "items": []}
+        bundle = get_searcher(namespace).search(
+            query,
+            k=k,
+            item_filter=_hook_recall_filter(project),
+            result_limit=k,
+        )
+        items = sorted(bundle.items, key=lambda scored: scored.score, reverse=True)[:k]
         return {
             "namespace": mem.namespace,
             "items": [
                 {
-                    "id": getattr(s.item, "id", None),
+                    "id": _item_id(s.item),
                     "memory_type": s.memory_type,
                     "score": round(float(s.score), 4),
                     "timestamp": _item_timestamp(s.item),
                     "text": _item_text(s.item),
                 }
-                for s in bundle.items
+                for s in items
             ],
         }
 
     try:
-        return JSONResponse(await anyio.to_thread.run_sync(_search))
+        return JSONResponse(await to_thread.run_sync(_search))
     except Exception as exc:
         logger.exception("hooks/recall failed")
         return JSONResponse({"error": str(exc)}, status_code=500)
@@ -713,6 +866,8 @@ def main() -> None:
     namespace = resolve_namespace(args.namespace)
 
     _registry.start(namespace, [o.strip() for o in args.organizers.split(",") if o.strip()], config)
+    _registry.config_path = str(config_path) if config_path is not None else None
+    _registry.runtime_fingerprint = runtime_fingerprint(config_path)
     logger.info(
         "agmem MCP: namespace=%s data_dir=%s config=%s organizers=%s profile=%s",
         namespace,

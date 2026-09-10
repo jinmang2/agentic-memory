@@ -311,8 +311,9 @@ def test_recall_prompt_asks_the_daemon_to_gate_by_the_sessions_cwd():
         "query": "q",
         "k": 5,
         "cwd": "/w/proj-a",
+        "namespace": "main",
     }
-    assert request_body({"prompt": "q"}, "q", 3) == {"query": "q", "k": 3}
+    assert request_body({"prompt": "q"}, "q", 3) == {"query": "q", "k": 3, "namespace": "main"}
 
 
 def test_preserve_without_a_daemon_spools_the_transcript_for_the_next_daemon(tmp_path):
@@ -337,6 +338,7 @@ def test_preserve_without_a_daemon_spools_the_transcript_for_the_next_daemon(tmp
         "transcript_path": str(transcript),
         "session_id": "s-compact",
         "cwd": "/w/p",
+        "namespace": "hooktest",
     }
     # an event without a transcript is a no-op
     assert _run("agmem.hooks.preserve", {"session_id": "x"}, tmp_path).returncode == 0
@@ -370,7 +372,7 @@ def test_preserve_spools_when_daemon_health_succeeds_but_post_fails(tmp_path, mo
     assert raised.value.code == 0
     spool = tmp_path / "data" / "hooktest" / "preserve-queue.jsonl"
     (line,) = spool.read_text().splitlines()
-    assert json.loads(line) == event
+    assert json.loads(line) == {**event, "namespace": "hooktest"}
 
 
 def test_recall_after_compaction_restores_this_sessions_own_turns(tmp_path):
@@ -496,7 +498,7 @@ def test_distill_spools_when_daemon_health_succeeds_but_post_fails(tmp_path, mon
     assert raised.value.code == 0
     spool = tmp_path / "data" / "hooktest" / "distill-queue.jsonl"
     (line,) = spool.read_text().splitlines()
-    assert json.loads(line) == event
+    assert json.loads(line) == {**event, "namespace": "hooktest"}
     assert not (tmp_path / "data" / "hooktest" / "preserve-queue.jsonl").exists()
 
 

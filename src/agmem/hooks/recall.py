@@ -30,7 +30,9 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
+from agmem.control import is_auto_injection_eligible, memory_display_text
 from agmem.core.origin import item_cwd, same_project
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
@@ -60,7 +62,9 @@ RUNBOOK_HEADER = (
 )
 
 
-def recent_runbooks(store, namespace: str, project: str | None, limit: int = MAX_RUNBOOKS) -> list:
+def recent_runbooks(
+    store, namespace: str, project: str | None, limit: int = MAX_RUNBOOKS
+) -> list[dict[str, Any]]:
     """The newest live runbooks written from `project` (research §6 #9: another
     repository's experience is not this session's), newest session first.
 
@@ -68,7 +72,11 @@ def recent_runbooks(store, namespace: str, project: str | None, limit: int = MAX
     SessionStart listing showed the user's recent turns and nothing of what the
     previous sessions had been distilled into, so a runbook reached the model
     only when a prompt happened to retrieve it."""
-    rows = [d for d in store.list_items("runbooks", namespace=namespace) if not d.get("deleted")]
+    rows = [
+        d
+        for d in store.list_items("runbooks", namespace=namespace)
+        if not d.get("deleted") and is_auto_injection_eligible(d)
+    ]
     if project:
         rows = [d for d in rows if same_project(item_cwd(d), project)]
     # Newest session first; inside a session, the latest work first — a
@@ -84,7 +92,7 @@ def recent_runbooks(store, namespace: str, project: str | None, limit: int = MAX
     return rows[:limit]
 
 
-def render_runbooks(rows: list) -> str:
+def render_runbooks(rows: list[dict[str, Any]]) -> str:
     """One line per runbook. A session's runbooks share one session summary
     (the organizer writes it once per session), so the summary follows the
     first runbook of each session only; the keywords are per runbook."""
@@ -92,8 +100,15 @@ def render_runbooks(rows: list) -> str:
     seen_summaries: set[str] = set()
     for d in rows:
         when = str((d.get("origin") or {}).get("ended_at") or "")[:10] or "?"
-        name = " ".join(str(d.get("name") or "").split())
+        name = " ".join(memory_display_text(d).split())
         if not name:
+            continue
+        correction = d.get("correction")
+        if isinstance(correction, dict):
+            line = f"- ({when}) {name}"
+            if len(line) > 300:
+                line = line[:297] + "..."
+            lines.append(line)
             continue
         marks = " ".join(f"{k}:{d[k]}" for k in ("outcome", "stage") if d.get(k))
         keywords = d.get("keywords") or []
@@ -117,10 +132,12 @@ def render_runbooks(rows: list) -> str:
     return RUNBOOK_HEADER + "\n" + "\n".join(lines)
 
 
-def render(episodes: list, header: str = HEADER) -> str:
+def render(episodes: list[Any], header: str = HEADER) -> str:
     lines = []
     used = 0
     for ep in episodes:
+        if not is_auto_injection_eligible(ep):
+            continue
         content = " ".join(str(getattr(ep, "content", "") or "").split())
         if not content:
             continue

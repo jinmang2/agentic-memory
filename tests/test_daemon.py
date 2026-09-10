@@ -24,6 +24,8 @@ import urllib.request
 
 import pytest
 
+from agmem import __version__
+
 FAKE_EMBEDDER_TOML = '[profile]\nname = "lite"\n\n[override]\nembedder = "FakeEmbedder"\n'
 STARTUP_S = 40.0
 
@@ -34,9 +36,14 @@ def _free_port() -> int:
         return s.getsockname()[1]
 
 
-def _health(url: str, pending: bool = False) -> dict | None:
+def _health(url: str, pending: bool = False, queues: bool = False) -> dict | None:
     try:
-        query = "?pending=1" if pending else ""
+        params = []
+        if pending:
+            params.append("pending=1")
+        if queues:
+            params.append("queues=1")
+        query = "?" + "&".join(params) if params else ""
         with urllib.request.urlopen(f"{url}/health{query}", timeout=0.5) as resp:
             return json.loads(resp.read())
     except Exception:  # noqa: BLE001 — "down" is a normal answer here
@@ -135,14 +142,34 @@ def test_health_reports_the_store_it_resolved(daemon):
     """The daemon resolves namespace and data dir through the same environment
     the hooks use (`agmem.env`), and says which one it landed on."""
     payload = _health(daemon["url"])
+    assert payload is not None
     assert payload["ok"] is True
     assert payload["default_namespace"] == "daemontest"
     assert payload["open_namespaces"] == ["daemontest"]
     assert payload["pid"] == daemon["proc"].pid
+    assert payload["package_version"] == __version__
+    assert payload["data_dir"] == str(daemon["root"] / "data")
+    assert payload["config_path"] == str(daemon["root"] / "agmem.toml")
+    assert payload["interpreter"]
+    assert payload["module_path"].endswith("src/agmem/mcp/server.py")
+    fingerprint = payload["runtime_fingerprint"]
+    assert fingerprint["config_sha256"]
+    assert fingerprint["source_sha256"]["mcp/server.py"]
+    assert fingerprint["source_sha256"]["memory.py"]
     # Liveness only by default: the scan behind `pending_embed` is over the
     # hooks' 0.3 s budget on a real store, so it is asked for explicitly.
     assert "pending_embed" not in payload
-    assert _health(daemon["url"], pending=True)["pending_embed"] == {"daemontest": 0}
+    assert "queues" not in payload
+    pending_payload = _health(daemon["url"], pending=True)
+    assert pending_payload is not None
+    assert pending_payload["pending_embed"] == {"daemontest": 0}
+    queue_payload = _health(daemon["url"], queues=True)
+    assert queue_payload is not None
+    queues = queue_payload["queues"]["daemontest"]
+    assert queues == {
+        "preserve": {"queued": 0, "processing": 0, "bad": 0},
+        "distill": {"queued": 0, "processing": 0, "bad": 0},
+    }
 
 
 def test_capture_hook_takes_the_daemon_path_and_the_write_is_searchable(daemon):
@@ -336,6 +363,12 @@ def test_codex_hooks_round_trip_through_the_http_daemon_with_fake_llm(tmp_path):
                 )
                 + "\n"
             )
+            preserved_end = _run_hook(
+                "agmem.hooks.preserve",
+                {"session_id": "codex-end", "transcript_path": str(end_rollout)},
+                env,
+            )
+            assert preserved_end.returncode == 0, preserved_end.stderr[-1500:]
             distill = _run_hook(
                 "agmem.hooks.distill",
                 {"session_id": "codex-end", "transcript_path": str(end_rollout)},
@@ -361,6 +394,20 @@ def test_codex_hooks_round_trip_through_the_http_daemon_with_fake_llm(tmp_path):
                 assert len(requests) == 1
             finally:
                 store.close()
+            for module in ("recall", "recall_prompt"):
+                recalled = _run_hook(
+                    f"agmem.hooks.{module}",
+                    {
+                        "session_id": "next-session",
+                        "cwd": str(tmp_path),
+                        "prompt": "codex-hook-e2e",
+                    },
+                    env,
+                )
+                assert recalled.returncode == 0, recalled.stderr
+                context = json.loads(recalled.stdout)["hookSpecificOutput"]["additionalContext"]
+                assert "Keep Codex hook memory" in context
+            assert len(requests) == 1
         finally:
             proc.terminate()
             try:
@@ -408,6 +455,11 @@ def test_ensure_running_spawns_a_daemon_that_comes_up(tmp_path):
     env.pop("AGMEM_NO_DAEMON")
     old = dict(os.environ)
     os.environ.update(env)
+    # A dogfooding machine exports AGMEM_NO_DAEMON=1 from the harness settings
+    # (the systemd daemon owns the port there), and `ensure_running` reads the
+    # process environment, not `env`: dropping the key from the dict alone left
+    # this test failing everywhere the product is actually installed.
+    os.environ.pop("AGMEM_NO_DAEMON", None)
     try:
         assert daemon_client.health(url) is None
         assert daemon_client.ensure_running(url, log_path=tmp_path / "daemon.log") is False
@@ -472,3 +524,81 @@ def test_a_hook_that_fires_while_the_daemon_is_still_starting_does_not_spawn_a_s
     assert daemon_client.ensure_running(url) is False
     assert len(spawned) == 2
     marker.unlink(missing_ok=True)
+
+
+def test_prompt_capture_and_recall_use_hook_namespace_when_daemon_default_differs(daemon):
+    env = {**daemon["env"], "AGMEM_NAMESPACE": "prompt-isolation"}
+    query = "namespaceparityquartz"
+    _post(daemon["url"], "/hooks/capture", {"content": query + " wrongdefault"})
+    captured = _run_hook(
+        "agmem.hooks.capture",
+        {"prompt": query + " correctnamespace", "cwd": "/work/parity"},
+        env,
+    )
+    assert captured.returncode == 0, captured.stderr
+    recalled = _run_hook("agmem.hooks.recall_prompt", {"prompt": query, "cwd": "/work/parity"}, env)
+    assert recalled.returncode == 0, recalled.stderr
+    context = json.loads(recalled.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "semantic search" in context
+    assert "correctnamespace" in context
+    assert "wrongdefault" not in context
+    fallback = _run_hook(
+        "agmem.hooks.recall_prompt",
+        {"prompt": query, "cwd": "/work/parity"},
+        {**env, "AGMEM_DAEMON_URL": "http://127.0.0.1:1"},
+    )
+    fallback_context = json.loads(fallback.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert "keyword match" in fallback_context
+    assert "correctnamespace" in fallback_context
+    assert "wrongdefault" not in fallback_context
+
+
+def test_lifecycle_hooks_use_hook_namespace_when_daemon_default_differs(daemon):
+    env = {**daemon["env"], "AGMEM_NAMESPACE": "lifecycle-isolation"}
+    for hook_name in ("preserve", "distill"):
+        query = f"lifecyclequartz{hook_name}"
+        transcript = daemon["root"] / f"{hook_name}-namespace.jsonl"
+        transcript.write_text(
+            "\n".join(
+                json.dumps(
+                    {
+                        "type": role,
+                        "uuid": f"{hook_name}-{role}",
+                        "sessionId": f"lifecycle-{hook_name}",
+                        "timestamp": "2026-09-09T00:00:00.000Z",
+                        "cwd": "/work/lifecycle",
+                        "message": {
+                            "role": role,
+                            "content": content
+                            if role == "user"
+                            else [{"type": "text", "text": content}],
+                        },
+                    }
+                )
+                for role, content in (
+                    ("user", query + " remember this decision"),
+                    ("assistant", "done"),
+                )
+            )
+            + "\n"
+        )
+        result = _run_hook(
+            f"agmem.hooks.{hook_name}",
+            {"session_id": f"lifecycle-{hook_name}", "transcript_path": str(transcript)},
+            env,
+        )
+        assert result.returncode == 0, result.stderr
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            reply = _post(
+                daemon["url"],
+                "/hooks/recall",
+                {"query": query, "namespace": "lifecycle-isolation", "k": 10},
+            )
+            if any(query in item["text"] for item in reply["items"]):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"{hook_name} did not write to hook namespace")
+        default = _post(daemon["url"], "/hooks/recall", {"query": query, "k": 10})
+        assert not any(query in item["text"] for item in default["items"])

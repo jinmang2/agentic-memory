@@ -44,6 +44,7 @@ import os
 import sys
 from typing import Any
 
+from agmem.env import resolve_namespace
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import fail_open, open_doc_store, read_event
 
@@ -107,7 +108,13 @@ def main() -> None:
         if daemon_client.health() is not None:
             try:
                 daemon_client.post(
-                    "/hooks/capture", {"content": text[:MAX_CHARS], "role": "user", "meta": meta}
+                    "/hooks/capture",
+                    {
+                        "content": text[:MAX_CHARS],
+                        "role": "user",
+                        "meta": meta,
+                        "namespace": resolve_namespace(),
+                    },
                 )
             except daemon_client.DaemonUnavailable:
                 write_without_daemon(text[:MAX_CHARS], meta)
