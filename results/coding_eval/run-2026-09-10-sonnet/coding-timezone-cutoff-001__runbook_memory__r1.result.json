@@ -1,0 +1,19 @@
+{
+  "arm": "runbook_memory",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 989,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 207990,
+    "provider_usd": 0.1418472,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-timezone-cutoff-001__runbook_memory__r1",
+  "latency_ms": 19830,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-timezone-cutoff-001"
+}

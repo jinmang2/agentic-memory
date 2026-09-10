@@ -1,0 +1,19 @@
+{
+  "arm": "runbook_memory",
+  "correction_required": false,
+  "cost": {
+    "completion_tokens": 893,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 249234,
+    "provider_usd": 0.14955000000000002,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-corrected-api-field-001__runbook_memory__r1",
+  "latency_ms": 33419,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-corrected-api-field-001"
+}

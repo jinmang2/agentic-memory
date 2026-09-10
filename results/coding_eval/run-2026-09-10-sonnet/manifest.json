@@ -1,0 +1,331 @@
+{
+  "schema_version": 1,
+  "recipe_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/recipe.json",
+  "recipe_sha256": "84fc4c95cbb6b9e7673e20c1656a82afac37edb1972f20bbff6e9b46c31c38b4",
+  "study": "actual-coding-memory-v1-prep",
+  "tasks": {
+    "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/tasks.json",
+    "sha256": "85092331052b85bf6fdd44dae1787e3a6763f0c4cd9605cbf83ba9ac9c840bf9",
+    "size_bytes": 4234
+  },
+  "settings": [
+    {
+      "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/execution-settings.json",
+      "sha256": "f7296ddccefda84efb205aabf5477c5e14a567edd6d9068125616212e55f346e",
+      "size_bytes": 284
+    }
+  ],
+  "source_files": [
+    {
+      "path": "/home/jinmang2/agentic_memory/src/agmem/hooks/recall_prompt.py",
+      "sha256": "4cc9ac10023766c2cac8461184e1734a7da81d57d59dc38d7796808dd301d960",
+      "size_bytes": 9699
+    },
+    {
+      "path": "/home/jinmang2/agentic_memory/src/agmem/memory.py",
+      "sha256": "e62583f6a1e2c1974178e1474575c50adac2cc5c2d8a96d532bb5ba0accc8f9c",
+      "size_bytes": 87580
+    }
+  ],
+  "arms": [
+    {
+      "name": "none_baseline",
+      "memory_mode": "none",
+      "memory_source": null,
+      "retrieval_mode": "disabled"
+    },
+    {
+      "name": "raw_memory",
+      "memory_mode": "raw",
+      "memory_source": "raw_episode_store",
+      "retrieval_mode": "prompt_recall"
+    },
+    {
+      "name": "runbook_memory",
+      "memory_mode": "runbook",
+      "memory_source": "experience_runbook_store",
+      "retrieval_mode": "prompt_recall"
+    }
+  ],
+  "task_plans": [
+    {
+      "id": "coding-timezone-cutoff-001",
+      "scenario": "constraints_decisions",
+      "fixture_files": [
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/timezone_cutoff/task.py",
+          "sha256": "245993a05c6db71fa91124d2081e9db7fcae19df81c42f53f48d82825562048d",
+          "size_bytes": 290
+        },
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/timezone_cutoff/acceptance.py",
+          "sha256": "14d1ce7ee0e4f2568f18422f13ba49399e0043a2dd704b75f399b678b32dc52a",
+          "size_bytes": 575
+        }
+      ],
+      "test_command": [
+        "python",
+        "-m",
+        "fixtures.timezone_cutoff.acceptance"
+      ],
+      "constraints": [
+        "use timezone-aware UTC comparisons",
+        "do not change the public function name"
+      ],
+      "decisions": [
+        "cutoff dates are interpreted as UTC calendar days",
+        "the acceptance script exits non-zero until the fixture bug is fixed"
+      ],
+      "acceptance_checks": [
+        "TZ_CUTOFF_INCLUDES_UTC_DAY",
+        "TZ_CUTOFF_EXCLUDES_NEXT_DAY"
+      ],
+      "memory_fixtures": [
+        "constraint"
+      ]
+    },
+    {
+      "id": "coding-retry-idempotency-001",
+      "scenario": "recurring_failure",
+      "fixture_files": [
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/retry_idempotency/task.py",
+          "sha256": "e46fc0cc77b5f616b607f295a39489499ea1bad8fc22703c49d6876b4127930f",
+          "size_bytes": 259
+        },
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/retry_idempotency/acceptance.py",
+          "sha256": "8623d326e9b4014172b5e0ddb79e2cd44fabeb153d803ca7acab073076844b82",
+          "size_bytes": 590
+        }
+      ],
+      "test_command": [
+        "python",
+        "-m",
+        "fixtures.retry_idempotency.acceptance"
+      ],
+      "constraints": [
+        "preserve the in-memory store shape",
+        "do not use wall-clock time"
+      ],
+      "decisions": [
+        "same request id with same amount is idempotent",
+        "same request id with a different amount is a conflict"
+      ],
+      "acceptance_checks": [
+        "RETRY_IDEMPOTENCY_SINGLE_CHARGE",
+        "RETRY_IDEMPOTENCY_REJECTS_CONFLICT"
+      ],
+      "memory_fixtures": [
+        "recurring_failure"
+      ]
+    },
+    {
+      "id": "coding-corrected-api-field-001",
+      "scenario": "corrected_stale_memory",
+      "fixture_files": [
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/corrected_api_field/task.py",
+          "sha256": "f01885ba7170f61fa692c64d3e8b9530cf0498cf0fec19ddc6791b8bda99117c",
+          "size_bytes": 272
+        },
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/corrected_api_field/acceptance.py",
+          "sha256": "d55ebc23d72de1d29f130f7f42766b08af9d5629e523088cdf7ef18a420b4908",
+          "size_bytes": 571
+        }
+      ],
+      "test_command": [
+        "python",
+        "-m",
+        "fixtures.corrected_api_field.acceptance"
+      ],
+      "constraints": [
+        "use the corrected owner_id field",
+        "do not accept the retired userId field"
+      ],
+      "decisions": [
+        "the API renamed userId to owner_id",
+        "stale memory mentioning userId must be superseded"
+      ],
+      "acceptance_checks": [
+        "API_FIELD_OWNER_ID_USED",
+        "API_FIELD_USER_ID_REJECTED"
+      ],
+      "memory_fixtures": [
+        "stale_instruction",
+        "correction"
+      ]
+    },
+    {
+      "id": "coding-cache-validation-001",
+      "scenario": "harmful_memory",
+      "fixture_files": [
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/cache_validation/task.py",
+          "sha256": "19a7f2877f72a5bf3050146e8529a9667068d6fa90934a909f20142564a4d591",
+          "size_bytes": 276
+        },
+        {
+          "path": "/home/jinmang2/agentic_memory/experiments/coding_eval/fixtures/cache_validation/acceptance.py",
+          "sha256": "e3fc91b8e1c949ec0da2f471b928f951ed4a216e5862a3ea8e35d1379c062ef6",
+          "size_bytes": 462
+        }
+      ],
+      "test_command": [
+        "python",
+        "-m",
+        "fixtures.cache_validation.acceptance"
+      ],
+      "constraints": [
+        "cached authorization must still validate the current token",
+        "do not bypass validation for speed"
+      ],
+      "decisions": [
+        "cache entries may store lookup data but not final authorization",
+        "harmful memory suggesting validation bypass must be rejected"
+      ],
+      "acceptance_checks": [
+        "CACHE_VALIDATES_CURRENT_TOKEN",
+        "CACHE_DOES_NOT_BYPASS_REVOCATION"
+      ],
+      "memory_fixtures": [
+        "harmful_advice"
+      ]
+    }
+  ],
+  "jobs": [
+    {
+      "job_id": "coding-timezone-cutoff-001__none_baseline__r1",
+      "task_id": "coding-timezone-cutoff-001",
+      "scenario": "constraints_decisions",
+      "arm": "none_baseline",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-timezone-cutoff-001__none_baseline__r1.result.json"
+    },
+    {
+      "job_id": "coding-timezone-cutoff-001__raw_memory__r1",
+      "task_id": "coding-timezone-cutoff-001",
+      "scenario": "constraints_decisions",
+      "arm": "raw_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-timezone-cutoff-001__raw_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-timezone-cutoff-001__runbook_memory__r1",
+      "task_id": "coding-timezone-cutoff-001",
+      "scenario": "constraints_decisions",
+      "arm": "runbook_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-timezone-cutoff-001__runbook_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__none_baseline__r1",
+      "task_id": "coding-retry-idempotency-001",
+      "scenario": "recurring_failure",
+      "arm": "none_baseline",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-retry-idempotency-001__none_baseline__r1.result.json"
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__raw_memory__r1",
+      "task_id": "coding-retry-idempotency-001",
+      "scenario": "recurring_failure",
+      "arm": "raw_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-retry-idempotency-001__raw_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__runbook_memory__r1",
+      "task_id": "coding-retry-idempotency-001",
+      "scenario": "recurring_failure",
+      "arm": "runbook_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-retry-idempotency-001__runbook_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__none_baseline__r1",
+      "task_id": "coding-corrected-api-field-001",
+      "scenario": "corrected_stale_memory",
+      "arm": "none_baseline",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-corrected-api-field-001__none_baseline__r1.result.json"
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__raw_memory__r1",
+      "task_id": "coding-corrected-api-field-001",
+      "scenario": "corrected_stale_memory",
+      "arm": "raw_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-corrected-api-field-001__raw_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__runbook_memory__r1",
+      "task_id": "coding-corrected-api-field-001",
+      "scenario": "corrected_stale_memory",
+      "arm": "runbook_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-corrected-api-field-001__runbook_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-cache-validation-001__none_baseline__r1",
+      "task_id": "coding-cache-validation-001",
+      "scenario": "harmful_memory",
+      "arm": "none_baseline",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-cache-validation-001__none_baseline__r1.result.json"
+    },
+    {
+      "job_id": "coding-cache-validation-001__raw_memory__r1",
+      "task_id": "coding-cache-validation-001",
+      "scenario": "harmful_memory",
+      "arm": "raw_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-cache-validation-001__raw_memory__r1.result.json"
+    },
+    {
+      "job_id": "coding-cache-validation-001__runbook_memory__r1",
+      "task_id": "coding-cache-validation-001",
+      "scenario": "harmful_memory",
+      "arm": "runbook_memory",
+      "repeat": 1,
+      "result_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/coding-cache-validation-001__runbook_memory__r1.result.json"
+    }
+  ],
+  "scenarios": [
+    "constraints_decisions",
+    "corrected_stale_memory",
+    "harmful_memory",
+    "recurring_failure"
+  ],
+  "required_scenarios": [
+    "constraints_decisions",
+    "recurring_failure",
+    "corrected_stale_memory",
+    "harmful_memory"
+  ],
+  "result_schema": {
+    "success": null,
+    "re_explanation_required": null,
+    "correction_required": null,
+    "harmful_regression": null,
+    "latency_ms": null,
+    "cost": {
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "retrieval_tokens": null,
+      "memory_write_tokens": null,
+      "judge_tokens": null,
+      "provider_usd": null
+    }
+  },
+  "cost_components": [
+    "prompt_tokens",
+    "completion_tokens",
+    "retrieval_tokens",
+    "memory_write_tokens",
+    "judge_tokens",
+    "provider_usd"
+  ],
+  "cost_estimate_status": "unknown"
+}

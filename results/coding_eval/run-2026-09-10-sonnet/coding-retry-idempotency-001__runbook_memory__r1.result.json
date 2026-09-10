@@ -1,0 +1,19 @@
+{
+  "arm": "runbook_memory",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 1599,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 268495,
+    "provider_usd": 0.17572300000000002,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-retry-idempotency-001__runbook_memory__r1",
+  "latency_ms": 24075,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-retry-idempotency-001"
+}

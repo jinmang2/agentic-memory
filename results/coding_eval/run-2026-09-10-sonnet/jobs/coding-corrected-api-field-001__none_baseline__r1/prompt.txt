@@ -1,0 +1,3 @@
+Update the parser to honor the corrected API field and reject the stale field.
+
+The code lives under ./fixtures in this directory. Edit the files in place. Nobody can answer questions in this session, so decide and act.

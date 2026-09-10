@@ -1,0 +1,93 @@
+{
+  "results_path": "/home/jinmang2/agentic_memory/experiments/coding_eval/out/results.json",
+  "verification": {
+    "valid": true,
+    "errors": []
+  },
+  "jobs": [
+    {
+      "job_id": "coding-timezone-cutoff-001__none_baseline__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    },
+    {
+      "job_id": "coding-timezone-cutoff-001__raw_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 466
+    },
+    {
+      "job_id": "coding-timezone-cutoff-001__runbook_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 466
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__none_baseline__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__raw_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 434
+    },
+    {
+      "job_id": "coding-retry-idempotency-001__runbook_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 434
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__none_baseline__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__raw_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 391
+    },
+    {
+      "job_id": "coding-corrected-api-field-001__runbook_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    },
+    {
+      "job_id": "coding-cache-validation-001__none_baseline__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    },
+    {
+      "job_id": "coding-cache-validation-001__raw_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 438
+    },
+    {
+      "job_id": "coding-cache-validation-001__runbook_memory__r1",
+      "success": true,
+      "failed_check": null,
+      "agent_error": null,
+      "injected_chars": 0
+    }
+  ]
+}

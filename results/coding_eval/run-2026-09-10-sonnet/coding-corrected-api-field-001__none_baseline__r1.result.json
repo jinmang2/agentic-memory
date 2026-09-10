@@ -1,0 +1,19 @@
+{
+  "arm": "none_baseline",
+  "correction_required": false,
+  "cost": {
+    "completion_tokens": 958,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 206418,
+    "provider_usd": 0.1399156,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-corrected-api-field-001__none_baseline__r1",
+  "latency_ms": 17523,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-corrected-api-field-001"
+}

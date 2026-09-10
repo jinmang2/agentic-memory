@@ -1,0 +1,19 @@
+{
+  "arm": "none_baseline",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 921,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 204736,
+    "provider_usd": 0.1377804,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-timezone-cutoff-001__none_baseline__r1",
+  "latency_ms": 29735,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-timezone-cutoff-001"
+}

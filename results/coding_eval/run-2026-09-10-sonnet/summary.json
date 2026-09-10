@@ -1,0 +1,132 @@
+{
+  "by_arm": {
+    "none_baseline": {
+      "agent_errors": 0,
+      "corrections_required": 0,
+      "harmful_regressions": 0,
+      "jobs": 4,
+      "latency_ms_total": 100202,
+      "provider_usd_known": 4,
+      "provider_usd_total": 0.5765856,
+      "successes": 4
+    },
+    "raw_memory": {
+      "agent_errors": 0,
+      "corrections_required": 0,
+      "harmful_regressions": 0,
+      "jobs": 4,
+      "latency_ms_total": 157535,
+      "provider_usd_known": 4,
+      "provider_usd_total": 0.6842836,
+      "successes": 4
+    },
+    "runbook_memory": {
+      "agent_errors": 0,
+      "corrections_required": 0,
+      "harmful_regressions": 0,
+      "jobs": 4,
+      "latency_ms_total": 98800,
+      "provider_usd_known": 4,
+      "provider_usd_total": 0.6107576000000001,
+      "successes": 4
+    }
+  },
+  "jobs": [
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-timezone-cutoff-001__none_baseline__r1",
+      "latency_ms": 29735,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 466,
+      "job_id": "coding-timezone-cutoff-001__raw_memory__r1",
+      "latency_ms": 29101,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 466,
+      "job_id": "coding-timezone-cutoff-001__runbook_memory__r1",
+      "latency_ms": 19830,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-retry-idempotency-001__none_baseline__r1",
+      "latency_ms": 21194,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 434,
+      "job_id": "coding-retry-idempotency-001__raw_memory__r1",
+      "latency_ms": 84604,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 434,
+      "job_id": "coding-retry-idempotency-001__runbook_memory__r1",
+      "latency_ms": 24075,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-corrected-api-field-001__none_baseline__r1",
+      "latency_ms": 17523,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 391,
+      "job_id": "coding-corrected-api-field-001__raw_memory__r1",
+      "latency_ms": 15735,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-corrected-api-field-001__runbook_memory__r1",
+      "latency_ms": 33419,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-cache-validation-001__none_baseline__r1",
+      "latency_ms": 31750,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 438,
+      "job_id": "coding-cache-validation-001__raw_memory__r1",
+      "latency_ms": 28095,
+      "success": true
+    },
+    {
+      "agent_error": null,
+      "failed_check": null,
+      "injected_chars": 0,
+      "job_id": "coding-cache-validation-001__runbook_memory__r1",
+      "latency_ms": 21476,
+      "success": true
+    }
+  ]
+}

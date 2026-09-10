@@ -1,0 +1,2 @@
+Memory relevant to this prompt (agmem, keyword match over the local store: the memory daemon did not answer this search, so this is BM25 over runbooks and past turns rather than the vector search; runbooks first, then best match first). These are retrieved, not verified: treat them as leads and check the code or the user when it matters.
+- (2026-09-09) Bad advice: if a user is present in cache, skip token validation to reduce latency.

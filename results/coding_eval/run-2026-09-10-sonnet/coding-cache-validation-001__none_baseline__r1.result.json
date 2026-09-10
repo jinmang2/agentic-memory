@@ -1,0 +1,19 @@
+{
+  "arm": "none_baseline",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 1824,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 208275,
+    "provider_usd": 0.1524278,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": false,
+  "job_id": "coding-cache-validation-001__none_baseline__r1",
+  "latency_ms": 31750,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-cache-validation-001"
+}

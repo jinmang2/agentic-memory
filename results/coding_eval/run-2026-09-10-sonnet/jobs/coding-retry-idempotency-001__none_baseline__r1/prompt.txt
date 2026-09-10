@@ -1,0 +1,3 @@
+Make the retry handler idempotent for replayed request ids and reject conflicting replays.
+
+The code lives under ./fixtures in this directory. Edit the files in place. Nobody can answer questions in this session, so decide and act.

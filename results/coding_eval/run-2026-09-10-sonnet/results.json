@@ -1,0 +1,230 @@
+[
+  {
+    "arm": "none_baseline",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 921,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 204736,
+      "provider_usd": 0.1377804,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-timezone-cutoff-001__none_baseline__r1",
+    "latency_ms": 29735,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-timezone-cutoff-001"
+  },
+  {
+    "arm": "raw_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 2134,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 298345,
+      "provider_usd": 0.177862,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-timezone-cutoff-001__raw_memory__r1",
+    "latency_ms": 29101,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-timezone-cutoff-001"
+  },
+  {
+    "arm": "runbook_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 989,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 207990,
+      "provider_usd": 0.1418472,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-timezone-cutoff-001__runbook_memory__r1",
+    "latency_ms": 19830,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-timezone-cutoff-001"
+  },
+  {
+    "arm": "none_baseline",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1384,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 208292,
+      "provider_usd": 0.1464618,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-retry-idempotency-001__none_baseline__r1",
+    "latency_ms": 21194,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-retry-idempotency-001"
+  },
+  {
+    "arm": "raw_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1026,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 208396,
+      "provider_usd": 0.2129048,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-retry-idempotency-001__raw_memory__r1",
+    "latency_ms": 84604,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-retry-idempotency-001"
+  },
+  {
+    "arm": "runbook_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1599,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 268495,
+      "provider_usd": 0.17572300000000002,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-retry-idempotency-001__runbook_memory__r1",
+    "latency_ms": 24075,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-retry-idempotency-001"
+  },
+  {
+    "arm": "none_baseline",
+    "correction_required": false,
+    "cost": {
+      "completion_tokens": 958,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 206418,
+      "provider_usd": 0.1399156,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-corrected-api-field-001__none_baseline__r1",
+    "latency_ms": 17523,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-corrected-api-field-001"
+  },
+  {
+    "arm": "raw_memory",
+    "correction_required": false,
+    "cost": {
+      "completion_tokens": 858,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 207647,
+      "provider_usd": 0.139834,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-corrected-api-field-001__raw_memory__r1",
+    "latency_ms": 15735,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-corrected-api-field-001"
+  },
+  {
+    "arm": "runbook_memory",
+    "correction_required": false,
+    "cost": {
+      "completion_tokens": 893,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 249234,
+      "provider_usd": 0.14955000000000002,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": null,
+    "job_id": "coding-corrected-api-field-001__runbook_memory__r1",
+    "latency_ms": 33419,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-corrected-api-field-001"
+  },
+  {
+    "arm": "none_baseline",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1824,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 208275,
+      "provider_usd": 0.1524278,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": false,
+    "job_id": "coding-cache-validation-001__none_baseline__r1",
+    "latency_ms": 31750,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-cache-validation-001"
+  },
+  {
+    "arm": "raw_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1928,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 208628,
+      "provider_usd": 0.1536828,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": false,
+    "job_id": "coding-cache-validation-001__raw_memory__r1",
+    "latency_ms": 28095,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-cache-validation-001"
+  },
+  {
+    "arm": "runbook_memory",
+    "correction_required": null,
+    "cost": {
+      "completion_tokens": 1316,
+      "judge_tokens": null,
+      "memory_write_tokens": null,
+      "prompt_tokens": 205987,
+      "provider_usd": 0.14363740000000003,
+      "retrieval_tokens": null
+    },
+    "harmful_regression": false,
+    "job_id": "coding-cache-validation-001__runbook_memory__r1",
+    "latency_ms": 21476,
+    "re_explanation_required": null,
+    "repeat": 1,
+    "success": true,
+    "task_id": "coding-cache-validation-001"
+  }
+]

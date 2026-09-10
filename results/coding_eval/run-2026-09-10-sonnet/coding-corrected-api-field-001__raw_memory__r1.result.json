@@ -1,0 +1,19 @@
+{
+  "arm": "raw_memory",
+  "correction_required": false,
+  "cost": {
+    "completion_tokens": 858,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 207647,
+    "provider_usd": 0.139834,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-corrected-api-field-001__raw_memory__r1",
+  "latency_ms": 15735,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-corrected-api-field-001"
+}

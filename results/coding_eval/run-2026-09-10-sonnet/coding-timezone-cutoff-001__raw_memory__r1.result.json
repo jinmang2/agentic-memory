@@ -1,0 +1,19 @@
+{
+  "arm": "raw_memory",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 2134,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 298345,
+    "provider_usd": 0.177862,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": null,
+  "job_id": "coding-timezone-cutoff-001__raw_memory__r1",
+  "latency_ms": 29101,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-timezone-cutoff-001"
+}

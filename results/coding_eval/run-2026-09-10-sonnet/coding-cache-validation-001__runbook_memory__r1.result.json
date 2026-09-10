@@ -1,0 +1,19 @@
+{
+  "arm": "runbook_memory",
+  "correction_required": null,
+  "cost": {
+    "completion_tokens": 1316,
+    "judge_tokens": null,
+    "memory_write_tokens": null,
+    "prompt_tokens": 205987,
+    "provider_usd": 0.14363740000000003,
+    "retrieval_tokens": null
+  },
+  "harmful_regression": false,
+  "job_id": "coding-cache-validation-001__runbook_memory__r1",
+  "latency_ms": 21476,
+  "re_explanation_required": null,
+  "repeat": 1,
+  "success": true,
+  "task_id": "coding-cache-validation-001"
+}

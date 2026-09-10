@@ -1,0 +1,3 @@
+Fix the cache path so it never authorizes a request without validating the current token.
+
+The code lives under ./fixtures in this directory. Edit the files in place. Nobody can answer questions in this session, so decide and act.

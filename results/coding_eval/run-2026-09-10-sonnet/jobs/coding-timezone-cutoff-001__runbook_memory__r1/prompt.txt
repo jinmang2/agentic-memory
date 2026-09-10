@@ -1,0 +1,3 @@
+Fix the cutoff helper so UTC timestamps on the requested day are included and next-day timestamps are excluded.
+
+The code lives under ./fixtures in this directory. Edit the files in place. Nobody can answer questions in this session, so decide and act.
