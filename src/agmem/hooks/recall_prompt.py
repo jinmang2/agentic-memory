@@ -148,7 +148,22 @@ def fallback_items(
 
 
 MIN_TOKEN_CHARS = 4
+STEM_CHARS = 5
 _TOKEN = re.compile(r"\w+", re.UNICODE)
+
+
+def _stems(text: str) -> set[str]:
+    """The words of `text` that count for overlap, cut to a crude stem.
+
+    The coding evaluation (docs/28, 2026-09-10) showed why a whole-word match
+    is not enough: the prompt said "corrected" and "reject", the memory said
+    "Correction" and "rejected", and the one memory that mattered — the fix
+    for a stale field name — was pruned while the stale note survived on the
+    word "stale". English inflection mostly lives in the suffix, so the first
+    `STEM_CHARS` letters stand in for a stemmer: "corre" covers corrected and
+    correction, "rejec" covers reject and rejected. Shorter tokens are kept
+    whole, and tokens under `MIN_TOKEN_CHARS` stay out as before."""
+    return {t.lower()[:STEM_CHARS] for t in _TOKEN.findall(text) if len(t) >= MIN_TOKEN_CHARS}
 
 
 def _prune(query: str, group: list[RecallItem]) -> list[RecallItem]:
@@ -158,14 +173,13 @@ def _prune(query: str, group: list[RecallItem]) -> list[RecallItem]:
     BM25 barely separates the two (measured 2.9e-6 against 1.0e-6 with two
     turns), so the score is not the filter — token overlap is. Tokens shorter
     than `MIN_TOKEN_CHARS` are the stopwords of this rule; a prompt made only
-    of short tokens keeps every hit rather than none."""
+    of short tokens keeps every hit rather than none. Overlap is on stems
+    (`_stems`), not whole words."""
     group = sorted(group, key=lambda it: -float(it["score"]))
-    words = {t.lower() for t in _TOKEN.findall(query) if len(t) >= MIN_TOKEN_CHARS}
+    words = _stems(query)
     if not words:
         return group
-    return [
-        it for it in group if words & {t.lower() for t in _TOKEN.findall(str(it.get("text") or ""))}
-    ]
+    return [it for it in group if words & _stems(str(it.get("text") or ""))]
 
 
 def request_body(event: Mapping[str, str], query: str, k: int) -> RequestPayload:
