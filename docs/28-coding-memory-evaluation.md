@@ -36,3 +36,40 @@ uv run --no-sync python -m agmem.bench.coding_eval verify /tmp/coding-eval-manif
 
 This does not prove v1 product readiness. It only makes the later usefulness measurement
 reviewable before any paid or live execution happens.
+
+## Running the measurement (2026-09-10)
+
+`run` executes the manifest's jobs with a headless agent, one throwaway workspace and one
+throwaway agmem store per job. The agent is `claude -p` by default; `--agent-command` takes
+any command that reads the prompt on stdin and prints the `--output-format json` shape, which
+is how the test suite drives the runner without a model.
+
+```bash
+uv run --no-sync python -m agmem.bench.coding_eval run /tmp/coding-eval-manifest.json \
+  --work-dir /tmp/coding-eval-work --model sonnet --max-turns 12
+uv run --no-sync python -m agmem.bench.coding_eval verify /tmp/coding-eval-manifest.json \
+  --results experiments/coding_eval/out/results.json
+```
+
+What each arm's store holds is the experiment. `none_baseline` is an empty store. `raw_memory`
+holds every memory fixture as a user-turn episode, stale and harmful ones included, because
+raw preservation has no controls. `runbook_memory` holds every fixture as a runbook with the
+control layer applied: a `superseded` fixture is disabled, a `harmful` one carries harmful
+feedback, and both are excluded from auto-injection. The runner writes the memory each arm
+was served (`injected.txt`, from the product's own prompt-recall hook), the prompt, the
+agent's stdout and the edited fixture next to each job under `--work-dir`.
+
+The hooks fire through a `--settings` overlay that points every `AGMEM_*` variable at the
+job's store with the daemon disabled, so the user's installed hooks read the throwaway store
+and never the real one. The user's own `CLAUDE.md` and plugins still apply, equally to every arm.
+
+Measured fields: `success` (acceptance exit code), `latency_ms` and the token and USD figures
+(the agent's own usage report; `null` when it reports none). Derived fields:
+`harmful_regression` is true when the harmful-memory task fails its revocation check, and
+`correction_required` when the corrected-field task fails its stale-field check; both are
+`null` on the other scenarios. `re_explanation_required` needs a judge and stays `null`.
+A partial run (`--jobs`) writes valid rows and fails verification only on the missing jobs.
+
+The runner has been exercised end to end with a stub agent (three jobs: two fixes, one
+untouched harmful task). The twelve real jobs have not been run yet: the headless agent
+call is a paid run, and it must be started by the user.
