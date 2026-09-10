@@ -66,6 +66,12 @@ from typing import Any
 from agmem.core.ops import MemoryOp, OpType
 from agmem.core.types import new_id
 from agmem.organizers.base import Organizer, OrganizerContext
+from agmem.organizers.experience.quality import (
+    attach_fact_basis,
+    citation_quality,
+    distill_payload,
+    task_fingerprint,
+)
 
 logger = logging.getLogger("agmem.organizers.experience")
 
@@ -193,7 +199,7 @@ USER / ASSISTANT / TOOL_CALL(name) / TOOL_RESULT(name)):
 Return the JSON now."""
 
 
-def _step_block(index: int, step: dict) -> str:
+def _step_block(index: int, step: dict[str, Any]) -> str:
     kind = str(step.get("kind") or step.get("role") or "step").upper()
     tool = step.get("tool_name")
     label = f"{kind}({tool})" if tool else kind
@@ -202,7 +208,7 @@ def _step_block(index: int, step: dict) -> str:
 
 
 def render_transcript(
-    trajectory: list[dict], max_chars: int, start: int = 0
+    trajectory: list[dict[str, Any]], max_chars: int, start: int = 0
 ) -> tuple[str, frozenset[int]]:
     """The transcript the model reads, and WHICH steps are in it.
 
@@ -260,7 +266,9 @@ def render_transcript(
     return "\n\n".join(parts), visible
 
 
-def segment_bounds(trajectory: list[dict], max_chars: int, max_calls: int) -> list[tuple[int, int]]:
+def segment_bounds(
+    trajectory: list[dict[str, Any]], max_chars: int, max_calls: int
+) -> list[tuple[int, int]]:
     """Contiguous [start, end) windows over the session, one call each.
 
     One window when the whole render fits or only one call is allowed. Otherwise
@@ -290,7 +298,7 @@ def segment_bounds(trajectory: list[dict], max_chars: int, max_calls: int) -> li
     return bounds
 
 
-def render_steps(trajectory: list[dict], max_chars: int) -> str:
+def render_steps(trajectory: list[dict[str, Any]], max_chars: int) -> str:
     """`render_transcript` without the visibility set, for callers that only
     want the text (debugging, the bounded-render test)."""
     return render_transcript(trajectory, max_chars)[0]
@@ -426,7 +434,7 @@ def validated_step_range(
     return None if steps is None else [steps[0], steps[-1]]
 
 
-def source_episode_ids(trajectory: list[dict], steps: list[int] | None) -> list[str]:
+def source_episode_ids(trajectory: list[dict[str, Any]], steps: list[int] | None) -> list[str]:
     """The persisted ids of the steps a block cites, in order.
 
     `steps` is the explicit list from `cited_steps` (an inclusive `[first,
@@ -528,7 +536,7 @@ class ExperienceOrganizer(Organizer):
         ]
 
     def on_task_end(
-        self, trajectory: list[dict], outcome: str, task: str, ctx: OrganizerContext
+        self, trajectory: list[dict[str, Any]], outcome: str, task: str, ctx: OrganizerContext
     ) -> list[MemoryOp]:
         """One call, then ADD one `runbooks` item per task block, or one NOOP.
 
@@ -541,10 +549,26 @@ class ExperienceOrganizer(Organizer):
                 "experience: no LLM configured — skipping distillation (explicit skip, task=%.60s)",
                 task,
             )
-            return []
+            meta = _session_meta(trajectory, task)
+            return [
+                MemoryOp(
+                    op=OpType.NOOP,
+                    target_type=MEMORY_TYPE,
+                    target_id=meta["session_id"] or new_id(),
+                    actor=self.name,
+                    payload=distill_payload(
+                        status="failed",
+                        reason="no_llm_configured",
+                        meta=meta,
+                        summary="",
+                        outputs=0,
+                    ),
+                )
+            ]
         meta = _session_meta(trajectory, task)
         windows = segment_bounds(trajectory, self.max_chars, self.max_calls)
-        replies: list[tuple[dict, frozenset[int]]] = []
+        replies: list[tuple[dict[str, Any], frozenset[int], str, int]] = []
+        dropped_replies = 0
         for k, (a, b) in enumerate(windows):
             transcript, visible = render_transcript(trajectory[a:b], self.max_chars, start=a)
             segment = ""
@@ -572,45 +596,106 @@ class ExperienceOrganizer(Organizer):
                 phase="experience",
             )
             if result is None:
+                dropped_replies += 1
                 continue  # drop already counted by StructuredCaller
-            replies.append((result, visible))
+            replies.append(
+                (result, visible, transcript, transcript_source_chars(trajectory[a:b], a))
+            )
         if not replies:
-            return []
-        ops: list[MemoryOp] = []
-        summary = ""
-        for result, visible in replies:
-            summary = str(result.get("summary") or "").strip()
-            tasks = [t for t in (result.get("tasks") or []) if isinstance(t, dict)]
-            ops += self._task_ops(tasks, summary, meta, trajectory, visible, outcome)
-        if not ops:
             return [
                 MemoryOp(
                     op=OpType.NOOP,
                     target_type=MEMORY_TYPE,
                     target_id=meta["session_id"] or new_id(),
                     actor=self.name,
-                    payload={"reason": "no durable signal", "summary": summary},
+                    payload=distill_payload(
+                        status="failed",
+                        reason="llm_reply_dropped",
+                        meta=meta,
+                        summary="",
+                        outputs=0,
+                    ),
                 )
             ]
-        return ops + self._tag_ops(ops, meta)
+        ops: list[MemoryOp] = []
+        summary = ""
+        skipped_outputs = 0
+        rejected_outputs = dropped_replies
+        for result, visible, transcript, source_chars in replies:
+            summary = str(result.get("summary") or "").strip()
+            raw_tasks = result.get("tasks") or []
+            tasks = (
+                [t for t in raw_tasks if isinstance(t, dict)] if isinstance(raw_tasks, list) else []
+            )
+            rejected_outputs += (
+                sum(1 for t in raw_tasks if not isinstance(t, dict))
+                if isinstance(raw_tasks, list)
+                else 1
+            )
+            new_ops, skipped = self._task_ops(
+                tasks, summary, meta, trajectory, visible, outcome, transcript, source_chars
+            )
+            ops += new_ops
+            skipped_outputs += skipped
+        if not ops:
+            status = "failed" if rejected_outputs else "skipped"
+            reason = "distill_output_rejected" if rejected_outputs else "no durable signal"
+            return [
+                MemoryOp(
+                    op=OpType.NOOP,
+                    target_type=MEMORY_TYPE,
+                    target_id=meta["session_id"] or new_id(),
+                    actor=self.name,
+                    payload=distill_payload(
+                        status=status,
+                        reason=reason,
+                        meta=meta,
+                        summary=summary,
+                        outputs=0,
+                        skipped_outputs=skipped_outputs + rejected_outputs,
+                    ),
+                )
+            ]
+        status = "partial" if rejected_outputs or skipped_outputs else "completed"
+        reason = "partial_outputs" if status == "partial" else "completed"
+        outcome_op = MemoryOp(
+            op=OpType.NOOP,
+            target_type=MEMORY_TYPE,
+            target_id=meta["session_id"] or new_id(),
+            actor=self.name,
+            payload=distill_payload(
+                status=status,
+                reason=reason,
+                meta=meta,
+                summary=summary,
+                outputs=len(ops),
+                skipped_outputs=skipped_outputs,
+            ),
+        )
+        return ops + self._tag_ops(ops, meta) + [outcome_op]
 
     def _task_ops(
         self,
-        tasks: list[dict],
+        tasks: list[dict[str, Any]],
         summary: str,
         meta: dict[str, Any],
-        trajectory: list[dict],
+        trajectory: list[dict[str, Any]],
         visible: frozenset[int],
         outcome: str,
-    ) -> list[MemoryOp]:
+        rendered_transcript: str,
+        source_chars: int,
+    ) -> tuple[list[MemoryOp], int]:
         """One ADD per durable task block of one reply."""
         ops: list[MemoryOp] = []
+        skipped = 0
+        seen: set[tuple[str, ...]] = set()
         for raw in tasks:
             name = str(raw.get("name") or "").strip()
             label = str(raw.get("outcome") or "uncertain").strip().lower()
             if not name:
+                skipped += 1
                 continue
-            block = {
+            block: dict[str, Any] = {
                 "name": name,
                 "outcome": label if label in OUTCOMES else "uncertain",
                 "preference_signals": _strings(raw.get("preference_signals")),
@@ -627,10 +712,27 @@ class ExperienceOrganizer(Organizer):
                 block[k]
                 for k in ("preference_signals", "reusable_knowledge", "failures", "procedure")
             ):
+                skipped += 1
                 continue  # a name and an outcome alone teach the next agent nothing
+            fingerprint = task_fingerprint(block)
+            if fingerprint in seen:
+                skipped += 1
+                continue
+            seen.add(fingerprint)
             cited = cited_steps(raw.get("steps"), len(trajectory), visible)
             step_range = None if cited is None else [cited[0], cited[-1]]
             episode_ids = source_episode_ids(trajectory, cited)
+            quality = citation_quality(
+                raw.get("steps"),
+                cited,
+                step_range,
+                len(trajectory),
+                visible,
+                len(episode_ids),
+                rendered_transcript,
+                source_chars,
+            )
+            attach_fact_basis(quality, trajectory, cited)
             item_id = new_id()
             ops.append(
                 MemoryOp(
@@ -662,6 +764,7 @@ class ExperienceOrganizer(Organizer):
                         # points at, kept so a reader can tell the two apart.
                         "cited_steps": cited,
                         "source_episode_ids": episode_ids,
+                        "quality": quality,
                         # Usage feedback (research §6 #12, Codex's usage_count):
                         # bumped by on_retrieval / on_feedback, never by a model.
                         "served_count": 0,
@@ -671,7 +774,7 @@ class ExperienceOrganizer(Organizer):
                     },
                 )
             )
-        return ops
+        return ops, skipped
 
     def _tag_ops(self, ops: list[MemoryOp], meta: dict[str, Any]) -> list[MemoryOp]:
         """One TAG per ADD, appended after all of them."""
@@ -711,7 +814,7 @@ class ExperienceOrganizer(Organizer):
         return tags
 
 
-def _session_meta(trajectory: list[dict], task: str) -> dict[str, Any]:
+def _session_meta(trajectory: list[dict[str, Any]], task: str) -> dict[str, Any]:
     """Host, cwd and session id, read off the steps when the adapter put them
     there (`SessionTrajectory.as_task_trajectory`), else unknown."""
     first = trajectory[0] if trajectory else {}
@@ -731,6 +834,10 @@ def _session_meta(trajectory: list[dict], task: str) -> dict[str, Any]:
             "ended_at": first.get("session_ended_at"),
         },
     }
+
+
+def transcript_source_chars(trajectory: list[dict[str, Any]], start: int = 0) -> int:
+    return len("\n\n".join(_step_block(start + i, step) for i, step in enumerate(trajectory)))
 
 
 def to_json(ops: list[MemoryOp]) -> str:

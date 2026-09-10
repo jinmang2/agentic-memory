@@ -615,7 +615,7 @@ def test_force_keeps_the_earlier_runbook_when_the_redistillation_drops(caplog):
     assert kept["id"] == first["id"]
     ops = list(mem.log.tail(20))
     assert not [op for op in ops if op.op is OpType.DELETE and op.target_type == MEMORY_TYPE]
-    assert any("produced nothing" in r.getMessage() for r in caplog.records)
+    assert any("keeping them (status=failed)" in r.getMessage() for r in caplog.records)
     mem.close()
 
 

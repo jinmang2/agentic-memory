@@ -186,7 +186,10 @@ def test_no_llm_is_an_explicit_skip():
         trajectory=traj.as_task_trajectory(), outcome="unknown", task=traj.task_text
     )
     mem.flush()
-    assert [op for op in mem.log.tail(10) if op.actor == "experience"] == []
+    ops = [op for op in mem.log.tail(10) if op.actor == "experience"]
+    assert [op.op for op in ops] == [OpType.NOOP]
+    assert ops[0].payload["distill_status"] == "failed"
+    assert ops[0].payload["reason"] == "no_llm_configured"
 
 
 def test_render_helpers_are_bounded_and_greppable():

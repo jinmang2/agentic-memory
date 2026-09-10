@@ -7,6 +7,7 @@ logged append-only before being applied to stores.
 
 from __future__ import annotations
 
+import hashlib
 import inspect
 import logging
 import queue
@@ -26,6 +27,7 @@ from agmem.core.types import (
     BITEMPORAL_TYPES,
     Episode,
     MemoryBundle,
+    ScoredItem,
     render_bullet_line,
     utcnow,
 )
@@ -36,6 +38,7 @@ from agmem.llm import BudgetTracker, LLMClient, StructuredCaller
 from agmem.organizers import ORGANIZERS, MemoryEvent, Organizer, OrganizerContext
 from agmem.retrieval import RetrievalPipeline
 from agmem.retrieval.rerank import RERANKER_CANDIDATES
+from agmem.session_distill import DistillStatus, outcome_status
 from agmem.stores import DOC_STORE_CANDIDATES, VECTOR_STORE_CANDIDATES
 
 if TYPE_CHECKING:  # `agmem.sessions` is a leaf parser; the import stays lazy anyway
@@ -53,6 +56,8 @@ logger = logging.getLogger("agmem")
 # A plain sentinel rather than a flag because the worker blocks in queue.get(),
 # so nothing short of an item can wake it.
 _SHUTDOWN = object()
+_SESSION_DISTILL_STATE_TYPE = "state"
+_SESSION_DISTILL_STATE_KIND = "session_distill"
 
 
 @dataclass(frozen=True)
@@ -79,7 +84,7 @@ class SessionIngest:
     reason: str | None = None
 
 
-def _without_episode_ids(trajectory: list[dict]) -> list[dict]:
+def _without_episode_ids(trajectory: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """The step dicts with their ``episode_id`` pointers removed.
 
     ``SessionTrajectory.as_task_trajectory`` stamps every step with the id it
@@ -93,6 +98,14 @@ def _without_episode_ids(trajectory: list[dict]) -> list[dict]:
         {k: v for k, v in step.items() if k != "episode_id"} if isinstance(step, dict) else step
         for step in trajectory
     ]
+
+
+def _session_distill_marker_id(traj: SessionTrajectory, episode_ids: Sequence[str]) -> str:
+    parts = [traj.host, traj.id]
+    for episode_id, step in zip(episode_ids, traj.steps, strict=True):
+        parts.extend((episode_id, step.kind, step.tool_name or "", step.text))
+    digest = hashlib.sha1("\n".join(parts).encode()).hexdigest()
+    return f"session-distill:{traj.host}:{traj.id}:{digest}"
 
 
 class AgenticMemory:
@@ -141,6 +154,8 @@ class AgenticMemory:
         self.namespace = namespace
         self.caps = caps or detect()
         self._degradations: list[str] = []
+        self._pending_session_distills: set[str] = set()
+        self._session_distill_lock = threading.Lock()
 
         # --- stores -------------------------------------------------------
         data_dir = self.config.data_dir
@@ -410,7 +425,7 @@ class AgenticMemory:
         content: str,
         role: str = "user",
         timestamp: Any = None,
-        meta: dict | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> Episode:
         """Persist and index a raw episode synchronously, then dispatch organizers.
 
@@ -459,7 +474,7 @@ class AgenticMemory:
         return self._ctx.llm is not None
 
     def _make_episode(
-        self, content: str, role: str, timestamp: Any = None, meta: dict | None = None
+        self, content: str, role: str, timestamp: Any = None, meta: dict[str, Any] | None = None
     ) -> Episode:
         """The one place a raw episode is built, so a bulk caller cannot drift from
         ``add_message`` on namespace, timestamp defaulting or meta."""
@@ -472,7 +487,7 @@ class AgenticMemory:
         )
 
     def bulk_add_messages(
-        self, messages: list[tuple[str, str, dict | None]], batch_size: int = 128
+        self, messages: list[tuple[str, str, dict[str, Any] | None]], batch_size: int = 128
     ) -> int:
         """``add_message`` over a whole corpus, with the embedding calls batched.
 
@@ -534,7 +549,7 @@ class AgenticMemory:
         return len(episodes)
 
     def add_task_result(
-        self, trajectory: list[dict], outcome: str, task: str, agent_id: str = "agent"
+        self, trajectory: list[dict[str, Any]], outcome: str, task: str, agent_id: str = "agent"
     ) -> None:
         """Record a completed task and dispatch organizer ``on_task_end`` hooks.
 
@@ -601,29 +616,37 @@ class AgenticMemory:
 
         IDEMPOTENCY. A session read twice must not be stored twice or distilled
         twice — the daemon's backfill will re-scan the same files, and the second
-        distillation is a second bill. The check is the FIRST AND LAST step ids:
-        both in the doc store means the persist loop ran to its end, and without
-        ``force`` this then persists nothing, dispatches nothing, and returns with
-        ``already_ingested=True``. Only the first present means an earlier run
-        died mid-loop (there is no transaction around the batches); that is
-        logged and treated as not ingested, so the session is re-persisted and
-        distilled rather than sealed at a fraction of its steps. With
-        ``force=True`` the steps are re-persisted (``add_episode`` is INSERT OR
-        REPLACE, so ids do not multiply) and the distillation runs again — the way
-        to pick up a changed prompt or a changed clip policy. In both re-runs the
-        derived items an earlier distillation wrote for this session are DELETEd
-        first (``_retire_session_items``), or a re-distillation would leave two
-        runbooks per session competing in every search.
+        distillation is a second bill. Raw-step idempotency and distillation
+        idempotency are tracked separately. FIRST AND LAST step ids in the doc
+        store mean the persist loop ran to its end; an internal ``state`` item
+        keyed by the full transcript revision means organizer hooks reached the
+        end for that exact input. "Completed" here does NOT mean a runbook was
+        emitted — an organizer may explicitly skip or return NOOP — only that
+        the hook returned without raising. A raw-only pass (``distill=False``), a
+        process exit before queued distillation, or an organizer exception leaves
+        no completed marker, so a later distill pass still runs. Only the first
+        raw step present means an earlier run died mid-loop (there is no
+        transaction around the batches); that is logged and treated as not
+        ingested, so the session is re-persisted and distilled rather than sealed
+        at a fraction of its steps. With ``force=True`` the steps are
+        re-persisted (``add_episode`` is INSERT OR REPLACE, so ids do not
+        multiply) and the distillation runs again — the way to pick up a changed
+        prompt or a changed clip policy. In re-runs the derived items an earlier
+        distillation wrote for this session are DELETEd only after replacement,
+        or a re-distillation would leave two runbooks per session competing in
+        every search.
+
+        Legacy stores that already have live derived items for this session but
+        no distill-state marker are treated as completed to avoid silently
+        re-billing historical sessions after this marker was introduced. That is
+        deliberately conservative: it cannot prove the live item came from the
+        exact current transcript revision. Use ``force=True`` when re-distilling
+        such a legacy session after extending or correcting the transcript.
 
         ``persist_steps=False`` is outside the idempotency too: with nothing in the
         store there is nothing to recognise the session by, so every pass distils
         it again. It is for a caller that keeps the raw steps elsewhere and
         accepts that; a backfill should not use it.
-
-        What this does not cover: a distillation queued under ``sync_write=False``
-        and lost to a process exit before ``flush()``/``close()``. The raw steps
-        are then complete, so the next pass reports ``already_ingested`` and the
-        session is never distilled — ``force=True`` is the recovery.
 
         ORDER. Persisting is synchronous and completes before the dispatch, so the
         ``episode_id`` pointers on the step dicts resolve in the store by the time
@@ -653,7 +676,9 @@ class AgenticMemory:
         bounds = {episode_ids[0], episode_ids[-1]}
         present = {e.id for e in self.doc_store.get_episodes(sorted(bounds))}
         already = present == bounds
-        if already and not force:
+        marker_id = _session_distill_marker_id(traj, episode_ids)
+        distill_done = self._session_distill_completed(marker_id, traj.id)
+        if already and (not distill or distill_done) and not force:
             logger.info(
                 "add_session: %s/%s already ingested (%d steps) — skipping persist and distill",
                 traj.host,
@@ -699,34 +724,163 @@ class AgenticMemory:
             if not persist_steps:
                 steps = _without_episode_ids(steps)
             task_text = traj.task_text
+            if not self._claim_session_distill(marker_id, traj, episode_ids, force=force):
+                return SessionIngest(
+                    traj.id,
+                    traj.host,
+                    persisted or (episode_ids if persist_steps else []),
+                    already,
+                    False,
+                )
 
             def redistil() -> None:
-                self._apply_from_all(
-                    lambda org: org.on_task_end(steps, outcome, task_text, self._ctx)
-                )
-                if not prior:
-                    self._supersede_stale_runbooks(traj.id)
-                    return
-                # The earlier items go only once the new call has replaced them.
-                # A re-distillation whose reply was dropped (the 2026-09-04
-                # smoke: two malformed JSON replies) used to leave the session
-                # with no runbook at all, the old ones already deleted.
-                if self._session_item_ids(traj.id) - prior:
-                    self._retire_session_items(traj.id, only=prior)
-                    self._supersede_stale_runbooks(traj.id)
-                else:
-                    logger.warning(
-                        "add_session: re-distillation of %s/%s produced nothing — keeping "
-                        "the %d earlier item(s)",
-                        traj.host,
-                        traj.id,
-                        len(prior),
+                finished = False
+                try:
+                    collected: list[MemoryOp] = []
+
+                    def collect(org: Organizer) -> list[MemoryOp]:
+                        ops = org.on_task_end(steps, outcome, task_text, self._ctx)
+                        collected.extend(ops)
+                        return ops
+
+                    self._apply_from_all(collect)
+                    status = outcome_status(collected)
+                    if not prior and status == "completed":
+                        self._supersede_stale_runbooks(traj.id)
+                    # The earlier items go only once the new call has replaced them.
+                    # A re-distillation whose reply was dropped (the 2026-09-04
+                    # smoke: two malformed JSON replies) used to leave the session
+                    # with no runbook at all, the old ones already deleted.
+                    if prior and status == "completed" and self._session_item_ids(traj.id) - prior:
+                        self._retire_session_items(traj.id, only=prior)
+                        self._supersede_stale_runbooks(traj.id)
+                    elif prior:
+                        logger.warning(
+                            "add_session: re-distillation of %s/%s did not fully replace "
+                            "the %d earlier item(s); keeping them (status=%s)",
+                            traj.host,
+                            traj.id,
+                            len(prior),
+                            status,
+                        )
+                    self._record_session_distill_state(
+                        marker_id,
+                        traj,
+                        episode_ids,
+                        status=status,
+                        reason="; ".join(
+                            str(op.payload["reason"])
+                            for op in collected
+                            if op.op == OpType.NOOP and op.payload.get("reason")
+                        )
+                        or None,
                     )
+                    finished = True
+                finally:
+                    try:
+                        if not finished:
+                            self._record_session_distill_state(
+                                marker_id,
+                                traj,
+                                episode_ids,
+                                status="failed",
+                                reason="organizer raised before completion; inspect daemon log",
+                            )
+                    finally:
+                        self._release_session_distill(marker_id)
 
             # One unit of work, so the check runs after the hooks under a
             # background queue as well as in sync mode.
-            self._dispatch(redistil)
-        return SessionIngest(traj.id, traj.host, persisted, already, distill)
+            if self._queue is not None:
+                try:
+                    self._queue.put_nowait(redistil)
+                except queue.Full:
+                    self._release_session_distill(marker_id)
+                    raise
+            else:
+                redistil()
+        visible_episode_ids = persisted or (episode_ids if persist_steps else [])
+        return SessionIngest(traj.id, traj.host, visible_episode_ids, already, distill)
+
+    def _claim_session_distill(
+        self, marker_id: str, traj: SessionTrajectory, episode_ids: Sequence[str], *, force: bool
+    ) -> bool:
+        with self._session_distill_lock:
+            if marker_id in self._pending_session_distills:
+                return False
+            if not force and self._session_distill_completed(marker_id, traj.id):
+                return False
+            self._record_session_distill_state(marker_id, traj, episode_ids, status="started")
+            self._pending_session_distills.add(marker_id)
+            return True
+
+    def _release_session_distill(self, marker_id: str) -> None:
+        with self._session_distill_lock:
+            self._pending_session_distills.discard(marker_id)
+
+    def _session_distill_completed(self, marker_id: str, session_id: str) -> bool:
+        items = self.doc_store.get_items([marker_id], _SESSION_DISTILL_STATE_TYPE)
+        if (
+            items
+            and items[0].get("kind") == _SESSION_DISTILL_STATE_KIND
+            and items[0].get("status") in ("completed", "skipped", "partial")
+        ):
+            return True
+        if self._session_has_distill_state(session_id):
+            return False
+        return bool(self._session_item_ids(session_id))
+
+    def _session_has_distill_state(self, session_id: str) -> bool:
+        return any(
+            item.get("kind") == _SESSION_DISTILL_STATE_KIND and item.get("session_id") == session_id
+            for item in self.doc_store.list_items(
+                _SESSION_DISTILL_STATE_TYPE, namespace=self.namespace
+            )
+        )
+
+    def session_distill_status(self, traj: SessionTrajectory) -> str | None:
+        """Persisted status for this exact source revision; absent for legacy sessions."""
+        episode_ids = [traj.episode_id(i) for i in range(len(traj.steps))]
+        marker_id = _session_distill_marker_id(traj, episode_ids)
+        items = self.doc_store.get_items([marker_id], _SESSION_DISTILL_STATE_TYPE)
+        if not items or items[0].get("kind") != _SESSION_DISTILL_STATE_KIND:
+            return None
+        status = items[0].get("status")
+        return status if isinstance(status, str) else None
+
+    def _record_session_distill_state(
+        self,
+        marker_id: str,
+        traj: SessionTrajectory,
+        episode_ids: Sequence[str],
+        *,
+        status: DistillStatus,
+        reason: str | None = None,
+    ) -> None:
+        self._apply_ops(
+            [
+                MemoryOp(
+                    op=OpType.ADD,
+                    target_type=_SESSION_DISTILL_STATE_TYPE,
+                    target_id=marker_id,
+                    actor="ingest",
+                    payload={
+                        "kind": _SESSION_DISTILL_STATE_KIND,
+                        "status": status,
+                        "reason": reason,
+                        "updated_at": utcnow().isoformat(),
+                        "session_id": traj.id,
+                        "source_host": traj.host,
+                        "step_count": len(episode_ids),
+                        "first_episode_id": episode_ids[0],
+                        "last_episode_id": episode_ids[-1],
+                        "embedding_text": None,
+                    },
+                )
+            ],
+            actor="ingest",
+            propagate=False,
+        )
 
     def _supersede_stale_runbooks(self, session_id: str) -> int:
         """Freshness by deterministic signal (research §6 #7): a runbook from
@@ -813,7 +967,7 @@ class AgenticMemory:
         return len(ops)
 
     def add_scaled_task_result(
-        self, trajectories: list[list[dict]], task: str, agent_id: str = "agent"
+        self, trajectories: list[list[dict[str, Any]]], task: str, agent_id: str = "agent"
     ) -> None:
         """Record ONE task the agent attempted several times, and dispatch
         ``on_scaled_task_end`` so a methodology can distil from the contrast
@@ -872,7 +1026,7 @@ class AgenticMemory:
     def _ingest_batched(
         self,
         episodes: list[Episode],
-        log_payload: Callable[[int, Episode], dict],
+        log_payload: Callable[[int, Episode], dict[str, Any]],
         batch_size: int,
     ) -> list[str]:
         """Embed ``episodes`` in batches and store each one; return their ids in order.
@@ -892,7 +1046,7 @@ class AgenticMemory:
         return ids
 
     def _ingest_episode(
-        self, episode: Episode, log_payload: dict, vector: list[float] | None = None
+        self, episode: Episode, log_payload: dict[str, Any], vector: list[float] | None = None
     ) -> None:
         """Store + index one raw episode synchronously, so it is searchable the
         moment the caller returns (write-then-organize, docs/04 §2).
@@ -1050,6 +1204,11 @@ class AgenticMemory:
                 self._apply_ops(out, actor=org.name, propagate=False)
 
     def _apply_one(self, op: MemoryOp) -> None:
+        if op.actor == "user-control" and op.target_type == "episodic" and op.op == OpType.UPDATE:
+            from agmem.control import apply_user_control_op
+
+            apply_user_control_op(self.doc_store, op)
+            return
         if op.op in (OpType.ADD, OpType.UPDATE, OpType.MERGE):
             if op.op is OpType.ADD:
                 data = dict(op.payload)
@@ -1177,7 +1336,7 @@ class AgenticMemory:
             # store and opposite in review.
             return
 
-    def _apply_graph(self, target_type: str, target_id: str, data: dict) -> None:
+    def _apply_graph(self, target_type: str, target_id: str, data: dict[str, Any]) -> None:
         """Mirror an applied ``entities``/``facts`` item into the graph store.
 
         The graph used to be written by ``ZepGraphOrganizer`` itself, inline in
@@ -1283,6 +1442,8 @@ class AgenticMemory:
         query_keywords: set[str] | frozenset[str] | None = None,
         metrics: dict[str, Any] | None = None,
         project: str | None = None,
+        item_filter: Callable[[ScoredItem], bool] | None = None,
+        result_limit: int | None = None,
     ) -> MemoryBundle:
         """Retrieve across ``memory_types`` via the fused/reranked pipeline, then feed
         read->write hooks.
@@ -1348,6 +1509,7 @@ class AgenticMemory:
             center_node_id=center_node_id,
             bfs_origin_ids=bfs_origin_ids,
             query_keywords=query_keywords,
+            item_filter=item_filter,
         )
         if project is not None:
             kept = [
@@ -1356,6 +1518,10 @@ class AgenticMemory:
             if metrics is not None:
                 metrics["project_gated"] = len(bundle.items) - len(kept)
             bundle.items = kept
+        if result_limit is not None:
+            bundle.items = sorted(bundle.items, key=lambda scored: scored.score, reverse=True)[
+                : max(0, result_limit)
+            ]
         # read->write feedback (round-5): organizers see what was served.
         hits = [
             (

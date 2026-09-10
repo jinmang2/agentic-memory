@@ -8,6 +8,8 @@ why they stay type-keyed rather than organizer-keyed.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from agmem.core.types import MemoryBundle, ScoredItem
 from agmem.embed.base import Embedder
 from agmem.retrieval.bfs import MAX_SEARCH_DEPTH, bfs_entity_ranking, bfs_fact_ranking
@@ -20,6 +22,8 @@ from agmem.retrieval.steps import (
     is_servable,
 )
 from agmem.stores.base import DocStore, VectorStore
+
+FILTER_CANDIDATE_CEILING = 4096
 
 
 def _item_id(scored: ScoredItem) -> str | None:
@@ -132,6 +136,7 @@ class RetrievalPipeline:
         center_node_id: str | None = None,
         bfs_origin_ids: list[str] | None = None,
         query_keywords: set[str] | frozenset[str] | None = None,
+        item_filter: Callable[[ScoredItem], bool] | None = None,
     ) -> MemoryBundle:
         """``k`` may be a dict per memory type (e.g. Nemori's official
         episodic k=10 / semantic m=2k=20).
@@ -160,82 +165,111 @@ class RetrievalPipeline:
         served: set[tuple[str, str | None]] = set()
         for memory_type in memory_types:
             type_k = k.get(memory_type, 10) if isinstance(k, dict) else k
+            if type_k <= 0:
+                continue
             candidate_k = type_k * 3  # over-fetch per source, fuse down
+            filtered_search = item_filter is not None
+            if filtered_search:
+                candidate_k = min(candidate_k, FILTER_CANDIDATE_CEILING)
 
-            dense = self.vector_store.search(
-                query_embedding, k=candidate_k, memory_type=memory_type, namespace=namespace
-            )
-            if self.dense_min_score > 0:
-                # Upstream Zep's cosine channels apply DEFAULT_MIN_SCORE = 0.6
-                # (search_utils.py:65); 0 keeps the framework's no-cutoff
-                # default. Dense only — BM25/BFS scores are not cosines.
-                dense = [(i, s) for i, s in dense if s >= self.dense_min_score]
-            rankings = [dense]
-            if memory_type == "episodic":
-                rankings.append(
-                    self.doc_store.search_lexical(query, k=candidate_k, namespace=namespace)
+            while True:
+                dense = self.vector_store.search(
+                    query_embedding, k=candidate_k, memory_type=memory_type, namespace=namespace
                 )
-            elif memory_type in self.lexical_types:
-                rankings.append(
-                    self.doc_store.search_lexical_items(
-                        query, memory_type, k=candidate_k, namespace=namespace
+                if self.dense_min_score > 0:
+                    # Upstream Zep's cosine channels apply DEFAULT_MIN_SCORE = 0.6
+                    # (search_utils.py:65); 0 keeps the framework's no-cutoff
+                    # default. Dense only — BM25/BFS scores are not cosines.
+                    dense = [(i, s) for i, s in dense if s >= self.dense_min_score]
+                rankings = [dense]
+                if memory_type == "episodic":
+                    rankings.append(
+                        self.doc_store.search_lexical(query, k=candidate_k, namespace=namespace)
                     )
-                )
-            if memory_type in self.bfs_types:
-                bfs = self._bfs_ranking(
-                    memory_type, rankings, candidate_k, namespace, bfs_origin_ids
-                )
-                if bfs:
-                    rankings.append(bfs)
-            fused = rrf_fuse(rankings, k=self.rrf_k)
-            # `len(fused) > 1`, not `> type_k`. The old gate skipped the reranker
-            # whenever the candidate pool did not exceed k, on the assumption
-            # that a reranker only matters when it has to DROP something. It also
-            # decides ORDER, and order survives truncation: `MemoryBundle.render`
-            # sorts the whole bundle by score, so an unranked type keeps RRF
-            # scores while a ranked one carries relevance scores, and the two get
-            # compared. Upstream reranks unconditionally and truncates after.
-            # No stored number moves — every measured run resolved to
-            # NoopReranker (profile `lite`), whose rerank is truncation.
-            if self.reranker is not None and len(fused) > 1:
-                vectors = self.vector_store.get([item_id for item_id, _ in fused])
-                texts, meta = None, None
-                needs_text = getattr(self.reranker, "needs_text", False)
-                needs_meta = getattr(self.reranker, "needs_meta", False)
-                if needs_text or needs_meta:
-                    hydrated_for_rerank = self._hydrate(fused, memory_type)
-                    if needs_text:
-                        texts = {_item_id(s): (s.item.content or "") for s in hydrated_for_rerank}
-                    if needs_meta:
-                        # The stored dict, not the ScoredItem: episode-mentions
-                        # reads `source_episode_ids`, which lives in the item.
-                        meta = {
-                            _item_id(s): getattr(s.item, "data", {}) or {}
-                            for s in hydrated_for_rerank
-                        }
-                fused = self.reranker.rerank(
-                    query_embedding,
-                    fused,
-                    vectors,
-                    type_k,
-                    texts=texts,
-                    query=query,
-                    meta=meta,
-                    center_node_id=center_node_id,
-                )
-            else:
-                fused = fused[:type_k]
-            hydrated = self._hydrate(fused, memory_type)
+                elif memory_type in self.lexical_types:
+                    rankings.append(
+                        self.doc_store.search_lexical_items(
+                            query, memory_type, k=candidate_k, namespace=namespace
+                        )
+                    )
+                if memory_type in self.bfs_types:
+                    bfs = self._bfs_ranking(
+                        memory_type, rankings, candidate_k, namespace, bfs_origin_ids
+                    )
+                    if bfs:
+                        rankings.append(bfs)
+                fused = rrf_fuse(rankings, k=self.rrf_k)
+                if item_filter is not None:
+                    hydrated = [s for s in self._hydrate(fused, memory_type) if item_filter(s)]
+                    can_widen = any(len(ranking) >= candidate_k for ranking in rankings)
+                    if (
+                        len(hydrated) < type_k
+                        and can_widen
+                        and candidate_k < FILTER_CANDIDATE_CEILING
+                    ):
+                        candidate_k = min(candidate_k * 2, FILTER_CANDIDATE_CEILING)
+                        continue
+                    fused = [
+                        (item_id, scored.score)
+                        for scored in hydrated
+                        if (item_id := _item_id(scored)) is not None
+                    ]
+                # `len(fused) > 1`, not `> type_k`. The old gate skipped the reranker
+                # whenever the candidate pool did not exceed k, on the assumption
+                # that a reranker only matters when it has to DROP something. It also
+                # decides ORDER, and order survives truncation: `MemoryBundle.render`
+                # sorts the whole bundle by score, so an unranked type keeps RRF
+                # scores while a ranked one carries relevance scores, and the two get
+                # compared. Upstream reranks unconditionally and truncates after.
+                # No stored number moves — every measured run resolved to
+                # NoopReranker (profile `lite`), whose rerank is truncation.
+                if self.reranker is not None and len(fused) > 1:
+                    vectors = self.vector_store.get([item_id for item_id, _ in fused])
+                    texts, meta = None, None
+                    needs_text = getattr(self.reranker, "needs_text", False)
+                    needs_meta = getattr(self.reranker, "needs_meta", False)
+                    if needs_text or needs_meta:
+                        hydrated_for_rerank = self._hydrate(fused, memory_type)
+                        if needs_text:
+                            texts = {
+                                _item_id(s): (s.item.content or "") for s in hydrated_for_rerank
+                            }
+                        if needs_meta:
+                            # The stored dict, not the ScoredItem: episode-mentions
+                            # reads `source_episode_ids`, which lives in the item.
+                            meta = {
+                                _item_id(s): getattr(s.item, "data", {}) or {}
+                                for s in hydrated_for_rerank
+                            }
+                    fused = self.reranker.rerank(
+                        query_embedding,
+                        fused,
+                        vectors,
+                        type_k,
+                        texts=texts,
+                        query=query,
+                        meta=meta,
+                        center_node_id=center_node_id,
+                    )
+                else:
+                    fused = fused[:type_k]
+                hydrated = self._hydrate(fused, memory_type)
+                break
 
             step = self.read_steps.get(memory_type)
             if step is not None:
+                bundle_ids: set[str] = set()
+                for scored in bundle.items:
+                    item_id = _item_id(scored)
+                    if item_id is not None:
+                        bundle_ids.add(item_id)
                 hydrated = step.run(
                     hydrated,
                     ReadContext(
                         doc_store=self.doc_store,
                         namespace=namespace,
                         graph_store=self.graph_store,
-                        bundle_ids={_item_id(s) for s in bundle.items},
+                        bundle_ids=bundle_ids,
                         query_embedding=query_embedding,
                         vector_store=self.vector_store,
                         query_keywords=frozenset(query_keywords or ()),
@@ -243,6 +277,8 @@ class RetrievalPipeline:
                         reranker=self.reranker,
                     ),
                 )
+            if item_filter is not None:
+                hydrated = [s for s in hydrated if item_filter(s)]
 
             # A step may emit a type that another pass also serves, so the same
             # item can reach the bundle twice and be rendered twice into the QA
