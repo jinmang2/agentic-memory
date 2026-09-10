@@ -1,262 +1,110 @@
 """End-to-end smoke for the product stack: hooks -> store -> MCP server.
 
-    uv run python scripts/smoke_product_stack.py
+Hermetic, no-download/no-model-call path:
 
-WHAT THIS COVERS THAT THE SUITE DOES NOT. `tests/test_hooks.py` drives the hooks
-and `tests/test_mcp_server.py` drives the server, both properly, and neither
-crosses the seam between them. The seam is where the product claim lives: the
-capture hook pays for an embedder specifically so that the server's
-`search_memory` can find what it wrote, and nothing checked that it does.
+    uv run python scripts/smoke_product_stack.py --hermetic --daemon
 
-It is a script rather than a test because it cannot be hermetic. The hooks build
-their own memory internally (`hooks.open_memory` pins the lite profile), so
-there is no seam through which a test could inject `FakeEmbedder` on both sides
-— which means the real model, ~10 s, and a machine that has it cached. The suite
-must stay runnable on a box with none of that.
-
-It also prints the timings the wiring documentation quotes (`docs/05` §2.3-2.4),
-so those numbers can be re-derived on a new machine instead of trusted.
-
-It tells neither side which namespace to use unless `--namespace` is given.
-The hooks and the server each resolve it from the environment and their
-defaults, and the verdict includes whether they landed on the same directory —
-the failure issue #2 reported, which the previous version of this script could
-not see because it passed one explicit namespace to both.
-
-Exit code is the verdict: 0 if a prompt captured by the hook came back from the
-server's search out of the same store, 1 otherwise.
+The default still honors the caller's `AGMEM_CONFIG`, which lets a maintainer
+smoke a real configured backend deliberately. `--hermetic` writes a temp config
+that forces `FakeEmbedder`; with `--daemon` it also points `[llm.distill]` at a
+local OpenAI-compatible stub so the experience distiller can produce a runbook
+without an external model or API key.
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
-import json
-import os
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
-NEEDLE = "Reykjavik"
-PROMPT = f"Remember that the {NEEDLE} deployment window is the second Tuesday of each month."
-QUERY = "When can I deploy?"
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.smoke_product_stack_core import (
+    NEEDLE,
+    PROMPT,
+    mcp_search,
+    run_hook,
+)
+from scripts.smoke_product_stack_daemon import (
+    daemon_path,
+)
+from scripts.smoke_product_stack_fixture import (
+    configure_env,
+    openai_stub,
+    runbook_reply,
+)
 
 
-def run_hook(module: str, payload: dict, env: dict) -> tuple[float, subprocess.CompletedProcess]:
-    started = time.perf_counter()
-    proc = subprocess.run(
-        [sys.executable, "-m", module],
-        input=json.dumps(payload),
-        capture_output=True,
-        text=True,
-        env=env,
+def parse_args() -> argparse.Namespace:
+    description = (__doc__ or "End-to-end smoke for the product stack.").splitlines()[0]
+    parser = argparse.ArgumentParser(description=description)
+    parser.add_argument(
+        "--daemon", action="store_true", help="also exercise owned HTTP daemon hooks"
     )
-    return time.perf_counter() - started, proc
-
-
-def server_command() -> str:
-    """The console script next to the running interpreter.
-
-    Resolved from `sys.executable` rather than PATH on purpose: PATH would let
-    the smoke pass against some other installation of agmem, which is the exact
-    confusion `docs/05` §2.3 warns about for MCP client registration.
-    """
-    return str(Path(sys.executable).parent / "agmem-mcp")
-
-
-def _text(result) -> str:
-    return " ".join(getattr(c, "text", "") for c in (getattr(result, "content", None) or []))
-
-
-async def search_over_mcp(env: dict) -> tuple[float, str, set, str]:
-    """Start the server the way a registered MCP client would and search.
-
-    Deliberately passes NO --namespace and NO --data-dir: the server has to
-    find the store through the same environment the hooks used, or through
-    its defaults. That is the seam issue #2 found open — each layer used to
-    resolve the namespace on its own, with different defaults, and the old
-    smoke handed both sides the same explicit value, so it could not fail
-    the way a real registration did.
-    """
-    from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
-
-    params = StdioServerParameters(command=server_command(), args=["--organizers", ""], env=env)
-    started = time.perf_counter()
-    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
-        await session.initialize()
-        handshake = time.perf_counter() - started
-        tools = {t.name for t in (await session.list_tools()).tools}
-        rendered = _text(await session.call_tool("search_memory", {"query": QUERY}))
-        stats = json.loads(_text(await session.call_tool("memory_stats", {})))
-    return handshake, rendered, tools, stats["stats"]["namespace"]
-
-
-def _http_json(url: str, path: str, payload: dict | None = None, timeout: float = 5.0):
-    import urllib.request
-
-    req = urllib.request.Request(
-        f"{url}{path}",
-        data=None if payload is None else json.dumps(payload).encode(),
-        method="GET" if payload is None else "POST",
-        headers={"Content-Type": "application/json"},
+    parser.add_argument(
+        "--hermetic", action="store_true", help="force FakeEmbedder and local stub LLM"
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read())
+    parser.add_argument("--data-dir", default=None, help="throwaway store root (default: temp dir)")
+    parser.add_argument("--namespace", default=None, help="export AGMEM_NAMESPACE for both layers")
+    return parser.parse_args()
 
 
-def daemon_path(env: dict, data_dir: Path) -> bool:
-    """The Phase 2 path: capture with no daemon (doc store only, spawn), the
-    daemon comes up and backfills, recall_prompt injects, capture is now fast.
-
-    Prints the timings the daemon spec's acceptance criteria name. The daemon
-    is started by the hook itself, exactly as it would be under the harness,
-    and stopped here by pid so the smoke leaves nothing running."""
-    import socket
-    import urllib.error
-
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
-    url = f"http://127.0.0.1:{port}"
-    env = dict(env, AGMEM_DAEMON_URL=url, AGMEM_DAEMON_LOG=str(data_dir / "daemon.log"))
-    env.pop("AGMEM_NO_DAEMON", None)
-    print(f"\n--- daemon path ({url}) ---")
-
-    cold_s, cold = run_hook(
-        "agmem.hooks.capture",
-        {"session_id": "smoke", "prompt": PROMPT, "hook_event_name": "UserPromptSubmit"},
-        env,
-    )
-    print(f"capture, no daemon {cold_s:6.2f}s  exit={cold.returncode}  (doc store only + spawn)")
-
-    started = time.perf_counter()
-    health = None
-    while time.perf_counter() - started < 90:
-        try:
-            health = _http_json(url, "/health", timeout=0.5)
-            break
-        except (urllib.error.URLError, OSError, ValueError):
-            time.sleep(0.5)
-    if not health:
-        print("daemon did not come up within 90s")
-        return False
-    print(f"daemon up          {time.perf_counter() - started:6.2f}s  pid={health['pid']}")
-
-    started = time.perf_counter()
-    while time.perf_counter() - started < 60:
-        health = _http_json(url, "/health?pending=1", timeout=2)
-        if all(n == 0 for n in health["pending_embed"].values()):
-            break
-        time.sleep(0.5)
-    print(
-        f"backfill done      {time.perf_counter() - started:6.2f}s  pending={health['pending_embed']}"
-    )
-
-    rp_s, rp = run_hook(
-        "agmem.hooks.recall_prompt",
-        {"session_id": "smoke", "prompt": QUERY, "hook_event_name": "UserPromptSubmit"},
-        env,
-    )
-    injected = NEEDLE in rp.stdout
-    print(f"recall_prompt hook {rp_s:6.2f}s  exit={rp.returncode}  found={injected}")
-
-    warm_s, warm = run_hook(
-        "agmem.hooks.capture",
-        {"session_id": "smoke", "prompt": "second prompt", "hook_event_name": "UserPromptSubmit"},
-        env,
-    )
-    print(f"capture, warm      {warm_s:6.2f}s  exit={warm.returncode}")
-
-    import signal
-
-    os.kill(int(health["pid"]), signal.SIGTERM)
-    ok = injected and cold.returncode == 0 and warm.returncode == 0
-    if not ok:
-        print(f"  recall_prompt stdout: {rp.stdout[:400]}  stderr: {rp.stderr[-300:]}")
-    return ok
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument(
-        "--daemon",
-        action="store_true",
-        help="also exercise the daemon path: spawn-on-demand, backfill, recall_prompt",
-    )
-    ap.add_argument(
-        "--data-dir",
-        default=None,
-        help="where to build the throwaway store (default: a temp dir)",
-    )
-    ap.add_argument(
-        "--namespace",
-        default=None,
-        help="export AGMEM_NAMESPACE for both layers (default: neither side is told, "
-        "so the check is that their built-in defaults agree)",
-    )
-    args = ap.parse_args()
-
+def run(args: argparse.Namespace, llm_url: str | None) -> int:
     data_dir = Path(args.data_dir) if args.data_dir else Path(tempfile.mkdtemp(prefix="agmem-"))
-    # AGMEM_CONFIG passes through from the caller's environment on purpose: a
-    # machine that configured its embedder there should be smoked on it.
-    env = {k: v for k, v in os.environ.items() if k != "AGMEM_NAMESPACE"}
-    env["AGMEM_DATA_DIR"] = str(data_dir)
-    # The in-process path below must stay the in-process path: no daemon may
-    # be spawned or used by it, or the timings it prints stop meaning what
-    # docs/05 §2.4 says they mean.
-    env["AGMEM_NO_DAEMON"] = "1"
-    env["AGMEM_DAEMON_URL"] = "http://127.0.0.1:1"  # nothing listens here
-    if args.namespace:
-        env["AGMEM_NAMESPACE"] = args.namespace
+    env = configure_env(args.namespace, args.hermetic, data_dir, llm_url)
     print(f"store: {data_dir}")
     print(f"namespace: {args.namespace or '(defaults on both sides)'}")
+    print(
+        f"backend: {'hermetic FakeEmbedder/local stub' if args.hermetic else 'caller AGMEM_CONFIG'}"
+    )
+    ok = verify_capture_recall_mcp(env, data_dir)
+    if args.daemon:
+        ok = daemon_path(env, data_dir) and ok
+    print("\nVERDICT:", "ok" if ok else "FAILED")
+    return 0 if ok else 1
 
+
+def verify_capture_recall_mcp(env: dict[str, str], data_dir: Path) -> bool:
     capture_s, capture = run_hook(
         "agmem.hooks.capture",
         {"session_id": "smoke", "prompt": PROMPT, "hook_event_name": "UserPromptSubmit"},
         env,
     )
     print(f"capture hook      {capture_s:6.2f}s  exit={capture.returncode}")
-    if capture.returncode != 0:
-        print(f"  stderr: {capture.stderr[-500:]}")
-
     recall_s, recall = run_hook(
-        "agmem.hooks.recall",
-        {"session_id": "smoke", "hook_event_name": "SessionStart"},
-        env,
+        "agmem.hooks.recall", {"session_id": "smoke", "hook_event_name": "SessionStart"}, env
     )
     recalled = NEEDLE in recall.stdout
     print(f"recall hook       {recall_s:6.2f}s  exit={recall.returncode}  found={recalled}")
-
-    handshake_s, rendered, tools, server_ns = asyncio.run(search_over_mcp(env))
+    try:
+        handshake_s, rendered, tools, server_ns = mcp_search(env)
+    except (OSError, TimeoutError, subprocess.SubprocessError) as exc:
+        print(f"mcp search failed: {exc}")
+        rendered, tools, server_ns, handshake_s = "", set(), "", 0.0
     searched = NEEDLE in rendered
     print(f"mcp handshake     {handshake_s:6.2f}s  tools={len(tools)}")
     print(f"mcp search_memory         found={searched}  namespace={server_ns}")
-
-    # The hooks wrote under `<data_dir>/<namespace>/`; the server reports the
-    # namespace it resolved. One directory, and the same name, is the proof
-    # that both layers resolved the store identically without being told.
     written = sorted(p.name for p in data_dir.iterdir() if p.is_dir())
     same_store = written == [server_ns]
     print(f"store dirs        {written}  server={server_ns}  same={same_store}")
-
-    # The recall hook reads the doc store and the server searches vectors, so
-    # the two answer different questions about the same write: one proves the
-    # episode was persisted, the other that it became searchable. Since
-    # 2026-09-02 the capture hook never embeds by itself (no daemon here, by
-    # construction), so `searched` is the stdio server's startup backfill doing
-    # its job — the path a Claude Code session takes when no daemon ever ran.
-    ok = recalled and searched and same_store
-    if args.daemon:
-        ok = daemon_path(env, data_dir) and ok
-    print("\nVERDICT:", "ok" if ok else "FAILED")
-    if not ok:
+    if not (
+        recalled and searched and same_store and capture.returncode == 0 and recall.returncode == 0
+    ):
         print(f"  persisted={recalled} embedded_and_searchable={searched} same_store={same_store}")
         print(f"  search returned: {rendered[:400]}")
-    return 0 if ok else 1
+        return False
+    return True
+
+
+def main() -> int:
+    args = parse_args()
+    if args.hermetic and args.daemon:
+        with openai_stub([runbook_reply()]) as (llm_url, _requests):
+            return run(args, llm_url)
+    return run(args, None)
 
 
 if __name__ == "__main__":
