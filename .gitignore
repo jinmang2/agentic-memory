@@ -38,6 +38,10 @@ results/repro/*.llm-trace.jsonl.gz
 # regenerable from the records for about a cent, and one file per arm.
 results/repro/*.rejudge-*.jsonl
 results/repro/*.memory.jsonl
+# The gzipped snapshot and the embedder call trace are the same artifact on
+# the compressed / embedding side (25-64 MB each on an `_s` arm).
+results/repro/*.memory.jsonl.gz
+results/repro/*.embed-trace.jsonl
 results/repro/stores/
 
 # The evolution-log dump joins them for the same reason. It carries the full
@@ -47,6 +51,7 @@ results/repro/stores/
 # — live in the committed summary JSON, so nothing citable depends on this file
 # being in git.
 results/repro/*.ops.jsonl
+results/repro/*.ops.jsonl.gz
 
 # Per-question `.records.jsonl` joined this list on 2026-08-04. It used to be
 # committed as a "small" artifact and the eight A-Mem-campaign files still are —
@@ -80,3 +85,13 @@ results/repro/dryrun/
 
 # Claude Code local session state (hooks wiring uses absolute machine paths; lock is runtime)
 .claude/
+
+# LME-V2 arm outputs (docs/23 §5): per-question rows, query traces and store
+# snapshots, hundreds of MB per arm. Durable on disk; the numbers cited in
+# docs/23 are read from each arm's aggregated_metrics.json and results/lme_v2/full/summary.json,
+# which docs/24 §2 reproduces from these files. Not committed.
+results/lme_v2/
+
+# oh-my-codex operational state and the local measurement-preparation evidence
+# (docs/25-26: manifests, verification and audit reports with local hashes).
+.omx/
