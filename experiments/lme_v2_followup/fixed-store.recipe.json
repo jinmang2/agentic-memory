@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "study": "e4a-fixed-store-retrieval-reader",
+  "domain": "web",
+  "tier": "small",
+  "data_root": "~/.agmem/datasets/longmemeval-v2",
+  "config_paths": ["execution-settings.json", "analysis-contract.json", "../../docs/_internal/configs/agmem.lme-v2.toml"],
+  "source_files": ["../../src/agmem/bench/lme_v2.py", "../../pyproject.toml", "../../uv.lock"],
+  "reader": "qwen/qwen3.5-9b",
+  "judge": "gpt-5.2",
+  "fixed_stores": [
+    {"id": "raw-build-original", "write": "raw", "path": "../../results/lme_v2/agmem_raw_vector_web_small/memory_state"},
+    {"id": "experience-build-original", "write": "experience", "path": "../../results/lme_v2/agmem_experience_vector_web_small/memory_state"}
+  ],
+  "arms": [
+    {"name": "raw_vector", "write": "raw", "read": "vector", "store": "fixed", "fixed_store_id": "raw-build-original", "query_strategy": "direct", "settings_paths": ["execution-settings.json"]},
+    {"name": "experience_vector", "write": "experience", "read": "vector", "store": "fixed", "fixed_store_id": "experience-build-original", "query_strategy": "direct", "settings_paths": ["execution-settings.json"]},
+    {"name": "raw_explorer", "write": "raw", "read": "explorer", "store": "fixed", "fixed_store_id": "raw-build-original", "query_strategy": "bounded_explorer", "settings_paths": ["execution-settings.json"]},
+    {"name": "experience_explorer", "write": "experience", "read": "explorer", "store": "fixed", "fixed_store_id": "experience-build-original", "query_strategy": "bounded_explorer", "settings_paths": ["execution-settings.json"]}
+  ],
+  "repeats": 3,
+  "output_root": "../../results/lme_v2/planned-e4a-fixed",
+  "costs": {"reader": null, "retrieval": null, "write": null, "embedding": null, "judge": null, "retries": null}
+}

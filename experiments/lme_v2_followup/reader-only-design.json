@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "kind": "design_only_not_prepare_recipe",
+  "study": "e4c-frozen-context-reader",
+  "repeat_unit": "reader_only",
+  "repeats": 3,
+  "source_arms": [
+    "agmem_raw_vector_web_small",
+    "agmem_experience_vector_web_small",
+    "agmem_raw_explorer_web_small",
+    "agmem_experience_explorer_web_small"
+  ],
+  "required_snapshot_files": ["prompt_rows.jsonl", "run_args.json"],
+  "contracts": [
+    "question IDs, text, message order and image bytes are identical across reader repeats",
+    "save hashes of all prompt and image input files before execution",
+    "retrieval and store-building calls must be zero during replay",
+    "gold answers are held separately by the evaluator",
+    "reader settings follow execution-settings.json and provider revision is recorded when available"
+  ],
+  "readiness": "requires a tested prompt replay integration; no execution command is supplied"
+}

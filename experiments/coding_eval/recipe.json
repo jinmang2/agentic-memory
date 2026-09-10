@@ -1,0 +1,33 @@
+{
+  "arms": [
+    {
+      "memory_mode": "none",
+      "name": "none_baseline",
+      "retrieval_mode": "disabled"
+    },
+    {
+      "memory_mode": "raw",
+      "memory_source": "raw_episode_store",
+      "name": "raw_memory",
+      "retrieval_mode": "prompt_recall"
+    },
+    {
+      "memory_mode": "runbook",
+      "memory_source": "experience_runbook_store",
+      "name": "runbook_memory",
+      "retrieval_mode": "prompt_recall"
+    }
+  ],
+  "output_root": "out",
+  "repeats": 1,
+  "schema_version": 1,
+  "settings_paths": [
+    "execution-settings.json"
+  ],
+  "source_files": [
+    "../../src/agmem/hooks/recall_prompt.py",
+    "../../src/agmem/memory.py"
+  ],
+  "study": "actual-coding-memory-v1-prep",
+  "tasks_path": "tasks.json"
+}

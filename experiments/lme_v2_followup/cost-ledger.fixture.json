@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "budget_micro_usd": 100,
+  "events": [
+    {"event_id": "reader-q1-a1", "component": "reader", "tokens_in": 10, "tokens_out": 2, "cost_micro_usd": 20},
+    {"event_id": "reader-q1-a2", "component": "reader", "tokens_in": 10, "tokens_out": 3, "cost_micro_usd": 10, "is_retry": true, "base_event_id": "reader-q1-a1"},
+    {"event_id": "retrieval-q1", "component": "retrieval", "tokens_in": 5, "tokens_out": 1, "cost_micro_usd": 10},
+    {"event_id": "write-build1", "component": "write", "tokens_in": 8, "tokens_out": 2, "cost_micro_usd": 10},
+    {"event_id": "embedding-build1", "component": "embedding", "tokens_in": 10, "tokens_out": 0, "cost_micro_usd": 5},
+    {"event_id": "judge-q1", "component": "judge", "tokens_in": 5, "tokens_out": 1, "cost_micro_usd": 15}
+  ]
+}

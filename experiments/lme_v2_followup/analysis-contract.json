@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "purpose": "pre-execution analysis design, not an executable harness configuration",
+  "domain": "web",
+  "tier": "small",
+  "expected_questions": 240,
+  "primary_metric": "mean(score_bool), all selected questions",
+  "primary_contrasts": [
+    {"read": "vector", "a": "experience", "b": "raw"},
+    {"read": "explorer", "a": "experience", "b": "raw"}
+  ],
+  "planned_repeats": 3,
+  "repeat_count_rationale": "initial descriptive replication; no power claim",
+  "repeat_units": {
+    "fixed_store": "retrieval_and_reader_on_same_saved_snapshot",
+    "fresh": "independent_write_then_retrieval_and_reader",
+    "reader_only": "reader_on_identical_frozen_prompt_rows; replay integration required"
+  },
+  "secondary_breakdowns": ["category", "is_abstention_problem", "diagnostic_signal_overlap"],
+  "inferential_policy": {
+    "primary_family_size": 2,
+    "family_alpha": "0.05",
+    "multiplicity": "Holm if confirmatory p-values are reported",
+    "audit_p_values": "unadjusted, conditional on one saved run",
+    "repeat_aggregation": "report each replicate and within-read accuracy delta; do not pool rows as independent observations",
+    "stopping": "fixed repeat count; changes require a new contract before execution"
+  },
+  "execution_gates": [
+    "complete matched question IDs and metadata",
+    "snapshot and input verification valid",
+    "all cost components known and reservation accounting connected to callers",
+    "runtime query path matches declared query strategy",
+    "provider/model revisions and runtime settings recorded to available precision",
+    "reader-only replay must not call retrieval"
+  ]
+}

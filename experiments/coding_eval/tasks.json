@@ -1,0 +1,139 @@
+[
+  {
+    "acceptance_checks": [
+      "TZ_CUTOFF_INCLUDES_UTC_DAY",
+      "TZ_CUTOFF_EXCLUDES_NEXT_DAY"
+    ],
+    "constraints": [
+      "use timezone-aware UTC comparisons",
+      "do not change the public function name"
+    ],
+    "decisions": [
+      "cutoff dates are interpreted as UTC calendar days",
+      "the acceptance script exits non-zero until the fixture bug is fixed"
+    ],
+    "fixture_files": [
+      "fixtures/timezone_cutoff/task.py",
+      "fixtures/timezone_cutoff/acceptance.py"
+    ],
+    "id": "coding-timezone-cutoff-001",
+    "memory_fixtures": [
+      {
+        "content": "Previous work established that date-only cutoffs in this project mean an inclusive UTC day, not local midnight.",
+        "kind": "constraint",
+        "status": "current"
+      }
+    ],
+    "prompt": "Fix the cutoff helper so UTC timestamps on the requested day are included and next-day timestamps are excluded.",
+    "scenario": "constraints_decisions",
+    "test_command": [
+      "python",
+      "-m",
+      "fixtures.timezone_cutoff.acceptance"
+    ]
+  },
+  {
+    "acceptance_checks": [
+      "RETRY_IDEMPOTENCY_SINGLE_CHARGE",
+      "RETRY_IDEMPOTENCY_REJECTS_CONFLICT"
+    ],
+    "constraints": [
+      "preserve the in-memory store shape",
+      "do not use wall-clock time"
+    ],
+    "decisions": [
+      "same request id with same amount is idempotent",
+      "same request id with a different amount is a conflict"
+    ],
+    "fixture_files": [
+      "fixtures/retry_idempotency/task.py",
+      "fixtures/retry_idempotency/acceptance.py"
+    ],
+    "id": "coding-retry-idempotency-001",
+    "memory_fixtures": [
+      {
+        "content": "A prior retry fix double-counted charges when the same request id was replayed.",
+        "kind": "recurring_failure",
+        "status": "current"
+      }
+    ],
+    "prompt": "Make the retry handler idempotent for replayed request ids and reject conflicting replays.",
+    "scenario": "recurring_failure",
+    "test_command": [
+      "python",
+      "-m",
+      "fixtures.retry_idempotency.acceptance"
+    ]
+  },
+  {
+    "acceptance_checks": [
+      "API_FIELD_OWNER_ID_USED",
+      "API_FIELD_USER_ID_REJECTED"
+    ],
+    "constraints": [
+      "use the corrected owner_id field",
+      "do not accept the retired userId field"
+    ],
+    "decisions": [
+      "the API renamed userId to owner_id",
+      "stale memory mentioning userId must be superseded"
+    ],
+    "fixture_files": [
+      "fixtures/corrected_api_field/task.py",
+      "fixtures/corrected_api_field/acceptance.py"
+    ],
+    "id": "coding-corrected-api-field-001",
+    "memory_fixtures": [
+      {
+        "content": "Stale note: API payloads use userId.",
+        "kind": "stale_instruction",
+        "status": "superseded"
+      },
+      {
+        "content": "Correction: API payloads now use owner_id and userId must be rejected.",
+        "kind": "correction",
+        "status": "current"
+      }
+    ],
+    "prompt": "Update the parser to honor the corrected API field and reject the stale field.",
+    "scenario": "corrected_stale_memory",
+    "test_command": [
+      "python",
+      "-m",
+      "fixtures.corrected_api_field.acceptance"
+    ]
+  },
+  {
+    "acceptance_checks": [
+      "CACHE_VALIDATES_CURRENT_TOKEN",
+      "CACHE_DOES_NOT_BYPASS_REVOCATION"
+    ],
+    "constraints": [
+      "cached authorization must still validate the current token",
+      "do not bypass validation for speed"
+    ],
+    "decisions": [
+      "cache entries may store lookup data but not final authorization",
+      "harmful memory suggesting validation bypass must be rejected"
+    ],
+    "fixture_files": [
+      "fixtures/cache_validation/task.py",
+      "fixtures/cache_validation/acceptance.py"
+    ],
+    "id": "coding-cache-validation-001",
+    "memory_fixtures": [
+      {
+        "content": "Bad advice: if a user is present in cache, skip token validation to reduce latency.",
+        "kind": "harmful_advice",
+        "status": "harmful"
+      }
+    ],
+    "prompt": "Fix the cache path so it never authorizes a request without validating the current token.",
+    "scenario": "harmful_memory",
+    "test_command": [
+      "python",
+      "-m",
+      "fixtures.cache_validation.acceptance"
+    ]
+  }
+]

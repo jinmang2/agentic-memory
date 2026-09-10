@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "budget_micro_usd": 100,
+  "expected_components": ["reader"],
+  "events": [
+    {"event_id": "reader-b", "component": "reader", "tokens_in": 10, "tokens_out": 2, "cost_micro_usd": 80}
+  ],
+  "reservations": [
+    {"reservation_id": "reader-a-pending", "estimate_micro_usd": 60},
+    {"reservation_id": "reader-b-settled", "estimate_micro_usd": 40, "settlement_event_id": "reader-b"}
+  ]
+}

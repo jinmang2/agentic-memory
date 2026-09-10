@@ -1,0 +1,8 @@
+{
+  "allowed_side_effects": "temporary local worktree only",
+  "external_providers": "disabled for preparation",
+  "judge": "manual_or_configured_later",
+  "max_task_seconds": null,
+  "runner_imports_allowed_during_prepare": false,
+  "shell_execution_allowed_during_prepare": false
+}

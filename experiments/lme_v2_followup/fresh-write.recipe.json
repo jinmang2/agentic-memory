@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "study": "e4b-independent-write",
+  "domain": "web",
+  "tier": "small",
+  "data_root": "~/.agmem/datasets/longmemeval-v2",
+  "config_paths": [
+    "execution-settings.json",
+    "analysis-contract.json",
+    "../../docs/_internal/configs/agmem.lme-v2.toml"
+  ],
+  "source_files": [
+    "../../src/agmem/bench/lme_v2.py",
+    "../../pyproject.toml",
+    "../../uv.lock"
+  ],
+  "reader": "qwen/qwen3.5-9b",
+  "judge": "gpt-5.2",
+  "arms": [
+    {
+      "name": "raw_vector",
+      "write": "raw",
+      "read": "vector",
+      "store": "fresh",
+      "query_strategy": "direct",
+      "settings_paths": [
+        "execution-settings.json"
+      ]
+    },
+    {
+      "name": "experience_vector",
+      "write": "experience",
+      "read": "vector",
+      "store": "fresh",
+      "query_strategy": "direct",
+      "settings_paths": [
+        "execution-settings.json"
+      ]
+    },
+    {
+      "name": "raw_explorer",
+      "write": "raw",
+      "read": "explorer",
+      "store": "fresh",
+      "query_strategy": "bounded_explorer",
+      "settings_paths": [
+        "execution-settings.json"
+      ]
+    },
+    {
+      "name": "experience_explorer",
+      "write": "experience",
+      "read": "explorer",
+      "store": "fresh",
+      "query_strategy": "bounded_explorer",
+      "settings_paths": [
+        "execution-settings.json"
+      ]
+    }
+  ],
+  "repeats": 3,
+  "output_root": "../../results/lme_v2/planned-e4b-fresh",
+  "costs": {
+    "reader": null,
+    "retrieval": null,
+    "write": null,
+    "embedding": null,
+    "judge": null,
+    "retries": null
+  }
+}

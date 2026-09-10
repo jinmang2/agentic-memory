@@ -1,0 +1,31 @@
+{
+  "purpose": "measurement intent; fingerprinted by prepare, not applied by it",
+  "reader": {
+    "model": "qwen/qwen3.5-9b",
+    "temperature": 0.6,
+    "top_p": 0.95,
+    "sampling_top_k": 20,
+    "thinking": true,
+    "max_completion_tokens": 20000,
+    "max_concurrent_requests": 4,
+    "presence_penalty": null,
+    "repetition_penalty": null
+  },
+  "judge": {
+    "model": "gpt-5.2",
+    "reasoning_effort": "medium",
+    "max_completion_tokens": 4096
+  },
+  "retrieval": {
+    "vector_top_k": 10,
+    "budget_tokens": 12000,
+    "explorer_budget_tokens": 4000,
+    "max_steps": 8,
+    "prompt_build_max_workers": 1
+  },
+  "harness": {
+    "memory_context_max_tokens": 200000,
+    "shuffle_questions_seed": null
+  },
+  "unresolved": ["immutable provider model revisions", "actual prices and full usage coverage"]
+}
