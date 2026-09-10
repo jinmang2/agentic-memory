@@ -219,17 +219,25 @@ src/agmem/
   retrieval/     hybrid recall, RRF fusion, rerankers, read steps, BFS graph expansion
   stores/        sqlite/lance/qdrant/chroma · kuzu/neo4j · postgres, behind one contract
   capabilities/  hardware detection and profile resolution (lite · standard · full)
-  bench/         LoCoMo and LongMemEval harnesses
+  bench/         LoCoMo, LongMemEval and LME-V2 harnesses
   mcp/           MCP server
-  hooks/         Claude Code SessionStart recall and UserPromptSubmit capture
-docs/            design record (00–20) + docs/research/ paper↔code forensics + docs/demos/
-tests/           822 tests, incl. fidelity pinning suites
+  hooks/         capture, startup/prompt recall, pre-compaction preserve, session-end distill
+docs/            design and findings (00–29) + docs/research/ paper↔code forensics + docs/demos/
+tests/           unit and integration tests, incl. fidelity pinning suites
 ```
 
 ## Documentation
 
 | Doc | What's in it |
 |---|---|
+| [docs/27-v1-product-readiness.md](docs/27-v1-product-readiness.md) | Implemented readiness contracts and remaining empirical v1 acceptance gates |
+| [docs/28-coding-memory-evaluation.md](docs/28-coding-memory-evaluation.md) | Offline coding evaluation preparation, frozen fixtures and unknown outcomes |
+| [docs/29-v1-operations-and-controls.md](docs/29-v1-operations-and-controls.md) | Inspect, disable, restore, correct, queue status and runtime diagnosis |
+| [docs/23-v1-experience-memory.md](docs/23-v1-experience-memory.md) | current v1 implementation and measured evidence, including the completed fresh-session dogfood check and remaining quality limits |
+| [docs/24-next-research-and-implementation.md](docs/24-next-research-and-implementation.md) | follow-up inventory: offline analyses, implementation candidates, research questions, and experiments that require new model calls |
+| [docs/25-measurement-preparation.md](docs/25-measurement-preparation.md) | offline measurement preparation: strict result audits, frozen input manifests, drift checks, and the next implementation stages |
+| [docs/26-measurement-followup.md](docs/26-measurement-followup.md) | offline failure diagnosis, repeat designs, fixed-store manifests, and fixture-based cost accounting |
+| [docs/22-v0-summary.md](docs/22-v0-summary.md) | the closed v0 study: supported findings, unmeasured scope, and the transition to agent experience memory |
 | [docs/demos/](docs/demos/) | short pages that show one thing each and cost $0 to check: the defect reproductions above, and where an ACE run's money actually went |
 | [docs/17-defect-ledger.md](docs/17-defect-ledger.md) | the defect ledger: what the source papers' own code does, in three tiers, every claim with a proof |
 | [docs/18-locomo-4way.md](docs/18-locomo-4way.md) | the conversational five-way on LoCoMo: one harness, one judge, five write paths, with the footnotes that must travel with it (filename keeps `4way` so existing links resolve) |
