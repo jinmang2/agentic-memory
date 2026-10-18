@@ -166,12 +166,18 @@ class _Registry:
         return len(self._missing_vector_ids(self.get(namespace)))
 
     @staticmethod
-    def _missing_vector_ids(mem: AgenticMemory) -> list[str]:
+    def _missing_vector_ids(mem: AgenticMemory, chunk_size: int = 512) -> list[str]:
+        """Asked in chunks, not in one `get(ids)` over the whole namespace: that
+        bound one SQL parameter per episode (`SqliteVecStore` refused past
+        32,766) and held every vector as Python floats at once — ~400 MB for
+        32k 384-d episodes, on every backfill pass — to answer a yes/no."""
         ids = [ep.id for ep in mem.doc_store.list_episodes(namespace=mem.namespace)]
-        if not ids:
-            return []
-        have = mem.vector_store.get(ids)
-        return [i for i in ids if i not in have]
+        missing: list[str] = []
+        for start in range(0, len(ids), chunk_size):
+            chunk = ids[start : start + chunk_size]
+            have = mem.vector_store.get(chunk)
+            missing.extend(i for i in chunk if i not in have)
+        return missing
 
     def backfill(self, namespace: str | None = None, batch_size: int = 64) -> int:
         """Embed and index every episode in `namespace` that has no vector; returns how many.
@@ -948,7 +954,17 @@ def main() -> None:
     config.data_dir = resolve_data_dir(args.data_dir, from_config=config.data_dir)
     namespace = resolve_namespace(args.namespace)
 
-    _registry.start(namespace, [o.strip() for o in args.organizers.split(",") if o.strip()], config)
+    # Opening the default namespace may fail — a store locked by another
+    # process past the busy timeout, a long FTS rebuild racing a second opener
+    # — and used to end the process before it bound the port. `start` records
+    # the default before it opens anything, so the registry opens it again on
+    # first use and the failure reaches that caller instead of every hook.
+    try:
+        _registry.start(
+            namespace, [o.strip() for o in args.organizers.split(",") if o.strip()], config
+        )
+    except Exception:
+        logger.exception("agmem MCP: opening namespace=%s failed; retried on first use", namespace)
     _registry.config_path = str(config_path) if config_path is not None else None
     _registry.runtime_fingerprint = runtime_fingerprint(config_path)
     logger.info(
@@ -970,9 +986,20 @@ def main() -> None:
     # episodes while no daemon ran, and a stdio server started by Claude Code
     # is often the next process to open that store. Without this pass those
     # episodes would answer to the recency hook and to nothing else.
-    pending = _registry.backfill_all()
-    if pending:
-        logger.info("agmem MCP: startup backfill embedded %d episode(s)", pending)
+    #
+    # Never fatal. This call ran unguarded, so a store the backfill could not
+    # read (a namespace past 32,766 episodes, see `_missing_vector_ids`) killed
+    # the daemon before it bound the port, and every hook took its absent path
+    # for good. Unrepaired episodes are still served by the recency and keyword
+    # paths; a server that does not start serves nothing. Over http,
+    # `_backfill_loop` retries on its period.
+    try:
+        pending = _registry.backfill_all()
+    except Exception:
+        logger.exception("agmem MCP: startup backfill failed; serving anyway")
+    else:
+        if pending:
+            logger.info("agmem MCP: startup backfill embedded %d episode(s)", pending)
 
     try:
         if args.transport == "http":

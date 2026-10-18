@@ -202,3 +202,113 @@ def test_procedural_tools_answer_without_an_llm_configured(served):
     still recording is the documented no-LLM behaviour."""
     assert "empty" in served["playbook"].lower()
     assert json.loads(served["task"])["recorded"] is True
+
+
+def test_missing_vector_ids_asks_past_the_sqlite_parameter_limit():
+    """The startup backfill's question, on a namespace with more episodes than
+    SQLite binds in one statement (32,766): it used to be one `get(ids)` over
+    all of them, and the daemon died on "too many SQL variables" before it
+    bound the port."""
+    from types import SimpleNamespace
+
+    from agmem.mcp.server import _Registry
+    from agmem.stores.sqlite_vec import SqliteVecStore
+
+    ids = [f"ep-{i}" for i in range(33_000)]
+    vectors = SqliteVecStore(None, dim=2)
+    for i in range(0, 33_000, 1_000):
+        vectors.add(ids[i], [1.0, 0.0], namespace="t")
+    episodes = [SimpleNamespace(id=i) for i in ids]
+    mem = SimpleNamespace(
+        namespace="t",
+        doc_store=SimpleNamespace(list_episodes=lambda namespace=None: episodes),
+        vector_store=vectors,
+    )
+    try:
+        missing = _Registry._missing_vector_ids(mem)
+    finally:
+        vectors.close()
+    assert len(missing) == 33_000 - 33
+    assert "ep-0" not in missing and "ep-1" in missing and missing[-1] == "ep-32999"
+
+
+def test_a_startup_backfill_that_raises_does_not_stop_the_server(tmp_path, monkeypatch):
+    """`main()` ran the startup backfill unguarded, so any error in it — the
+    parameter limit above was one — ended the process before `mcp.run`. It is
+    logged and the server comes up; the periodic pass retries."""
+    from agmem.mcp import server
+
+    cfg = tmp_path / "agmem.toml"
+    cfg.write_text('[profile]\nname = "lite"\n\n[override]\nembedder = "FakeEmbedder"\n')
+    for var in ("AGMEM_NAMESPACE", "AGMEM_DATA_DIR", "AGMEM_CONFIG"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agmem-mcp",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--config",
+            str(cfg),
+            "--organizers",
+            "",
+        ],
+    )
+    monkeypatch.setattr(server, "_registry", server._Registry())
+
+    def explode(self):
+        raise RuntimeError("too many SQL variables")
+
+    ran: list[str] = []
+    monkeypatch.setattr(server._Registry, "backfill_all", explode)
+    monkeypatch.setattr(server.mcp, "run", lambda transport="stdio": ran.append(transport))
+    server.main()
+    assert ran == ["stdio"]
+
+
+def test_a_store_that_cannot_be_opened_at_startup_does_not_stop_the_server(tmp_path, monkeypatch):
+    """`_registry.start` opened the default namespace before any guard, so a
+    store locked past the busy timeout — another opener mid-rebuild — ended
+    the process before it bound the port. The server now comes up and the
+    namespace is opened again on first use."""
+    import sqlite3
+
+    from agmem.mcp import server
+
+    cfg = tmp_path / "agmem.toml"
+    cfg.write_text('[profile]\nname = "lite"\n\n[override]\nembedder = "FakeEmbedder"\n')
+    for var in ("AGMEM_NAMESPACE", "AGMEM_DATA_DIR", "AGMEM_CONFIG"):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "agmem-mcp",
+            "--data-dir",
+            str(tmp_path / "data"),
+            "--config",
+            str(cfg),
+            "--organizers",
+            "",
+        ],
+    )
+    monkeypatch.setattr(server, "_registry", server._Registry())
+    real = server.AgenticMemory
+    calls: list[str] = []
+
+    def locked_once(*args, **kwargs):
+        calls.append(kwargs["namespace"])
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(server, "AgenticMemory", locked_once)
+    opened: list[str] = []
+
+    def run(transport="stdio"):
+        opened.append(server.get_mem().namespace)  # first use opens it again
+
+    monkeypatch.setattr(server.mcp, "run", run)
+    server.main()
+    assert opened == ["main"] and len(calls) >= 2

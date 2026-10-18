@@ -210,6 +210,26 @@ def test_widening_stops_at_the_knn_limit_instead_of_raising():
     store.close()
 
 
+def test_sqlite_vec_get_and_delete_take_more_ids_than_sqlite_will_bind():
+    """`get` and `delete` bound one parameter per id in a single `IN (...)`, and
+    SQLite refuses more than 32,766 — so the daemon's startup backfill, which
+    asks `get` about every episode in a namespace, died with "too many SQL
+    variables" on a store that size and the daemon never came up. Few stored
+    vectors, many ids asked about: the limit is on the question, not the table."""
+    store = SqliteVecStore(None, dim=2)
+    for i in range(0, 40_000, 4_000):
+        store.add(f"ep-{i}", [1.0, float(i)], namespace="t")
+    ids = [f"ep-{i}" for i in range(40_000)]
+
+    got = store.get(ids)
+    assert sorted(got) == sorted(f"ep-{i}" for i in range(0, 40_000, 4_000))
+    assert got["ep-36000"] == [1.0, 36000.0]
+
+    store.delete(ids)
+    assert store.count() == 0
+    store.close()
+
+
 @pytest.mark.parametrize("vec_cls", VEC_CLASSES)
 def test_vector_dim_mismatch_raises(vec_cls):
     store = vec_cls(None, dim=8)

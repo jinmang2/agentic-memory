@@ -18,9 +18,20 @@ from agmem.capabilities.requires import Requires
 # not ours, so it bounds how far `search` may widen.
 MAX_KNN_K = 4096
 
+# Ids bound per `IN (...)` in `get` and `delete`. SQLite refuses a statement
+# with more than SQLITE_MAX_VARIABLE_NUMBER parameters (32,766 since 3.32, 999
+# before), and the daemon's backfill asks `get` about every episode in a
+# namespace at once — so a store past 32,766 episodes raised "too many SQL
+# variables" at startup and the daemon never came up. 900 is under both.
+MAX_BOUND_IDS = 900
+
 
 def _serialize(vec: list[float]) -> bytes:
     return struct.pack(f"{len(vec)}f", *vec)
+
+
+def _chunks(ids: list[str]) -> list[list[str]]:
+    return [ids[i : i + MAX_BOUND_IDS] for i in range(0, len(ids), MAX_BOUND_IDS)]
 
 
 class SqliteVecStore:
@@ -147,28 +158,31 @@ class SqliteVecStore:
                 fetch_k = min(fetch_k * 4, ceiling)
 
     def get(self, ids: list[str]) -> dict[str, list[float]]:
-        if not ids:
-            return {}
+        out: dict[str, list[float]] = {}
         with self._lock:
-            marks = ",".join("?" * len(ids))
-            rows = self._conn.execute(
-                f"SELECT m.item_id, v.embedding FROM vec_map m"
-                f" JOIN vectors v ON v.rowid = m.rowid WHERE m.item_id IN ({marks})",
-                ids,
-            ).fetchall()
-        return {item_id: list(struct.unpack(f"{self.dim}f", blob)) for item_id, blob in rows}
+            for chunk in _chunks(ids):
+                marks = ",".join("?" * len(chunk))
+                rows = self._conn.execute(
+                    f"SELECT m.item_id, v.embedding FROM vec_map m"
+                    f" JOIN vectors v ON v.rowid = m.rowid WHERE m.item_id IN ({marks})",
+                    chunk,
+                ).fetchall()
+                for item_id, blob in rows:
+                    out[item_id] = list(struct.unpack(f"{self.dim}f", blob))
+        return out
 
     def delete(self, ids: list[str]) -> None:
         if not ids:
             return
-        marks = ",".join("?" * len(ids))
         with self._lock, self._conn:
-            rows = self._conn.execute(
-                f"SELECT rowid FROM vec_map WHERE item_id IN ({marks})", ids
-            ).fetchall()
-            for (rowid,) in rows:
-                self._conn.execute("DELETE FROM vectors WHERE rowid = ?", (rowid,))
-            self._conn.execute(f"DELETE FROM vec_map WHERE item_id IN ({marks})", ids)
+            for chunk in _chunks(ids):
+                marks = ",".join("?" * len(chunk))
+                rows = self._conn.execute(
+                    f"SELECT rowid FROM vec_map WHERE item_id IN ({marks})", chunk
+                ).fetchall()
+                for (rowid,) in rows:
+                    self._conn.execute("DELETE FROM vectors WHERE rowid = ?", (rowid,))
+                self._conn.execute(f"DELETE FROM vec_map WHERE item_id IN ({marks})", chunk)
 
     def count(self) -> int:
         with self._lock:
