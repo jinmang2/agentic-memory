@@ -66,23 +66,65 @@ def request_timeout_s(value: str | None = None) -> float:
     return min(REQUEST_TIMEOUT_MAX_S, max(REQUEST_TIMEOUT_MIN_S, parsed))
 
 
+class DaemonRefused(DaemonUnavailable):
+    """The daemon answered and refused the request (403/415): it only serves
+    loopback `Host` names without a browser `Origin` (`agmem.mcp.server`), so
+    an `AGMEM_DAEMON_URL` naming another host is refused on every call."""
+
+
+REFUSED_CODES = (403, 415)
+
+
+def _note_refused(url: str, exc: urllib.error.HTTPError) -> str:
+    """Say why, where a human will look. A refusal is a configuration error
+    that repeats on every hook, not the ordinary "not running" case.
+    `AGMEM_HOOK_LOG` is the reliable channel: Claude Code shows a hook's
+    stderr for an exit-0 hook only in verbose mode, so the stderr copy is a
+    best effort for whoever is watching."""
+    message = (
+        f"agmem: the daemon at {url} refused the request (HTTP {exc.code}); it serves "
+        "only loopback hosts (127.0.0.1, localhost, [::1]) — check AGMEM_DAEMON_URL"
+    )
+    print(message, file=sys.stderr)
+    log = os.environ.get("AGMEM_HOOK_LOG")
+    if log:
+        try:
+            with open(log, "a", encoding="utf-8") as fh:
+                fh.write(message + "\n")
+        except OSError:
+            pass
+    return message
+
+
+def _probe(url: str | None, timeout: float) -> tuple[dict[str, Any] | None, bool]:
+    """`/health`'s payload or None, and whether the daemon answered with a refusal."""
+    try:
+        with urllib.request.urlopen(_url("/health", url), timeout=timeout) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in REFUSED_CODES:
+            _note_refused(resolve_daemon_url(url), exc)
+            return None, True
+        return None, False
+    except (urllib.error.URLError, OSError, ValueError):
+        return None, False
+    return (payload if isinstance(payload, dict) and payload.get("ok") else None), False
+
+
 def health(url: str | None = None, timeout: float = HEALTH_TIMEOUT_S) -> dict[str, Any] | None:
     """The daemon's `/health` payload, or None when it is not answering.
 
     None rather than an exception because "not running" is the ordinary case
-    for the first hook of the day, not an error to report."""
-    try:
-        with urllib.request.urlopen(_url("/health", url), timeout=timeout) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, OSError, ValueError):
-        return None
-    return payload if isinstance(payload, dict) and payload.get("ok") else None
+    for the first hook of the day, not an error to report. A refusal is also
+    None, and is reported (`_note_refused`)."""
+    return _probe(url, timeout)[0]
 
 
 def post(
     path: str, payload: dict[str, Any], url: str | None = None, timeout: float | None = None
 ) -> dict[str, Any]:
-    """POST JSON to the daemon and return its JSON reply; `DaemonUnavailable` on any failure."""
+    """POST JSON to the daemon and return its JSON reply; `DaemonUnavailable` on
+    any failure, `DaemonRefused` when the daemon answered 403/415."""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         _url(path, url),
@@ -94,6 +136,10 @@ def post(
         request_timeout = request_timeout_s() if timeout is None else timeout
         with urllib.request.urlopen(req, timeout=request_timeout) as resp:
             reply = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        if exc.code in REFUSED_CODES:
+            raise DaemonRefused(_note_refused(resolve_daemon_url(url), exc)) from exc
+        raise DaemonUnavailable(str(exc)) from exc
     except (urllib.error.URLError, OSError, ValueError) as exc:
         raise DaemonUnavailable(str(exc)) from exc
     if not isinstance(reply, dict):
@@ -172,8 +218,13 @@ def ensure_running(
     traceback, after loading a 1.7 GB model for nothing, and a spool it may
     have accepted is left for whoever starts next. A spawn noted less than
     `SPAWN_GRACE_S` ago is trusted to be coming up instead."""
-    if health(url) is not None:
+    payload, refused = _probe(url, HEALTH_TIMEOUT_S)
+    if payload is not None:
         return True
+    if refused:
+        # Something is listening and refusing us: a second daemon would fail
+        # to bind the same port, after loading a model, on every hook.
+        return False
     if os.environ.get("AGMEM_NO_DAEMON") == "1":
         # Tests, and machines that run the daemon some other way: report
         # "not up" honestly and do not start anything.

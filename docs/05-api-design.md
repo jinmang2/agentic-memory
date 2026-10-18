@@ -258,6 +258,14 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
   띄우지 않는다. 데몬의 stdout/stderr는 `AGMEM_DAEMON_LOG`가
   가리키는 파일에 붙는다(없으면 버림) — 데몬을 띄우는 훅(recall·capture·preserve·distill)이 이 변수를 데몬에 넘긴다.
 - 루프백 전용, 인증 없음. `AGMEM_DAEMON_URL`을 루프백 밖으로 두지 말 것.
+  2026-10-16부터 데몬이 이를 강제한다: `Host`가 `127.0.0.1`·`localhost`·`[::1]`(포트는 생략
+  또는 데몬 자신의 포트)가 아니면 403, 루프백이 아닌 `Origin`이나 브라우저의 Fetch Metadata
+  (`Sec-Fetch-Site`가 `none` 외의 값)가 붙으면 403, `/hooks/*` POST가 `application/json`이
+  아니면 415. 브라우저 페이지의 CSRF(`text/plain` simple request)와 DNS rebinding으로 기억을
+  써 넣고 `/hooks/recall`로 주입되던 경로를 막는다. `/mcp`도 같은 규칙(SDK의
+  `TransportSecuritySettings`, 거절 코드는 SDK의 421/403). 따라서 `--host 0.0.0.0`으로 띄우고
+  다른 주소로 부르는 구성은 이제 거절된다. 훅은 403/415를 "데몬 없음"으로 보지 않고
+  stderr와 `AGMEM_HOOK_LOG`에 이유를 남기며, 그 경우 데몬을 다시 띄우지 않는다.
 - 훅의 POST 대기 시간은 `AGMEM_HOOK_TIMEOUT_SEC`로 조정한다(기본 5초, 0.1–5초 범위).
   `/health` 성공 뒤 POST가 실패해도 `capture`는 로컬 저장소에 기록하고,
   `preserve`·`distill`은 다음 데몬이 처리하도록 각 큐에 보존한다.

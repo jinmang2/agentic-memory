@@ -755,3 +755,48 @@ def test_recall_prompt_without_a_daemon_and_no_match_emits_nothing(tmp_path):
     assert r.returncode == 0, r.stderr[-2000:]
     proc = _run("agmem.hooks.recall_prompt", {"prompt": "zebra quantum", "cwd": "/w/a"}, tmp_path)
     assert proc.returncode == 0 and proc.stdout.strip() == "", (proc.stdout, proc.stderr[-500:])
+
+
+def test_a_daemon_that_refuses_is_reported_and_not_respawned(tmp_path, monkeypatch, capsys):
+    """The daemon answers 403 to a non-loopback `Host` (`agmem.mcp.server`). The
+    client used to read that as "not running": `ensure_running` spawned a second
+    daemon on every hook, which loaded a model and failed to bind, and nothing
+    said why memory was gone. A refusal is now named, logged, and not respawned."""
+    import http.server
+    import threading
+
+    from agmem.hooks import daemon
+
+    class _Refusing(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_error(403, "Host must be a loopback address")
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("Content-Length") or 0))
+            self.send_error(403, "Host must be a loopback address")
+
+        def log_message(self, *_args):
+            pass
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Refusing)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}"
+    log = tmp_path / "hook.log"
+    monkeypatch.setenv("AGMEM_HOOK_LOG", str(log))
+    monkeypatch.delenv("AGMEM_NO_DAEMON", raising=False)
+    monkeypatch.setattr(daemon, "spawn_in_progress", lambda url=None: False)
+
+    def no_spawn(*_args, **_kwargs):
+        raise AssertionError("a refusing daemon must not be answered with a second daemon")
+
+    monkeypatch.setattr(daemon.subprocess, "Popen", no_spawn)
+    try:
+        assert daemon.health(url) is None
+        assert daemon.ensure_running(url) is False
+        with pytest.raises(daemon.DaemonRefused, match="HTTP 403"):
+            daemon.post("/hooks/capture", {"content": "x"}, url=url)
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert "refused the request (HTTP 403)" in capsys.readouterr().err
+    assert "AGMEM_DAEMON_URL" in log.read_text()

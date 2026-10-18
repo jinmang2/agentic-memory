@@ -13,6 +13,7 @@ about spawning.
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import signal
@@ -212,6 +213,98 @@ def test_recall_prompt_answers_by_keyword_when_the_daemon_is_down(daemon):
     assert got.returncode == 0, got.stderr[-1500:]
     assert "keyword match" in got.stdout and "Berlin" in got.stdout
     assert elapsed < 5.0, f"recall_prompt took {elapsed:.1f}s without a daemon"
+
+
+def _raw(url: str, method: str, path: str, headers: dict, body: bytes = b"") -> int:
+    """One request with exactly these headers (`Host` included), for the
+    requests no stdlib hook would send: a browser's, or a DNS-rebound one."""
+    port = int(url.rsplit(":", 1)[1])
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    try:
+        conn.request(method, path, body=body or None, headers=headers)
+        resp = conn.getresponse()
+        resp.read()
+        return resp.status
+    finally:
+        conn.close()
+
+
+def _stored(url: str, marker: str) -> bool:
+    reply = _post(url, "/hooks/recall", {"query": marker, "k": 50})
+    return any(marker in item["text"] for item in reply["items"])
+
+
+@pytest.mark.parametrize(
+    "path", ["/hooks/capture", "/hooks/recall", "/hooks/preserve", "/hooks/distill"]
+)
+def test_hook_routes_refuse_a_browser_simple_request(daemon, path):
+    """A page on any site may POST `text/plain` to 127.0.0.1 without a CORS
+    preflight. The audit stored an episode that way and had `/hooks/recall`
+    serve it back; a foreign `Origin` is now refused before the body is read,
+    and a non-JSON body is refused even without one."""
+    marker = "csrfmarker" + path.rsplit("/", 1)[1]
+    host = daemon["url"].removeprefix("http://")
+    body = json.dumps({"content": marker, "query": marker, "transcript_path": "/etc/hosts"})
+    simple = {"Host": host, "Origin": "http://evil.example", "Content-Type": "text/plain"}
+    assert _raw(daemon["url"], "POST", path, simple, body.encode()) == 403
+    json_but_foreign = {**simple, "Content-Type": "application/json"}
+    assert _raw(daemon["url"], "POST", path, json_but_foreign, body.encode()) == 403
+    assert _raw(daemon["url"], "POST", path, {"Host": host, "Content-Type": "text/plain"}) == 415
+    assert not _stored(daemon["url"], marker)
+
+
+def test_routes_refuse_a_browser_request_that_carries_no_origin(daemon):
+    """A `no-cors` GET sends no `Origin`, so the Origin rule let any page make
+    the daemon scan its whole store (`/health?pending=1`) as often as it liked.
+    Browsers mark such requests with Fetch Metadata and the hook clients never
+    do; a person typing the URL (`Sec-Fetch-Site: none`) is still served."""
+    host = daemon["url"].removeprefix("http://")
+    no_cors = {"Host": host, "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors"}
+    assert _raw(daemon["url"], "GET", "/health?pending=1&queues=1", no_cors) == 403
+    assert _raw(daemon["url"], "GET", "/health", {"Host": host, "Sec-Fetch-Mode": "cors"}) == 403
+    post = {"Host": host, "Content-Type": "application/json", "Sec-Fetch-Site": "same-site"}
+    body = json.dumps({"content": "fetchmetamarker"}).encode()
+    assert _raw(daemon["url"], "POST", "/hooks/capture", post, body) == 403
+    assert not _stored(daemon["url"], "fetchmetamarker")
+    typed = {"Host": host, "Sec-Fetch-Site": "none", "Sec-Fetch-Mode": "navigate"}
+    assert _raw(daemon["url"], "GET", "/health", typed) == 200
+
+
+def test_hook_routes_refuse_a_dns_rebound_host(daemon):
+    """DNS rebinding reaches this socket with the attacker's name in `Host`
+    and, to the browser, no cross-origin request at all. The hook routes,
+    `/health` and the MCP endpoint all refuse it; a loopback name with this
+    daemon's port, and a same-origin loopback `Origin`, are still served."""
+    port = daemon["url"].rsplit(":", 1)[1]
+    marker = "rebindmarker"
+    body = json.dumps({"content": marker}).encode()
+    for host in (f"evil.example:{port}", "127.0.0.1.evil.example", "127.0.0.1:1"):
+        headers = {"Host": host, "Content-Type": "application/json"}
+        assert _raw(daemon["url"], "POST", "/hooks/capture", headers, body) == 403, host
+        assert _raw(daemon["url"], "GET", "/health", {"Host": host}) == 403, host
+    mcp_headers = {
+        "Host": f"evil.example:{port}",
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+    }
+    assert _raw(daemon["url"], "POST", "/mcp", mcp_headers, b"{}") == 421
+    foreign_origin = {**mcp_headers, "Host": f"127.0.0.1:{port}", "Origin": "http://evil.example"}
+    assert _raw(daemon["url"], "POST", "/mcp", foreign_origin, b"{}") == 403
+    # the same port rule as the hook routes, not the SDK's default `:*`
+    other_port = {**foreign_origin, "Origin": "http://localhost:1"}
+    assert _raw(daemon["url"], "POST", "/mcp", other_port, b"{}") == 403
+    assert _raw(daemon["url"], "POST", "/mcp", {**mcp_headers, "Host": "127.0.0.1:1"}, b"{}") == 421
+    assert not _stored(daemon["url"], marker)
+
+    for host in (f"localhost:{port}", "127.0.0.1"):
+        assert _raw(daemon["url"], "GET", "/health", {"Host": host}) == 200, host
+    same_origin = {
+        "Host": f"127.0.0.1:{port}",
+        "Origin": f"http://localhost:{port}",
+        "Content-Type": "application/json; charset=utf-8",
+    }
+    assert _raw(daemon["url"], "POST", "/hooks/capture", same_origin, body) == 200
+    assert _stored(daemon["url"], marker)
 
 
 def test_codex_hooks_round_trip_through_the_http_daemon_with_fake_llm(tmp_path):

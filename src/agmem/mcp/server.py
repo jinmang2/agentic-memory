@@ -42,6 +42,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -51,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -365,7 +367,33 @@ def get_searcher(namespace: str | None = None):
     return searcher_for(get_mem(namespace))
 
 
-mcp = FastMCP("agmem")
+# The names this daemon answers to. It binds loopback and has no authentication,
+# so the network is not the threat; a browser on the same machine is. Any page
+# can send a CORS "simple" POST (`text/plain`, no preflight) to 127.0.0.1, and a
+# DNS-rebound name delivers the page's requests here with the attacker's
+# hostname in `Host`. Both are refused by name: `Host` must be a loopback name,
+# an `Origin`, when there is one, must be too. The stdlib hook clients
+# (`agmem.hooks.daemon`) send `Host: 127.0.0.1:<port>` and no `Origin` at all.
+_LOOPBACK_NAMES = ("127.0.0.1", "localhost", "[::1]")
+_LOOPBACK_AUTHORITY = re.compile(r"(127\.0\.0\.1|localhost|\[::1\])(?::(\d{1,5}))?", re.IGNORECASE)
+
+
+def _transport_security(port: int) -> TransportSecuritySettings:
+    """The MCP SDK's own DNS-rebinding check, which guards `/mcp` and nothing
+    else, held to the rule `_refuse_foreign` applies to the hook routes: a
+    loopback name, bare or with this daemon's port, in `Host` and in `Origin`.
+    FastMCP enables a looser form by itself (any port) when constructed with a
+    loopback `host`; stated here so `/mcp` and `/hooks/*` cannot drift apart.
+    Set again in `main()` once the port is known."""
+    with_port = [*_LOOPBACK_NAMES, *(f"{name}:{port}" for name in _LOOPBACK_NAMES)]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=with_port,
+        allowed_origins=[f"http://{authority}" for authority in with_port],
+    )
+
+
+mcp = FastMCP("agmem", transport_security=_transport_security(8765))
 
 register_management_tools(mcp, get_mem)
 
@@ -551,6 +579,51 @@ def _item_timestamp(item) -> str | None:
     return stamp.isoformat() if hasattr(stamp, "isoformat") else None
 
 
+def _is_loopback_authority(value: str, port: int) -> bool:
+    """`value` is `127.0.0.1`, `localhost` or `[::1]`, bare or with this daemon's port."""
+    match = _LOOPBACK_AUTHORITY.fullmatch(value.strip())
+    return match is not None and (match.group(2) is None or int(match.group(2)) == port)
+
+
+def _refuse_foreign(request: Request, *, json_body: bool) -> JSONResponse | None:
+    """The refusal for a request that did not come from a local, non-browser
+    client, or None to serve it (see `_LOOPBACK_NAMES`).
+
+    The FastMCP check above does not cover these routes: `custom_route`
+    handlers are mounted beside the MCP transport, not behind it. Before this
+    a page could `fetch("http://127.0.0.1:8765/hooks/capture", {method:
+    "POST", body})` as `text/plain` and the episode was stored, then served
+    back into a session by `/hooks/recall`. Requiring `application/json` on
+    the POST routes is what makes a browser preflight first, and the preflight
+    has nothing here to answer it."""
+    port = mcp.settings.port
+    if not _is_loopback_authority(request.headers.get("host", ""), port):
+        logger.warning("refused %s: Host %r", request.url.path, request.headers.get("host"))
+        return JSONResponse({"error": "Host must be a loopback address"}, status_code=403)
+    origin = request.headers.get("origin")
+    if origin is not None and not (
+        origin.lower().startswith("http://") and _is_loopback_authority(origin[7:], port)
+    ):
+        logger.warning("refused %s: Origin %r", request.url.path, origin)
+        return JSONResponse({"error": "cross-origin requests are not served"}, status_code=403)
+    # A page can also send a request with no `Origin` at all — a `no-cors` GET
+    # of `/health?pending=1`, which scans the whole store — but every current
+    # browser marks it with Fetch Metadata, which no hook client sends.
+    # `Sec-Fetch-Site: none` is a person typing the URL, which a page cannot
+    # forge, and is served.
+    site = request.headers.get("sec-fetch-site")
+    if (site is not None and site != "none") or (
+        site is None and "sec-fetch-mode" in request.headers
+    ):
+        logger.warning("refused %s: Sec-Fetch-Site %r", request.url.path, site)
+        return JSONResponse({"error": "browser requests are not served"}, status_code=403)
+    if json_body:
+        media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if media_type != "application/json":
+            return JSONResponse({"error": "Content-Type must be application/json"}, status_code=415)
+    return None
+
+
 def _hook_recall_filter(project: str | None) -> Callable[[ScoredItem], bool]:
     def eligible(scored: ScoredItem) -> bool:
         if not is_auto_injection_eligible(scored.item):
@@ -577,6 +650,8 @@ async def health(request: Request) -> JSONResponse:
     where its readers were: a human asking whether writes made while the daemon
     was down are searchable yet, and the backfill tests polling for zero.
     Neither is on a hook's path."""
+    if (refused := _refuse_foreign(request, json_body=False)) is not None:
+        return refused
     now = time.monotonic()
     payload: dict[str, Any] = {
         "ok": True,
@@ -607,6 +682,8 @@ async def hooks_capture(request: Request) -> JSONResponse:
     Body: `{content, role?, meta?, namespace?}`. Runs on a worker thread because
     the write embeds synchronously and must not block the event loop for the
     other hook that is waiting on `/hooks/recall`."""
+    if (refused := _refuse_foreign(request, json_body=True)) is not None:
+        return refused
     from anyio import to_thread
 
     body = await request.json()
@@ -636,6 +713,8 @@ async def hooks_preserve(request: Request) -> JSONResponse:
     is done — the hook's timeout is generous enough for a transcript, and a
     reply that says what was stored is worth more than a queued acknowledgement
     nobody reads. No model is called."""
+    if (refused := _refuse_foreign(request, json_body=True)) is not None:
+        return refused
     from anyio import to_thread
 
     body = await request.json()
@@ -665,6 +744,8 @@ async def hooks_distill(request: Request) -> JSONResponse:
     """The SessionEnd hook's request: `{transcript_path, session_id?, cwd?, namespace?}`.
     Answers at once with `queued`; the distillation (a model call, tens of
     seconds) runs on its own thread, and its outcome goes to the daemon log."""
+    if (refused := _refuse_foreign(request, json_body=True)) is not None:
+        return refused
     body = await request.json()
     path = body.get("transcript_path")
     if not isinstance(path, str) or not Path(path).is_file():
@@ -694,6 +775,8 @@ async def hooks_recall(request: Request) -> JSONResponse:
 
     Returns the items rather than a rendered block so the hook, which owns the
     words the model sees, decides the header and the truncation."""
+    if (refused := _refuse_foreign(request, json_body=True)) is not None:
+        return refused
     from anyio import to_thread
 
     body = await request.json()
@@ -895,6 +978,7 @@ def main() -> None:
         if args.transport == "http":
             mcp.settings.host = args.host
             mcp.settings.port = args.port
+            mcp.settings.transport_security = _transport_security(args.port)
             threading.Thread(
                 target=_backfill_loop, args=(max(args.backfill_period, 1),), daemon=True
             ).start()

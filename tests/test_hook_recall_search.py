@@ -76,7 +76,7 @@ def _recall(payload: dict[str, str | int]) -> tuple[int, RecallResponse]:
             "type": "http",
             "method": "POST",
             "path": "/hooks/recall",
-            "headers": [(b"content-type", b"application/json")],
+            "headers": [(b"host", b"127.0.0.1"), (b"content-type", b"application/json")],
         },
         receive,
     )
