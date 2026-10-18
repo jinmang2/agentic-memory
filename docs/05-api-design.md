@@ -266,6 +266,14 @@ Graphiti 공식 서버의 검증된 패턴(`add_memory` / `search_memory_nodes` 
   `TransportSecuritySettings`, 거절 코드는 SDK의 421/403). 따라서 `--host 0.0.0.0`으로 띄우고
   다른 주소로 부르는 구성은 이제 거절된다. 훅은 403/415를 "데몬 없음"으로 보지 않고
   stderr와 `AGMEM_HOOK_LOG`에 이유를 남기며, 그 경우 데몬을 다시 띄우지 않는다.
+- 렉시컬 인덱스(FTS5)는 한글을 음절 bigram으로도 색인한다(`버그를`↔`버그`). 이전 버전이 만든
+  스토어는 데몬/MCP 서버가 처음 열 때 500행 단위 트랜잭션으로 재색인하며(재개 가능, 훅은
+  재색인하지 않음), 그동안은 기존 인덱스가 통째 토큰 매칭으로 응답한다. 알려진 한계: 한글이
+  많은 스토어는 FTS 크기가 약 55% 늘고, 재색인 완료 뒤 구버전 프로세스가 쓴 행에는 bigram이
+  없다(그 행만 통째 토큰으로 매칭된다). 재색인은 데몬/MCP 서버만 하므로, 데몬 없이 훅만 쓰는
+  구성(`AGMEM_NO_DAEMON=1` 포함)의 스토어는 재색인되지 않고 기존 인덱스로 남는다.
+  재색인 후 버린 옛 인덱스의 페이지는 파일 크기에서 빠지지 않는다. 줄이려면 데몬을 멈춘 상태에서
+  (선택) `sqlite3 <data_dir>/<namespace>/memory.db "PRAGMA wal_checkpoint(TRUNCATE); VACUUM;"`.
 - 훅의 POST 대기 시간은 `AGMEM_HOOK_TIMEOUT_SEC`로 조정한다(기본 5초, 0.1–5초 범위).
   `/health` 성공 뒤 POST가 실패해도 `capture`는 로컬 저장소에 기록하고,
   `preserve`·`distill`은 다음 데몬이 처리하도록 각 큐에 보존한다.

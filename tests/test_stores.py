@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 from importlib.util import find_spec
@@ -51,6 +52,252 @@ def test_lexical_search_handles_special_chars(doc):
     doc.add_episode(Episode(content="hello world", namespace="t"))
     # must not raise FTS5 syntax errors
     assert doc.search_lexical('what "is" (hello) AND -world?', namespace="t")
+
+
+KOREAN_QUERY = "데이터베이스를 마이그레이션하다가 버그"
+
+
+def test_lexical_search_matches_korean_through_particles(doc):
+    """`unicode61` keeps "데이터베이스를" as one token, so a Korean query with a
+    particle on the word matched nothing stored without it, and the other way
+    round. Both sides now carry syllable bigrams; unrelated Korean shares none."""
+    hit = Episode(content="데이터베이스 마이그레이션 실패", namespace="t")
+    bug = Episode(content="버그를 고쳤다", namespace="t")
+    unrelated = Episode(content="오늘 점심은 김치찌개를 먹었다", namespace="t")
+    for ep in (hit, bug, unrelated):
+        doc.add_episode(ep)
+    assert [i for i, _ in doc.search_lexical(KOREAN_QUERY, namespace="t")][:2] == [hit.id, bug.id]
+    assert unrelated.id not in {i for i, _ in doc.search_lexical(KOREAN_QUERY, namespace="t")}
+    assert [i for i, _ in doc.search_lexical("버그", namespace="t")] == [bug.id]
+    assert [i for i, _ in doc.search_lexical("데이터베이스가", namespace="t")] == [hit.id]
+    # a mixed-script token is split, so the English half is reachable alone
+    doc.add_episode(mixed := Episode(content="API를 바꿨다", namespace="t"))
+    assert [i for i, _ in doc.search_lexical("API", namespace="t")] == [mixed.id]
+
+    doc.put_item("r1", "runbooks", "t", {"id": "r1", "content": "데이터베이스 마이그레이션 절차"})
+    doc.put_item("r2", "runbooks", "t", {"id": "r2", "content": "점심 메뉴 고르기"})
+    assert [i for i, _ in doc.search_lexical_items(KOREAN_QUERY, "runbooks", namespace="t")] == [
+        "r1"
+    ]
+
+
+def test_lexical_terms_leave_english_unchanged():
+    from agmem.stores.sqlite_doc import _fts_query, _lexical_text
+
+    text = "Correction: API payloads now use owner_id"
+    assert _lexical_text(text) == text
+    assert _fts_query("sushi food") == '"sushi" OR "food"'
+
+
+def _old_store(path, episodes: list[tuple[str, str]], items: list[tuple[str, str]]) -> None:
+    """A store as the whole-token index wrote it: no `doc_meta`, raw FTS rows."""
+    from agmem.stores import sqlite_doc
+
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        sqlite_doc._SCHEMA.replace(
+            "CREATE TABLE IF NOT EXISTS doc_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);", ""
+        )
+    )
+    for ep_id, raw in episodes:
+        conn.execute(
+            "INSERT INTO episodes (id, namespace, role, content, timestamp) VALUES (?,?,?,?,?)",
+            (ep_id, "t", "user", raw, "2026-10-01T00:00:00+00:00"),
+        )
+        conn.execute(
+            "INSERT INTO episodes_fts (content, id, namespace) VALUES (?,?,?)", (raw, ep_id, "t")
+        )
+    for item_id, raw in items:
+        conn.execute(
+            "INSERT INTO items (id, memory_type, namespace, data) VALUES (?,?,?,?)",
+            (item_id, "runbooks", "t", json.dumps({"id": item_id, "content": raw})),
+        )
+        conn.execute(
+            "INSERT INTO items_fts (content, item_id, memory_type, namespace) VALUES (?,?,?,?)",
+            (raw, item_id, "runbooks", "t"),
+        )
+    conn.commit()
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM episodes_fts WHERE episodes_fts MATCH '\"데이\"'"
+        ).fetchone()[0]
+        == 0
+    )
+    conn.close()
+
+
+def _fts_ids(store, table: str = "episodes_fts", column: str = "id") -> list[str]:
+    return sorted(r[0] for r in store._conn.execute(f"SELECT {column} FROM {table}"))
+
+
+def test_a_store_indexed_before_hangul_terms_is_rebuilt_on_open(tmp_path):
+    """A store written by the whole-token index has FTS rows with no bigrams,
+    and no query would reach its Korean episodes until they were rewritten.
+    Opening it rebuilds both FTS tables from the base tables, once."""
+    from agmem.stores import sqlite_doc
+
+    path = tmp_path / "memory.db"
+    _old_store(path, [("e1", "데이터베이스 마이그레이션 실패")], [("r1", "버그 재현 절차")])
+
+    store = SqliteDocStore(path)
+    assert [i for i, _ in store.search_lexical(KOREAN_QUERY, namespace="t")] == ["e1"]
+    assert [i for i, _ in store.search_lexical_items("버그를", "runbooks", namespace="t")] == ["r1"]
+    assert store._lexical_index() == sqlite_doc.LEXICAL_INDEX
+    store.close()
+
+    store = SqliteDocStore(path)  # the second open finds the marker and leaves the rows be
+    assert store._conn.execute("SELECT count(*) FROM episodes_fts").fetchone()[0] == 1
+    assert store._conn.execute("SELECT count(*) FROM items_fts").fetchone()[0] == 1
+    store.close()
+
+
+def _korean_episodes(n: int) -> list[tuple[str, str]]:
+    return [(f"e{i}", f"데이터베이스 마이그레이션 실패 {i}") for i in range(n)]
+
+
+def test_the_lexical_rebuild_lets_other_writers_in_between_batches(tmp_path, monkeypatch):
+    """The first rebuild ran in one transaction: 11.6 s on 45k Korean
+    episodes, and every other opener — a hook's write, the daemon — failed on
+    "database is locked" behind it. It now commits every `MIGRATE_BATCH` rows,
+    so a writer with no patience at all (timeout 0) gets in between batches,
+    and what it wrote is in the rebuilt index exactly once."""
+    from agmem.stores import sqlite_doc
+
+    path = tmp_path / "memory.db"
+    _old_store(path, _korean_episodes(7), [])
+    monkeypatch.setattr(sqlite_doc, "MIGRATE_BATCH", 2)
+    written: list[str] = []
+
+    def write_between_batches(_seconds: float) -> None:
+        if len(written) == 3:
+            return
+        other = SqliteDocStore(path, migrate_lexical=False, timeout=0)
+        try:
+            ep = Episode(content=f"버그를 고쳤다 {len(written)}", namespace="t")
+            other.add_episode(ep)
+            written.append(ep.id)
+        finally:
+            other.close()
+
+    monkeypatch.setattr(sqlite_doc.time, "sleep", write_between_batches)
+    store = SqliteDocStore(path)
+    try:
+        assert len(written) == 3
+        assert store._lexical_index() == sqlite_doc.LEXICAL_INDEX
+        ids = _fts_ids(store)
+        assert ids == sorted({*ids}) and len(ids) == 7 + len(written)  # no duplicates
+        hits = {i for i, _ in store.search_lexical("데이터베이스를", k=50, namespace="t")}
+        assert hits == {f"e{i}" for i in range(7)}
+        assert {i for i, _ in store.search_lexical("버그", k=50, namespace="t")} == set(written)
+    finally:
+        store.close()
+
+
+def test_an_interrupted_lexical_rebuild_resumes_without_duplicates(tmp_path, monkeypatch):
+    """Killed between batches, a rebuild keeps its cursor and the old index
+    keeps answering whole-token queries; the next open resumes, and a row
+    rewritten in the meantime is indexed with its new content only."""
+    from agmem.stores import sqlite_doc
+
+    path = tmp_path / "memory.db"
+    _old_store(path, _korean_episodes(5), [("r1", "버그 재현 절차"), ("r2", "점심 메뉴")])
+    monkeypatch.setattr(sqlite_doc, "MIGRATE_BATCH", 2)
+    monkeypatch.setattr(sqlite_doc.time, "sleep", lambda _s: None)
+
+    def killed(self):
+        raise KeyboardInterrupt  # the process dies before the swap
+
+    monkeypatch.setattr(SqliteDocStore, "_swap_lexical_index", killed)
+    with pytest.raises(KeyboardInterrupt):
+        SqliteDocStore(path)
+    monkeypatch.undo()
+    monkeypatch.setattr(sqlite_doc.time, "sleep", lambda _s: None)
+
+    hook = SqliteDocStore(path, migrate_lexical=False)
+    try:
+        assert hook._lexical_index() is None and hook._meta("lexical_cursor_episodes") == "5"
+        assert {i for i, _ in hook.search_lexical("데이터베이스", k=50, namespace="t")} == {
+            f"e{i}" for i in range(5)
+        }
+        hook.put_item("r1", "runbooks", "t", {"id": "r1", "content": "인덱스 재구성 절차"})
+    finally:
+        hook.close()
+
+    store = SqliteDocStore(path)
+    try:
+        assert store._lexical_index() == sqlite_doc.LEXICAL_INDEX
+        assert store._meta("lexical_cursor_episodes") is None
+        assert _fts_ids(store) == sorted(f"e{i}" for i in range(5))
+        assert _fts_ids(store, "items_fts", "item_id") == ["r1", "r2"]
+        assert store.search_lexical_items("재구성을", "runbooks", namespace="t")[0][0] == "r1"
+        assert store.search_lexical_items("버그", "runbooks", namespace="t") == []
+        names = {r[0] for r in store._conn.execute("SELECT name FROM sqlite_master")}
+        assert not {n for n in names if "_next" in n}
+    finally:
+        store.close()
+
+
+def _leftovers(store) -> tuple[list[str], list[str]]:
+    tables = [
+        r[0]
+        for r in store._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE '%_next'"
+        )
+    ]
+    keys = [r[0] for r in store._conn.execute("SELECT k FROM doc_meta WHERE k != 'lexical_index'")]
+    return tables, keys
+
+
+def test_a_rebuild_that_loses_the_race_leaves_nothing_behind(tmp_path):
+    """The marker was read outside the write lock, so a process that saw it
+    missing while another finished the rebuild created fresh, empty `_next`
+    tables and a `lexical_started` row that nothing would ever clear. The
+    setup now runs under the lock and re-reads the marker; an open that finds
+    the marker current clears anything an earlier race or kill left."""
+    from agmem.stores import sqlite_doc
+
+    path = tmp_path / "memory.db"
+    _old_store(path, _korean_episodes(3), [])
+    late = SqliteDocStore(path, migrate_lexical=False)
+    SqliteDocStore(path).close()  # the winner migrates fully
+    real, reads = late._lexical_index, []
+
+    def stale_first_look() -> str | None:
+        reads.append(1)
+        return None if len(reads) == 1 else real()
+
+    late._lexical_index = stale_first_look
+    try:
+        late._migrate_lexical_index()
+        assert len(reads) >= 2  # it did look again, under the lock
+        assert _leftovers(late) == ([], [])
+        assert late._lexical_index() == sqlite_doc.LEXICAL_INDEX
+    finally:
+        late.close()
+
+    raw = sqlite3.connect(path)  # what a pre-fix race or a kill left behind
+    raw.execute("CREATE VIRTUAL TABLE episodes_fts_next USING fts5(content)")
+    raw.execute("INSERT INTO doc_meta (k, v) VALUES ('lexical_started', 'x')")
+    raw.commit()
+    raw.close()
+    store = SqliteDocStore(path)
+    try:
+        assert _leftovers(store) == ([], [])
+        assert [i for i, _ in store.search_lexical("데이터베이스를", k=5, namespace="t")]
+    finally:
+        store.close()
+
+
+def test_a_stop_bigram_that_is_a_words_stem_still_matches(doc):
+    """하지 (summer solstice) is in the stoplist as the ending of "…하지 않는",
+    and dropping it everywhere left "하지에" nothing to match "하지 행사" by.
+    A run's first bigram is never dropped, nor a two-syllable word."""
+    solstice = Episode(content="하지 행사 정리", namespace="t")
+    name = Episode(content="이다 작가 인터뷰", namespace="t")
+    doc.add_episode(solstice)
+    doc.add_episode(name)
+    assert [i for i, _ in doc.search_lexical("하지에 뭐 했지", namespace="t")] == [solstice.id]
+    assert [i for i, _ in doc.search_lexical("이다의 신간", namespace="t")] == [name.id]
 
 
 def test_evolution_log_append_only(doc):

@@ -47,6 +47,7 @@ from agmem.env import resolve_namespace
 from agmem.hooks import daemon as daemon_client
 from agmem.hooks import emit_context, fail_open, open_doc_store, read_event
 from agmem.hooks.capture import prompt_of
+from agmem.stores.sqlite_doc import HANGUL_RUN, hangul_terms
 
 
 class RecallItem(TypedDict):
@@ -162,8 +163,24 @@ def _stems(text: str) -> set[str]:
     word "stale". English inflection mostly lives in the suffix, so the first
     `STEM_CHARS` letters stand in for a stemmer: "corre" covers corrected and
     correction, "rejec" covers reject and rejected. Shorter tokens are kept
-    whole, and tokens under `MIN_TOKEN_CHARS` stay out as before."""
-    return {t.lower()[:STEM_CHARS] for t in _TOKEN.findall(text) if len(t) >= MIN_TOKEN_CHARS}
+    whole, and tokens under `MIN_TOKEN_CHARS` stay out as before.
+
+    Hangul is cut differently, because the rule above dropped nearly all of
+    it: Korean words are mostly two or three syllables, under
+    `MIN_TOKEN_CHARS`, so a Korean prompt had no stems and the prune kept
+    everything. A Hangul run counts by its syllable bigrams — the terms the
+    store's FTS index holds for it (`hangul_terms`) — so "데이터베이스를"
+    overlaps "데이터베이스" on 데이, 이터 and the rest. A one-syllable run is
+    the stopword of this rule, as a short English token is: alone it is
+    usually a particle or a word like 이 or 좀, and it would match anything.
+    So are the ending and particle bigrams of `HANGUL_STOP_BIGRAMS` past a
+    word's first bigram: without that every two polite sentences overlapped
+    on 습니 and 니다."""
+    stems = {t for t in hangul_terms(text, drop_stop=True) if len(t) > 1}
+    for token in _TOKEN.findall(HANGUL_RUN.sub(" ", text)):
+        if len(token) >= MIN_TOKEN_CHARS:
+            stems.add(token.lower()[:STEM_CHARS])
+    return stems
 
 
 def _prune(query: str, group: list[RecallItem]) -> list[RecallItem]:

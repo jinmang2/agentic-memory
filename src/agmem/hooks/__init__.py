@@ -189,7 +189,11 @@ def open_doc_store(namespace: str | None = None, data_dir: str | None = None):
                 f"recall reads the doc store directly and only knows SqliteDocStore; "
                 f"the config resolves doc_store={doc_cls!r}"
             )
-    return ns, SqliteDocStore(root / ns / "memory.db")
+    # No FTS rebuild from a hook (`SqliteDocStore._migrate_lexical_index`): it
+    # takes seconds on a large store and a hook has a fraction of one. The
+    # daemon or MCP server that opens the store next does it; until then the
+    # old index answers whole-token queries as it always did.
+    return ns, SqliteDocStore(root / ns / "memory.db", migrate_lexical=False)
 
 
 def open_memory(namespace: str | None = None, data_dir: str | None = None):
